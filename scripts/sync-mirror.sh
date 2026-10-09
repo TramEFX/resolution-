@@ -69,9 +69,11 @@ sync_branch="sync/fc-$(date -u +%Y%m%d)"
 if git -C "$dir" ls-remote --exit-code --heads origin "$sync_branch" >/dev/null; then
   sync_branch="$sync_branch-$(git -C "$dir" rev-parse --short "$new_base")"
 fi
+# The sync branch goes first: GitHub only fires the push event that starts mirror-ci when the
+# branch brings commits it has not seen yet.
 git -C "$dir" push --quiet origin "$new_base:refs/heads/upstream"
-git -C "$dir" push --quiet --force-with-lease=resolution origin resolution
 git -C "$dir" push --quiet origin "resolution:refs/heads/$sync_branch"
+git -C "$dir" push --quiet --force-with-lease=resolution origin resolution
 rev="$(git -C "$dir" rev-parse resolution)"
 echo "sync point: $sync_branch = $rev (mirror-ci is now running on Linux)"
 
