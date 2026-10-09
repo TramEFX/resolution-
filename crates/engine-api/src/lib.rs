@@ -53,7 +53,8 @@ pub struct Outcome {
     pub result: Value,
     /// Project revision after the command; unchanged for queries.
     pub revision: u64,
-    /// Label of the undo step this command created, if any.
+    /// Label of the undo step this command created, if any. `None` for undo and redo themselves:
+    /// they move through the history without adding to it.
     pub undo_label: Option<String>,
 }
 

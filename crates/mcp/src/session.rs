@@ -10,14 +10,19 @@ use serde_json::{Value, json};
 /// Most leaf changes listed in a `changes` report.
 const MAX_CHANGES: usize = 25;
 
+/// Commands that move through the shared undo history instead of adding to it. The session runs
+/// them itself so its record of agent edits stays exact (LOG B-001).
+const HISTORY: [&str; 2] = ["edit.undo", "edit.redo"];
+
 pub struct AgentSession {
     engine: Box<dyn Engine + Send>,
     catalog: Vec<CommandInfo>,
     keymap: Keymap,
     /// Undo labels of the edits made through this session, oldest first.
     steps: Vec<String>,
-    /// Labels undone through this session, most recent last (what `redo` brings back).
-    undone: Vec<String>,
+    /// Steps undone through this session, most recent last (what `redo` brings back), each with
+    /// whether it was one of this session's edits.
+    undone: Vec<(String, bool)>,
     /// Checkpoint name → number of `steps` when it was taken.
     checkpoints: BTreeMap<String, usize>,
 }
@@ -174,6 +179,9 @@ impl AgentSession {
     /// after measuring it.
     pub fn run(&mut self, id: &str, params: Value, dry_run: bool, acknowledge: bool) -> Result<Value, String> {
         let risk = self.preflight(id, dry_run, acknowledge)?;
+        if HISTORY.contains(&id) {
+            return self.run_history(id, &params, risk, dry_run);
+        }
         let before = (risk == Risk::Edit).then(|| self.timeline_snapshot()).flatten();
         let out = self.engine.execute(id, params).map_err(|e| e.to_string())?;
         let changes = before.and_then(|b| self.timeline_snapshot().map(|a| diff(&b, &a)));
@@ -217,6 +225,50 @@ impl AgentSession {
         Ok(v)
     }
 
+    /// `edit.undo` or `edit.redo` as a command: one step through the history, reported like an
+    /// edit. A dry run takes the step on the engine alone, measures it, and steps back.
+    fn run_history(&mut self, id: &str, params: &Value, risk: Risk, dry_run: bool) -> Result<Value, String> {
+        if !(params.is_null() || params.as_object().is_some_and(serde_json::Map::is_empty)) {
+            return Err(format!("`{id}` takes no parameters; to step more than once, use the undo or redo tool"));
+        }
+        let undo = id == "edit.undo";
+        let before = self.timeline_snapshot();
+        let label = match (undo, dry_run) {
+            (true, false) => self.step_back(),
+            (false, false) => self.step_forward(),
+            (true, true) => self.engine.undo(),
+            (false, true) => self.engine.redo(),
+        };
+        let changes = before.and_then(|b| self.timeline_snapshot().map(|a| diff(&b, &a)));
+        let reverted = dry_run && label.is_some() && {
+            let back = if undo { self.engine.redo() } else { self.engine.undo() };
+            back == label
+        };
+        let mut v = json!({
+            "ok": true,
+            "command": id,
+            "risk": risk,
+            "result": label,
+            "undo_label": null,
+            "revision": self.engine.revision(),
+        });
+        if let Some(c) = changes {
+            v["timeline_changes"] = c;
+        }
+        if label.is_none() {
+            v["warning"] = json!(if undo { "nothing to undo" } else { "nothing to redo" });
+        }
+        if dry_run {
+            v["dry_run"] = json!(true);
+            v["reverted"] = json!(reverted);
+        }
+        let notices = self.notices();
+        if !notices.is_empty() {
+            v["notices"] = json!(notices);
+        }
+        Ok(v)
+    }
+
     /// Run several commands in order. Everything is checked before anything runs. With `atomic`,
     /// a failure undoes the steps that already ran; with `dry_run`, every step is undone at the end.
     pub fn run_batch(
@@ -228,6 +280,14 @@ impl AgentSession {
     ) -> Result<Value, String> {
         let mut risks = Vec::with_capacity(steps.len());
         for (i, s) in steps.iter().enumerate() {
+            if HISTORY.contains(&s.command.as_str()) {
+                // An edit after an undo discards the redo history, so the batch could not be
+                // rolled back (LOG D-005).
+                return Err(format!(
+                    "step {i}: `{}` cannot be a batch step, because a batch must be able to roll back; use the undo or redo tool",
+                    s.command
+                ));
+            }
             let r = self.preflight(&s.command, dry_run, acknowledge).map_err(|e| format!("step {i}: {e}"))?;
             if r == Risk::Destructive && i + 1 != steps.len() && atomic {
                 return Err(format!(
@@ -295,7 +355,7 @@ impl AgentSession {
                 "engine": self.engine.name(),
                 "revision": self.engine.revision(),
                 "agent_edits": self.steps,
-                "redo_available": self.undone,
+                "redo_available": self.undone.iter().map(|(label, _)| label).collect::<Vec<_>>(),
                 "checkpoints": self.checkpoints,
             })),
             other => Err(format!("unknown inspect target `{other}`; one of: project, timeline, session")),
@@ -312,29 +372,34 @@ impl AgentSession {
     }
 
     pub fn undo(&mut self, n: usize) -> Value {
-        let mut labels = Vec::new();
-        for _ in 0..n {
-            let Some(l) = self.engine.undo() else { break };
-            if self.steps.last() == Some(&l) {
-                self.steps.pop();
-            }
-            self.undone.push(l.clone());
-            labels.push(l);
-        }
+        let labels: Vec<String> = (0..n).map_while(|_| self.step_back()).collect();
         json!({"undone": labels, "revision": self.engine.revision()})
     }
 
     pub fn redo(&mut self, n: usize) -> Value {
-        let mut labels = Vec::new();
-        for _ in 0..n {
-            let Some(l) = self.engine.redo() else { break };
-            if self.undone.last() == Some(&l) {
-                self.undone.pop();
-            }
-            self.steps.push(l.clone());
-            labels.push(l);
-        }
+        let labels: Vec<String> = (0..n).map_while(|_| self.step_forward()).collect();
         json!({"redone": labels, "revision": self.engine.revision()})
+    }
+
+    /// One undo, keeping the record of this session's edits straight.
+    fn step_back(&mut self) -> Option<String> {
+        let label = self.engine.undo()?;
+        let mine = self.steps.last() == Some(&label);
+        if mine {
+            self.steps.pop();
+        }
+        self.undone.push((label.clone(), mine));
+        Some(label)
+    }
+
+    /// One redo. The step becomes this session's edit again only if it was one when it was undone,
+    /// so a redo never claims someone else's edit (LOG B-002).
+    fn step_forward(&mut self) -> Option<String> {
+        let label = self.engine.redo()?;
+        if let Some((_, true)) = self.undone.pop_if(|(l, _)| *l == label) {
+            self.steps.push(label.clone());
+        }
+        Some(label)
     }
 
     pub fn checkpoint(&mut self, name: &str) -> Value {
@@ -512,6 +577,77 @@ mod tests {
         assert!(before["video"].is_array());
         assert_eq!(after["video"], before["video"]);
         assert_eq!(after["audio"], before["audio"]);
+    }
+
+    /// LOG B-001: a dry run of `edit.undo` steps back one edit, measures, and steps forward again.
+    #[test]
+    fn dry_running_undo_steps_back_once_and_returns() {
+        let mut s = demo();
+        s.run("timeline.split", json!({}), false, false).expect("split");
+        s.run("playhead.set", json!({"seconds": 4.0}), false, false).expect("playhead");
+        s.run("timeline.split", json!({}), false, false).expect("split");
+        let two_cuts = s.inspect("timeline").expect("timeline");
+        let v = s.run("edit.undo", json!({}), true, false).expect("dry-run undo");
+        assert_eq!(v["reverted"], true, "{v}");
+        assert!(v["timeline_changes"]["changed"].as_u64().unwrap_or(0) > 0, "{v}");
+        assert_eq!(s.inspect("timeline").expect("timeline"), two_cuts);
+        assert_eq!(s.inspect("session").expect("session")["agent_edits"].as_array().map(Vec::len), Some(2));
+    }
+
+    /// LOG B-001: `edit.undo` run as a command is not a new agent edit, so checkpoints stay exact.
+    #[test]
+    fn undo_as_a_command_is_not_counted_as_an_edit() {
+        let mut s = demo();
+        let before = s.inspect("timeline").expect("timeline");
+        s.checkpoint("start");
+        s.run("timeline.split", json!({}), false, false).expect("split");
+        s.run("playhead.set", json!({"seconds": 4.0}), false, false).expect("playhead");
+        s.run("timeline.split", json!({}), false, false).expect("split");
+        let v = s.run("edit.undo", json!({}), false, false).expect("undo");
+        assert_eq!(v["undo_label"], Value::Null, "an undo creates no undo step: {v}");
+        let session = s.inspect("session").expect("session");
+        assert_eq!(session["agent_edits"].as_array().map(Vec::len), Some(1), "{session}");
+        assert_eq!(session["redo_available"].as_array().map(Vec::len), Some(1), "{session}");
+        let v = s.restore("start").expect("restore");
+        assert_eq!(v["undone"].as_array().map(Vec::len), Some(1), "{v}");
+        let after = s.inspect("timeline").expect("timeline");
+        assert_eq!(after["video"], before["video"]);
+        assert_eq!(after["audio"], before["audio"]);
+        assert!(s.run("edit.undo", json!({"steps": 2}), false, false).unwrap_err().contains("no parameters"));
+    }
+
+    /// LOG D-005: a batch must be able to roll back, which undo and redo steps would break.
+    #[test]
+    fn undo_and_redo_cannot_be_batch_steps() {
+        let mut s = demo();
+        let before = s.inspect("timeline").expect("timeline");
+        let steps = vec![
+            BatchStep { command: "timeline.split".into(), params: json!({}) },
+            BatchStep { command: "edit.undo".into(), params: json!({}) },
+        ];
+        let e = s.run_batch(steps, false, false, true).unwrap_err();
+        assert!(e.starts_with("step 1") && e.contains("undo"), "{e}");
+        assert_eq!(s.inspect("timeline").expect("timeline"), before, "nothing ran");
+    }
+
+    /// LOG B-002: redoing a step this session did not make does not make it an agent edit.
+    #[test]
+    fn redo_does_not_claim_edits_the_agent_did_not_make() {
+        // An edit already in the shared history (the user's) before the agent connects.
+        let mut engine = FilmCraftEngine::new();
+        engine.execute("raw.filmcraft/file.openDemoProject", json!({})).expect("demo project");
+        engine.execute("playhead.set", json!({"seconds": 2.0})).expect("playhead");
+        engine.execute("timeline.split", json!({})).expect("the user's split");
+        let mut s = AgentSession::new(Box::new(engine));
+        let users_cut = s.inspect("timeline").expect("timeline");
+        s.checkpoint("start");
+        assert_eq!(s.undo(1)["undone"].as_array().map(Vec::len), Some(1));
+        assert_eq!(s.redo(1)["redone"].as_array().map(Vec::len), Some(1));
+        let session = s.inspect("session").expect("session");
+        assert!(session["agent_edits"].as_array().is_some_and(Vec::is_empty), "{session}");
+        let v = s.restore("start").expect("restore");
+        assert!(v["undone"].as_array().is_some_and(Vec::is_empty), "{v}");
+        assert_eq!(s.inspect("timeline").expect("timeline"), users_cut);
     }
 
     #[test]

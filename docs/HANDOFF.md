@@ -5,15 +5,19 @@ Where things stand and how to continue on your own machine. Last updated 2026-10
 ## 1. Set up (once)
 
 You need **Rust 1.95+** (`rustup update stable`) and **git** with access to both private repos
-(`TramEFX/resolution-` and `TramEFX/resolution-filmcraft`). Nothing else: the engine is pure Rust,
-so there are no system libraries to install.
+(`TramEFX/resolution-` and `TramEFX/resolution-filmcraft`). The engine is pure Rust, so there are
+no system libraries to install. On Windows, Rust's default MSVC toolchain also needs the Visual
+Studio C++ Build Tools for its linker.
 
 ```sh
 git clone https://github.com/TramEFX/resolution- resolution
 cd resolution
-cargo test              # first build compiles ~45 FilmCraft crates: several minutes, ~9 GB in target/
+cargo test              # first build compiles ~45 FilmCraft crates
 cargo run -p resolution-cli -- run project.inspect
 ```
+
+Measured on Windows 11 (Rust 1.99, 2026-10-09): the first `cargo test` took 3 min 12 s, and
+`target/` held 3.0 GB after tests and clippy.
 
 Cargo fetches the engine from the private mirror with your normal git credentials
 (`.cargo/config.toml` sets `git-fetch-with-cli`). If it fails with an authentication error, make
@@ -43,11 +47,12 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 | Mirror CI | First run of FilmCraft's own gate (`cargo xtask ci`, Linux) was in progress at hand-off: https://github.com/TramEFX/resolution-filmcraft/actions/runs/37984421765 |
 | Engine boundary | `engine-api` trait + vocabulary (71 Resolve-named commands; 46 run headless on FilmCraft today, the rest are front-end or not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
-| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 21 tests + a stdio end-to-end check |
+| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 25 tests across the workspace (passing on Windows); the stdio end-to-end check is not in the repo |
 | UI | Not started (M2) |
 | CI for this repo | None yet: needs a token that can read the private mirror |
 
 Gates before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
+Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 
 ## 4. Next steps (pick any)
 
