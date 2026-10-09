@@ -49,6 +49,7 @@ The engine lives in a private mirror; Cargo fetches it with your git credentials
 
 ## Docs
 
+- **[Picking up locally](docs/HANDOFF.md)**: setup, MCP in Claude Code, status, next steps
 - [Architecture and invariants](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Tracking FilmCraft upstream](docs/UPSTREAM.md)
