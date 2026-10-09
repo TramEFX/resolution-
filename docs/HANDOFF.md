@@ -47,7 +47,7 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 | Mirror CI | First run of FilmCraft's own gate (`cargo xtask ci`, Linux) was in progress at hand-off: https://github.com/TramEFX/resolution-filmcraft/actions/runs/37984421765 |
 | Engine boundary | `engine-api` trait + vocabulary (71 Resolve-named commands; 46 run headless on FilmCraft today, the rest are front-end or not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
-| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 25 tests across the workspace (passing on Windows); the stdio end-to-end check is not in the repo |
+| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 30 tests across the workspace (passing on Windows), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
 | UI | Not started (M2) |
 | CI for this repo | None yet: needs a token that can read the private mirror |
 

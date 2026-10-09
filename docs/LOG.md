@@ -32,6 +32,7 @@ doc is updated *and* the entry says which section moved.
 | B-001 | 2026-10-09 | mcp | `edit.undo` run as a command was counted as a new agent edit | fixed |
 | B-002 | 2026-10-09 | mcp | Redo claimed steps the agent never made | fixed |
 | D-005 | 2026-10-09 | mcp | Undo and redo cannot be batch steps | active |
+| D-006 | 2026-10-09 | testing | MCP tested end to end over stdio, in both protocol modes | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -136,3 +137,24 @@ belongs to the draft-timeline design (HANDOFF next step 4), not to this fix.
 history, so a batch like `[undo, split]` cannot be reversed: undoing the split and then redoing
 brings back the split, not the step the batch undid. Allowing only the orders that can be rolled
 back would add rules for a rare case. Revisit if agents turn out to need it.
+
+### D-006 — MCP tested end to end over stdio, in both protocol modes
+**Area:** testing · **Status:** active · **Doc:** HANDOFF "Where things stand" (MCP row)
+
+**Decision:** `apps/resolution-cli/tests/mcp_stdio.rs` starts the built `resolution mcp --demo`
+binary and speaks JSON-RPC to it over stdio, as an MCP client does. It replaces the hand-run
+stdio check from the hand-off and the throwaway script used for B-001. It needs no new
+dependencies, and a 60 s per-response timeout makes a hung server fail the test instead of hanging it.
+
+**Why:** the `crates/mcp` tests call `AgentSession` directly, so the wire layer had no test:
+the handshake, argument checking (D-004: an unknown field such as `dryrun` must be an error), image
+content from `render_frame`, and the protocol versions. Checked: against the pre-B-001 code, the
+undo test fails at its dry-run assertion.
+
+**Two protocol modes, both tested:** in rmcp 3.5, `2026-07-28` is a protocol version *without* an
+`initialize` handshake. Every request carries `io.modelcontextprotocol/protocolVersion` and
+`clientCapabilities` in `_meta`, and a request without them is rejected. A client that does
+handshake is capped at `2025-11-25` (`ProtocolVersion::LATEST_WITH_INITIALIZE`), even if it asks
+for `2026-07-28`. The `cache_hints` in `crates/mcp/src/server.rs` therefore only appear in the
+handshake-free mode (`ttlMs` 600000 for resource lists, 0 for the live timeline, `cacheScope`
+private). Only that mode exercises them, which is why it gets its own test.
