@@ -35,6 +35,7 @@ doc is updated *and* the entry says which section moved.
 | D-006 | 2026-10-09 | testing | MCP tested end to end over stdio, in both protocol modes | active |
 | B-003 | 2026-10-09 | ci | Mirror CI saved no cache on a failed run, and never caches the engine crates | mitigated |
 | D-007 | 2026-10-09 | ci | Mirror CI builds with cargo's stock release settings | active |
+| B-004 | 2026-10-09 | ci | Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests | open |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -179,7 +180,8 @@ the job's 180, so a slow gate fails as a step with time left for the save. The s
 inherent to rust-cache and stays: every gate run rebuilds FilmCraft itself. D-007 makes that
 rebuild cheaper.
 
-**Not yet verified:** that a failed run now saves the cache. That needs a run that fails.
+**Verified (run 38000818366):** the gate failed (B-004), and the cache step still ran
+`... Saving cache ...`. The cancelled first run's log shows that step as `skipped`.
 
 ### D-007 — Mirror CI builds with cargo's stock release settings
 **Area:** ci · **Status:** active · **Doc:** UPSTREAM.md "Mirror branches"; mirror commit `f96ed71`
@@ -200,5 +202,34 @@ under LTO or single-unit codegen would pass the gate. That is rare, and it would
 undefined-behaviour problem rather than an engine-logic one. Resolution's own release profile
 still uses thin LTO and one codegen unit.
 
-**Not yet verified:** how much faster the gate runs. No run has used these settings yet; record the
-first run's duration here when it lands.
+**Measured**, from the two runs' logs (both Linux, ubuntu-24.04, cold cache):
+
+| Phase | Upstream profile (run 37984421765) | These settings (run 38000818366) |
+|---|---|---|
+| `clippy --release` | 2m25s | 3m08s |
+| `test --release` compile | not finished after 2h36m (cancelled) | 25m35s |
+| Whole `cargo xtask ci` step | > 2h39m | 29m24s (stopped at B-004) |
+
+In the first run, no new crate started compiling for 136 minutes: a few large crates sat in
+single-unit release codegen. The layer, asset and wasm phases have not run under either setting yet.
+
+### B-004 — Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests
+**Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38000818366)
+
+**Symptom:** the gate failed in `cargo test --workspace --release` at `filmcraft-apv`'s
+`tests/oracle.rs`. All 3 tests failed with ffmpeg's `Unknown input format: 'apv'`. Cargo stops at
+the first failing test binary, so the rest of the workspace's tests, and the layer, asset and
+wasm checks, did not run. **The pin is not yet confirmed by CI.**
+
+**Root cause:** an environment problem, not an engine bug and not D-007. The workflow installs
+ffmpeg from Ubuntu 24.04's apt (`7:6.1.1-3ubuntu5`), which has no APV support. FilmCraft's oracle
+tests compare its decoders with the system ffmpeg, and upstream (developing on macOS with a
+current Homebrew ffmpeg) documents no minimum version. Its test kit skips an oracle test only when
+ffmpeg is *missing*. When ffmpeg is present but too old, the test fails.
+
+**Fix options** (not yet chosen):
+- Install a current static ffmpeg in CI and point `FILMCRAFT_FFMPEG` / `FILMCRAFT_FFPROBE` at it.
+  This means downloading a third-party binary into CI; pin it by version and checksum.
+- Also set `FILMCRAFT_REQUIRE_ORACLES=1`, which upstream's docs/testing.md recommends for CI. It
+  turns a skipped oracle test into a failure, so CI cannot pass by quietly skipping.
+- Upstream: have the APV oracle test skip, or fail clearly, when ffmpeg lacks the `apv` format.
