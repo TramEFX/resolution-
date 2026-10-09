@@ -33,6 +33,8 @@ doc is updated *and* the entry says which section moved.
 | B-002 | 2026-10-09 | mcp | Redo claimed steps the agent never made | fixed |
 | D-005 | 2026-10-09 | mcp | Undo and redo cannot be batch steps | active |
 | D-006 | 2026-10-09 | testing | MCP tested end to end over stdio, in both protocol modes | active |
+| B-003 | 2026-10-09 | ci | Mirror CI saved no cache on a failed run, and never caches the engine crates | mitigated |
+| D-007 | 2026-10-09 | ci | Mirror CI builds with cargo's stock release settings | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -158,3 +160,45 @@ handshake is capped at `2025-11-25` (`ProtocolVersion::LATEST_WITH_INITIALIZE`),
 for `2026-07-28`. The `cache_hints` in `crates/mcp/src/server.rs` therefore only appear in the
 handshake-free mode (`ttlMs` 600000 for resource lists, 0 for the live timeline, `cacheScope`
 private). Only that mode exercises them, which is why it gets its own test.
+
+### B-003 — Mirror CI saved no cache on a failed run, and never caches the engine crates
+**Area:** ci · **Status:** mitigated · **Caught by:** review: reading `mirror-ci.yml` and rust-cache's `action.yml` while the first gate run was still going
+
+**Symptom:** the first gate run on `sync/fc-20261009` (run 37984421765, started by hand) was still
+in `cargo xtask ci` after 2h40m of its 180-minute limit. If it timed out, it would save nothing,
+so a rerun would start just as cold and very likely time out again.
+
+**Root cause:** two facts about `Swatinem/rust-cache@v2`, read from its source:
+- It saves only when the job succeeds (`post-if: success() || env.CACHE_ON_FAILURE == 'true'`),
+  and the workflow did not set `cache-on-failure`.
+- It never caches workspace crates (`cache-all-crates` defaults to false), and FilmCraft's 47
+  packages *are* the workspace. So even a green run only speeds up third-party dependencies.
+
+**Fix (mirror `f96ed71`):** `cache-on-failure: true`, and a 165-minute limit on the gate step inside
+the job's 180, so a slow gate fails as a step with time left for the save. The second fact is
+inherent to rust-cache and stays: every gate run rebuilds FilmCraft itself. D-007 makes that
+rebuild cheaper.
+
+**Not yet verified:** that a failed run now saves the cache. That needs a run that fails.
+
+### D-007 — Mirror CI builds with cargo's stock release settings
+**Area:** ci · **Status:** active · **Doc:** UPSTREAM.md "Mirror branches"; mirror commit `f96ed71`
+
+**Decision:** `mirror-ci` sets `CARGO_PROFILE_RELEASE_LTO=false` and
+`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16` for the gate job. Upstream's `Cargo.toml` is untouched, so
+this is mirror plumbing, not an engine patch.
+
+**Why:** `cargo xtask ci` runs fmt, `clippy --release`, `test --release`, the layer and asset
+checks, and a wasm32 build: three release builds of ~322k lines. Upstream's release profile (thin
+LTO, one codegen unit) is the slowest to compile, and LTO re-optimises every test binary at link
+time. Checked on a probe crate: with these variables, `cargo test --release` and
+`cargo clippy --release` compile with `-C codegen-units=16` instead of
+`-C codegen-units=1 -C lto=thin`, and `opt-level=3` is unchanged.
+
+**Cost:** CI no longer builds exactly as upstream's release does, so a defect that only appears
+under LTO or single-unit codegen would pass the gate. That is rare, and it would be a compiler or
+undefined-behaviour problem rather than an engine-logic one. Resolution's own release profile
+still uses thin LTO and one codegen unit.
+
+**Not yet verified:** how much faster the gate runs. No run has used these settings yet; record the
+first run's duration here when it lands.

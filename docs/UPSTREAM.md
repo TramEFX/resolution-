@@ -20,7 +20,10 @@ Mirror branches:
 - `sync/fc-YYYYMMDD` — one branch per sync point, never moved or deleted. Pushing one runs
   `mirror-ci` (upstream's `cargo xtask ci`) on Linux; Windows and macOS are manual runs because
   they cost 2x and 10x Actions minutes on a private repo. Branches rather than tags because agent
-  sessions can push branches but not tags.
+  sessions can push branches but not tags. Mirror CI builds with cargo's stock release settings
+  rather than upstream's LTO profile, and keeps its dependency cache when a run fails
+  (LOG D-007, B-003). To try a workflow change without a new sync point, run `mirror-ci` by hand
+  on `resolution`.
 
 **Current pin:** `sync/fc-20261009` = `2ba0629` = storytold/filmcraft@`7b6c134` (2026-10-09,
 after v0.4.0) + mirror plumbing.
