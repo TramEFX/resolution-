@@ -55,52 +55,35 @@ impl Keymap {
         let mut by_keys = HashMap::new();
         for (i, b) in file.binds.iter().enumerate() {
             if resolution_engine_api::commands::find(&b.command).is_none() {
-                return Err(KeymapError::UnknownCommand {
-                    keys: b.keys.clone(),
-                    command: b.command.clone(),
-                });
+                return Err(KeymapError::UnknownCommand { keys: b.keys.clone(), command: b.command.clone() });
             }
             if by_keys.insert(normalize(&b.keys), i).is_some() {
                 return Err(KeymapError::Duplicate(b.keys.clone()));
             }
         }
-        Ok(Self {
-            meta: file.meta,
-            bindings: file.binds,
-            by_keys,
-        })
+        Ok(Self { meta: file.meta, bindings: file.binds, by_keys })
     }
 
     pub fn resolve() -> Self {
-        Self::parse(RESOLVE_TOML)
-            .unwrap_or_else(|e| panic!("built-in Resolve keymap is invalid: {e}"))
+        Self::parse(RESOLVE_TOML).unwrap_or_else(|e| panic!("built-in Resolve keymap is invalid: {e}"))
     }
 
     /// The command bound to `keys` (`"Mod+B"`, `"shift+f11"`…).
     pub fn command_for(&self, keys: &str) -> Option<&str> {
-        self.by_keys
-            .get(&normalize(keys))
-            .map(|&i| self.bindings[i].command.as_str())
+        self.by_keys.get(&normalize(keys)).map(|&i| self.bindings[i].command.as_str())
     }
 
     /// Every key bound to `command`.
     pub fn keys_for<'a>(&'a self, command: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.bindings
-            .iter()
-            .filter(move |b| b.command == command)
-            .map(|b| b.keys.as_str())
+        self.bindings.iter().filter(move |b| b.command == command).map(|b| b.keys.as_str())
     }
 }
 
 /// Canonical form: modifiers in a fixed order, case-insensitive.
 fn normalize(keys: &str) -> String {
     const ORDER: [&str; 4] = ["mod", "ctrl", "alt", "shift"];
-    let parts: Vec<String> = keys
-        .split('+')
-        .map(|p| p.trim().to_ascii_lowercase())
-        .collect();
-    let (mut mods, rest): (Vec<_>, Vec<_>) =
-        parts.into_iter().partition(|p| ORDER.contains(&p.as_str()));
+    let parts: Vec<String> = keys.split('+').map(|p| p.trim().to_ascii_lowercase()).collect();
+    let (mut mods, rest): (Vec<_>, Vec<_>) = parts.into_iter().partition(|p| ORDER.contains(&p.as_str()));
     mods.sort_by_key(|m| ORDER.iter().position(|o| o == m));
     mods.into_iter().chain(rest).collect::<Vec<_>>().join("+")
 }
@@ -121,10 +104,7 @@ mod tests {
     #[test]
     fn rejects_unknown_commands_and_duplicates() {
         let bad = "[meta]\nname='x'\n[[bind]]\nkeys='A'\ncommand='no.such'\n";
-        assert!(matches!(
-            Keymap::parse(bad),
-            Err(KeymapError::UnknownCommand { .. })
-        ));
+        assert!(matches!(Keymap::parse(bad), Err(KeymapError::UnknownCommand { .. })));
         let dup = "[meta]\nname='x'\n[[bind]]\nkeys='Mod+A'\ncommand='edit.undo'\n[[bind]]\nkeys='mod+a'\ncommand='edit.redo'\n";
         assert!(matches!(Keymap::parse(dup), Err(KeymapError::Duplicate(_))));
     }

@@ -10,7 +10,7 @@ pub mod commands;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use commands::{COMMANDS, CommandSpec, Page};
+pub use commands::{COMMANDS, CommandSpec, Page, Risk};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -39,8 +39,12 @@ pub struct CommandInfo {
     pub label: String,
     /// Free-form parameter description for agents.
     pub params: String,
-    /// Changes the project (and is undoable), as opposed to a pure query.
-    pub mutates: bool,
+    pub risk: Risk,
+    /// The Resolve page that owns it; `None` for raw engine commands.
+    pub page: Option<Page>,
+    /// How this engine's behaviour differs from Resolve's, when it does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// What every command returns: the engine's result plus what an agent needs to reason about undo.
@@ -85,8 +89,9 @@ pub trait Engine {
     fn redo(&mut self) -> Option<String>;
     fn revision(&self) -> u64;
 
-    /// The program (record) viewer at the playhead, scaled by `scale` (1.0 = timeline resolution).
-    fn render_program(&self, scale: f32) -> Result<Frame>;
+    /// The program (record) viewer at `at_seconds` (default: the playhead), opaque, with its
+    /// longest side at most `max_side` pixels. Never moves the playhead.
+    fn render_frame(&self, at_seconds: Option<f64>, max_side: u32) -> Result<Frame>;
 
     /// Events since the last call.
     fn drain_events(&mut self) -> Vec<EngineEvent>;

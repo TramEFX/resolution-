@@ -17,7 +17,8 @@ An AI-native video editor in Rust that feels like home to DaVinci Resolve users.
 
 ## How it is built
 
-- **Engine:** [FilmCraft](https://github.com/storytold/filmcraft) (MIT OR Apache-2.0), consumed as
+- **Engine:** [FilmCraft](https://github.com/storytold/filmcraft) (MIT OR Apache-2.0), consumed from
+  our private mirror [`resolution-filmcraft`](https://github.com/TramEFX/resolution-filmcraft) as
   pinned git dependencies. Upstream improvements are merged by moving one pin;
   see [docs/UPSTREAM.md](docs/UPSTREAM.md).
 - **Boundary:** everything above the engine speaks Resolution's own command vocabulary through the
@@ -30,7 +31,8 @@ An AI-native video editor in Rust that feels like home to DaVinci Resolve users.
 | `crates/filmcraft-adapter` | `Engine` on FilmCraft's headless `Session`; the Resolution→FilmCraft command map and the upstream-drift test |
 | `crates/keymap` | Keymaps as data; validates `keymaps/*.toml` against the vocabulary |
 | `keymaps/resolve.toml` | DaVinci Resolve default keyboard (seed; being verified) |
-| `apps/resolution-cli` | Headless CLI: `resolution commands`, `resolution keys`, `resolution run …` |
+| `crates/mcp` | MCP server: agents find, run, preview, check and undo edits through the same commands as people |
+| `apps/resolution-cli` | Headless CLI: `resolution commands`, `resolution keys`, `resolution run …`, `resolution mcp` |
 
 ## Try it
 
@@ -39,7 +41,11 @@ cargo test
 cargo run -p resolution-cli -- commands
 cargo run -p resolution-cli -- keys
 cargo run -p resolution-cli -- run project.inspect
+cargo run -p resolution-cli -- mcp --demo     # MCP over stdio, on FilmCraft's demo project
 ```
+
+In Claude Code, this repo's `.mcp.json` starts the MCP server automatically (approve it once).
+The engine lives in a private mirror; Cargo fetches it with your git credentials.
 
 ## Docs
 

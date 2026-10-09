@@ -8,7 +8,8 @@ Resolution's own work sits where FilmCraft is thinnest and where Resolve is most
 - [x] Engine boundary (`engine-api`), FilmCraft adapter, upstream-drift test
 - [x] Resolve keymap as data (seed table)
 - [x] Headless CLI
-- [ ] Private mirror `resolution-filmcraft` + CI on Linux/Windows/macOS; switch the pin to it
+- [x] Private mirror `resolution-filmcraft` with Linux CI on sync points; pin switched to it
+- [ ] Windows/macOS mirror CI runs (manual; minute cost)
 - [ ] CI here: test, clippy, `cargo-deny` licence scan, "only the adapter imports filmcraft" check
 - [ ] Verify every keymap entry against Resolve's default map (`verified = true`)
 - [ ] Hands-on evaluation: real camera footage through FilmCraft decode, export, interchange
@@ -16,8 +17,10 @@ Resolution's own work sits where FilmCraft is thinnest and where Resolve is most
 
 ## M1 — AI-native core
 
-- [ ] `resolution-mcp` crate: page-scoped tool domains, kernel tools, result envelope, dry-run,
-      `render_frame`, draft timelines (see ARCHITECTURE.md)
+- [x] `resolution-mcp`: page-organised discovery, risk tiers, dry runs with timeline diffs,
+      atomic batches, checkpoints, `render_frame`, stdio (`resolution mcp`, `.mcp.json`)
+- [ ] Draft timelines for agents, accepted by the user; provenance receipts
+- [ ] Open real projects/media from MCP end to end (import → assemble → render) as an acceptance test
 - [ ] Per-command JSON Schemas for the vocabulary
 - [ ] Transcription on by default; transcript-based editing; silence removal
 - [ ] Media search (embeddings) over the media pool

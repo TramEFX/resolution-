@@ -33,6 +33,7 @@ pub const MAP: &[(&str, Target)] = &[
     ("project.save", Engine("file.save")),
     ("project.saveAs", Engine("file.saveAs")),
     ("project.inspect", Engine("project.inspect")),
+    ("timeline.inspect", Engine("sequence.inspect")),
     ("media.import", Engine("file.import")),
     ("edit.undo", Adapter),
     ("edit.redo", Adapter),
@@ -68,16 +69,10 @@ pub const MAP: &[(&str, Target)] = &[
     ("mode.selection", Ui),
     ("mode.trim", Ui),
     ("mode.blade", Ui),
-    (
-        "mode.dynamicTrim",
-        Missing("no dynamic trim mode (JKL-driven trimming)"),
-    ),
+    ("mode.dynamicTrim", Missing("no dynamic trim mode (JKL-driven trimming)")),
     ("edit.insert", Engine("source.insert")),
     ("edit.overwrite", Engine("source.overwrite")),
-    (
-        "edit.replace",
-        Missing("Resolve Replace aligns the source playhead to the timeline playhead"),
-    ),
+    ("edit.replace", Missing("Resolve Replace aligns the source playhead to the timeline playhead")),
     ("edit.placeOnTop", Missing("no place-on-top edit")),
     ("edit.rippleOverwrite", Missing("no ripple overwrite edit")),
     ("edit.fitToFill", Missing("no fit-to-fill edit")),
@@ -85,10 +80,7 @@ pub const MAP: &[(&str, Target)] = &[
     ("timeline.split", Engine("sequence.addEdit")),
     ("timeline.delete", Engine("edit.clear")),
     ("timeline.rippleDelete", Engine("edit.rippleDelete")),
-    (
-        "timeline.rippleStartToPlayhead",
-        Engine("trim.ripplePrevious"),
-    ),
+    ("timeline.rippleStartToPlayhead", Engine("trim.ripplePrevious")),
     ("timeline.rippleEndToPlayhead", Engine("trim.rippleNext")),
     ("timeline.toggleClipEnable", Engine("clip.enable")),
     ("timeline.matchFrame", Engine("sequence.matchFrame")),
@@ -99,19 +91,10 @@ pub const MAP: &[(&str, Target)] = &[
             "applies to the selected edit points rather than the edit nearest the playhead",
         ),
     ),
-    (
-        "timeline.addVideoTransition",
-        Engine("sequence.applyVideoTransition"),
-    ),
-    (
-        "timeline.addAudioTransition",
-        Engine("sequence.applyAudioTransition"),
-    ),
+    ("timeline.addVideoTransition", Engine("sequence.applyVideoTransition")),
+    ("timeline.addAudioTransition", Engine("sequence.applyAudioTransition")),
     ("timeline.snapping", Engine("sequence.snap")),
-    (
-        "timeline.linkedSelection",
-        Engine("sequence.linkedSelection"),
-    ),
+    ("timeline.linkedSelection", Engine("sequence.linkedSelection")),
     ("timeline.closeGap", Engine("sequence.closeGap")),
     ("view.zoomIn", Ui),
     ("view.zoomOut", Ui),
@@ -129,28 +112,15 @@ mod tests {
 
     #[test]
     fn every_vocabulary_command_is_mapped() {
-        let missing: Vec<_> = COMMANDS
-            .iter()
-            .filter(|c| target(c.id).is_none())
-            .map(|c| c.id)
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "unmapped Resolution commands: {missing:?}"
-        );
+        let missing: Vec<_> = COMMANDS.iter().filter(|c| target(c.id).is_none()).map(|c| c.id).collect();
+        assert!(missing.is_empty(), "unmapped Resolution commands: {missing:?}");
     }
 
     #[test]
     fn every_mapped_id_is_in_the_vocabulary() {
-        let extra: Vec<_> = MAP
-            .iter()
-            .map(|(id, _)| *id)
-            .filter(|id| resolution_engine_api::commands::find(id).is_none())
-            .collect();
-        assert!(
-            extra.is_empty(),
-            "mapped ids not in the vocabulary: {extra:?}"
-        );
+        let extra: Vec<_> =
+            MAP.iter().map(|(id, _)| *id).filter(|id| resolution_engine_api::commands::find(id).is_none()).collect();
+        assert!(extra.is_empty(), "mapped ids not in the vocabulary: {extra:?}");
     }
 
     /// The upstream-drift gate: run on every FilmCraft sync.
@@ -164,9 +134,6 @@ mod tests {
             })
             .filter(|fc| filmcraft_engine::find_command(fc).is_none())
             .collect();
-        assert!(
-            gone.is_empty(),
-            "FilmCraft commands no longer exist upstream: {gone:?}"
-        );
+        assert!(gone.is_empty(), "FilmCraft commands no longer exist upstream: {gone:?}");
     }
 }

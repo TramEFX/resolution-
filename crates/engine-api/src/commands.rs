@@ -2,11 +2,12 @@
 //! Resolve names it. Ids are stable API: the keymap, the UI and MCP clients depend on them, so
 //! an id is never renamed or reused, only added or deprecated.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-/// Resolve's pages. Commands are grouped by the page that owns them; that grouping is also how
-/// the MCP server loads tools on demand.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// Resolve's pages. Commands are grouped by the page that owns them; agents browse the vocabulary
+/// one page at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Page {
     /// Works everywhere (transport, undo, page switching).
     Global,
@@ -19,6 +20,66 @@ pub enum Page {
     Deliver,
 }
 
+impl Page {
+    pub const ALL: [Page; 8] =
+        [Page::Global, Page::Media, Page::Cut, Page::Edit, Page::Fusion, Page::Color, Page::Fairlight, Page::Deliver];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Page::Global => "global",
+            Page::Media => "media",
+            Page::Cut => "cut",
+            Page::Edit => "edit",
+            Page::Fusion => "fusion",
+            Page::Color => "color",
+            Page::Fairlight => "fairlight",
+            Page::Deliver => "deliver",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Page::Global => "Works on every page: project, history, transport, playhead, page switching.",
+            Page::Media => "Import and organise media in the Media Pool.",
+            Page::Cut => "Fast assembly editing (Resolve's Cut page).",
+            Page::Edit => "Timeline editing: marking, source-to-timeline edits, trimming, transitions, markers.",
+            Page::Fusion => "Node-based compositing and effects.",
+            Page::Color => "Grading: nodes, wheels, curves, qualifiers, scopes.",
+            Page::Fairlight => "Audio: mixing, buses, effects.",
+            Page::Deliver => "Rendering and export.",
+        }
+    }
+}
+
+/// How careful a caller must be. Agents must pass `acknowledge` for [`Risk::Destructive`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Risk {
+    /// Reads state; changes nothing.
+    Read,
+    /// Changes the project, undoably.
+    Edit,
+    /// Touches files or replaces the open project: not undoable.
+    Destructive,
+}
+
+/// Vocabulary commands that only read.
+const READ: &[&str] = &["project.inspect", "timeline.inspect"];
+/// Vocabulary commands that write files or replace the open project.
+const DESTRUCTIVE: &[&str] = &["project.open", "project.save", "project.saveAs"];
+
+/// The risk of a vocabulary command (`None` for ids outside the vocabulary).
+pub fn risk(id: &str) -> Option<Risk> {
+    find(id)?;
+    Some(if READ.contains(&id) {
+        Risk::Read
+    } else if DESTRUCTIVE.contains(&id) {
+        Risk::Destructive
+    } else {
+        Risk::Edit
+    })
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct CommandSpec {
     pub id: &'static str,
@@ -29,12 +90,7 @@ pub struct CommandSpec {
 }
 
 const fn c(id: &'static str, label: &'static str, page: Page, params: &'static str) -> CommandSpec {
-    CommandSpec {
-        id,
-        label,
-        page,
-        params,
-    }
+    CommandSpec { id, label, page, params }
 }
 
 use Page::*;
@@ -49,31 +105,17 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("page.fairlight", "Fairlight Page", Global, ""),
     c("page.deliver", "Deliver Page", Global, ""),
     // project
-    c(
-        "project.open",
-        "Open Project",
-        Global,
-        r#"{"path": string}"#,
-    ),
+    c("project.open", "Open Project", Global, r#"{"path": string}"#),
     c("project.save", "Save Project", Global, ""),
+    c("project.saveAs", "Save Project As", Global, r#"{"path": string}"#),
+    c("project.inspect", "Inspect Project", Global, "query; returns the project as JSON"),
     c(
-        "project.saveAs",
-        "Save Project As",
-        Global,
-        r#"{"path": string}"#,
+        "timeline.inspect",
+        "Inspect Timeline",
+        Edit,
+        "query; returns the active timeline (tracks, clips, in/out, playhead) as JSON",
     ),
-    c(
-        "project.inspect",
-        "Inspect Project",
-        Global,
-        "query; returns the project as JSON",
-    ),
-    c(
-        "media.import",
-        "Import Media",
-        Media,
-        r#"{"paths": [string]}"#,
-    ),
+    c("media.import", "Import Media", Media, r#"{"paths": [string]}"#),
     // history
     c("edit.undo", "Undo", Global, ""),
     c("edit.redo", "Redo", Global, ""),
@@ -98,12 +140,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("playhead.nextEdit", "Next Edit", Global, ""),
     c("playhead.timelineStart", "Timeline Start", Global, ""),
     c("playhead.timelineEnd", "Timeline End", Global, ""),
-    c(
-        "playhead.set",
-        "Go to Timecode",
-        Global,
-        r#"{"frame": int}"#,
-    ),
+    c("playhead.set", "Go to Timecode", Global, r#"{"frame": int}"#),
     // marking
     c("mark.in", "Mark In", Edit, ""),
     c("mark.out", "Mark Out", Edit, ""),
@@ -111,12 +148,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("mark.clearIn", "Clear In", Edit, ""),
     c("mark.clearOut", "Clear Out", Edit, ""),
     c("mark.clearInOut", "Clear In and Out", Edit, ""),
-    c(
-        "marker.add",
-        "Add Marker",
-        Edit,
-        r#"{"name"?: string, "note"?: string}"#,
-    ),
+    c("marker.add", "Add Marker", Edit, r#"{"name"?: string, "note"?: string}"#),
     c("marker.next", "Next Marker", Edit, ""),
     c("marker.previous", "Previous Marker", Edit, ""),
     // edit modes (timeline tools)
@@ -134,50 +166,15 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("edit.appendAtEnd", "Append at End of Timeline", Edit, ""),
     // timeline edits
     c("timeline.split", "Split Clip (at playhead)", Edit, ""),
-    c(
-        "timeline.delete",
-        "Delete Selected (leave gap)",
-        Edit,
-        r#"{"clips"?: [id]}"#,
-    ),
-    c(
-        "timeline.rippleDelete",
-        "Ripple Delete",
-        Edit,
-        r#"{"clips"?: [id]}"#,
-    ),
-    c(
-        "timeline.rippleStartToPlayhead",
-        "Ripple Start to Playhead",
-        Edit,
-        "",
-    ),
-    c(
-        "timeline.rippleEndToPlayhead",
-        "Ripple End to Playhead",
-        Edit,
-        "",
-    ),
-    c(
-        "timeline.toggleClipEnable",
-        "Enable / Disable Clip",
-        Edit,
-        "",
-    ),
+    c("timeline.delete", "Delete Selected (leave gap)", Edit, r#"{"clips"?: [id]}"#),
+    c("timeline.rippleDelete", "Ripple Delete", Edit, r#"{"clips"?: [id]}"#),
+    c("timeline.rippleStartToPlayhead", "Ripple Start to Playhead", Edit, ""),
+    c("timeline.rippleEndToPlayhead", "Ripple End to Playhead", Edit, ""),
+    c("timeline.toggleClipEnable", "Enable / Disable Clip", Edit, ""),
     c("timeline.matchFrame", "Match Frame", Edit, ""),
     c("timeline.addTransition", "Add Transition", Edit, ""),
-    c(
-        "timeline.addVideoTransition",
-        "Add Video Only Transition",
-        Edit,
-        "",
-    ),
-    c(
-        "timeline.addAudioTransition",
-        "Add Audio Only Transition",
-        Edit,
-        "",
-    ),
+    c("timeline.addVideoTransition", "Add Video Only Transition", Edit, ""),
+    c("timeline.addAudioTransition", "Add Audio Only Transition", Edit, ""),
     c("timeline.snapping", "Snapping", Edit, ""),
     c("timeline.linkedSelection", "Linked Selection", Edit, ""),
     c("timeline.closeGap", "Close Gap", Edit, ""),
@@ -202,5 +199,15 @@ mod tests {
         let n = ids.len();
         ids.dedup();
         assert_eq!(n, ids.len(), "duplicate command id");
+    }
+
+    #[test]
+    fn risk_lists_name_real_commands() {
+        for id in READ.iter().chain(DESTRUCTIVE) {
+            assert!(find(id).is_some(), "{id} is not in the vocabulary");
+        }
+        assert_eq!(risk("timeline.split"), Some(Risk::Edit));
+        assert_eq!(risk("project.save"), Some(Risk::Destructive));
+        assert_eq!(risk("nope"), None);
     }
 }

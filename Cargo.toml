@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine-api", "crates/filmcraft-adapter", "crates/keymap", "apps/resolution-cli"]
+members = ["crates/engine-api", "crates/filmcraft-adapter", "crates/keymap", "crates/mcp", "apps/resolution-cli"]
 
 [workspace.package]
 version = "0.0.1"
@@ -13,10 +13,13 @@ publish = false
 resolution-engine-api = { path = "crates/engine-api" }
 resolution-filmcraft-adapter = { path = "crates/filmcraft-adapter" }
 resolution-keymap = { path = "crates/keymap" }
+resolution-mcp = { path = "crates/mcp" }
 
-# The engine. Pinned to a tested upstream commit; bump it with scripts/sync-upstream.sh
-# (docs/UPSTREAM.md). Only crates/filmcraft-adapter may depend on filmcraft-* crates.
-filmcraft-engine = { git = "https://github.com/storytold/filmcraft", rev = "7b6c134472287db4367fca80bcb498240ba36567" }
+# The engine: FilmCraft via Resolution's private mirror (TramEFX/resolution-filmcraft), pinned to
+# a sync point's commit (branch sync/fc-20261009 = storytold/filmcraft@7b6c134 + mirror plumbing).
+# Move it with scripts/sync-mirror.sh (docs/UPSTREAM.md). Only crates/filmcraft-adapter may depend
+# on filmcraft-* crates.
+filmcraft-engine = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "2ba06295a4163552c0914e5672f7bffc20f8edae" }
 
 # foundation
 serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,24 @@
+[package]
+name = "resolution-mcp"
+description = "Resolution's MCP server: agents drive the editor through the same commands and undo history as people"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+resolution-engine-api = { workspace = true }
+resolution-keymap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rmcp = { version = "3.5", default-features = false, features = ["server", "macros", "transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync"] }
+schemars = "1"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+resolution-filmcraft-adapter = { workspace = true }

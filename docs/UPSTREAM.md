@@ -7,29 +7,44 @@ command ids or the `.fcproj` schema. We take its improvements on purpose, at tes
 
 | Repo | Visibility | Role |
 |---|---|---|
-| `resolution` (this) | private | The app. Depends on FilmCraft crates by git URL pinned to a tested revision. |
-| `resolution-filmcraft` | private | Mirror. `main` = untouched copy of `storytold/filmcraft:main`. `resolution` branch = our small patch stack, rebased each sync. Tested points tagged `fc-sync-YYYYMMDD`. CI runs upstream's `cargo xtask ci` on Linux, Windows and macOS before tagging. |
-| `<you>/filmcraft` | public fork | Pristine fork used only to open PRs upstream. |
+| `TramEFX/resolution-` (this) | private | The app. Depends on FilmCraft crates from the mirror, pinned by commit `rev`. |
+| [`TramEFX/resolution-filmcraft`](https://github.com/TramEFX/resolution-filmcraft) | private | The engine mirror; layout in its `RESOLUTION.md`. |
+| `<you>/filmcraft` | public fork | Optional, later: a pristine fork used only to open PRs upstream. |
 
-**Current state:** the mirror does not exist yet, so `Cargo.toml` pins
-`https://github.com/storytold/filmcraft` at `7b6c134` (2026-10-09, after v0.4.0) directly.
-Once the mirror exists, change the URL in `[workspace.dependencies]` to the mirror and pin to an
-`fc-sync-*` tag.
+Mirror branches:
 
-The patch stack may hold only: a command-registration hook, `pub` visibility changes, ArtCraft
-brand removal for distributed builds, and fixes on their way upstream. Anything else belongs in
-Resolution's own crates.
+- `upstream` — untouched copy of `storytold/filmcraft:main`. (Not `main`: upstream's workflows
+  run on pushes to `main` and would spend the private repo's Actions minutes.)
+- `resolution` (default) — `upstream` + our patch stack, rebased at each sync. Today the stack is
+  mirror plumbing only (mirror CI, upstream workflows removed); engine code is untouched.
+- `sync/fc-YYYYMMDD` — one branch per sync point, never moved or deleted. Pushing one runs
+  `mirror-ci` (upstream's `cargo xtask ci`) on Linux; Windows and macOS are manual runs because
+  they cost 2x and 10x Actions minutes on a private repo. Branches rather than tags because agent
+  sessions can push branches but not tags.
+
+**Current pin:** `sync/fc-20261009` = `2ba0629` = storytold/filmcraft@`7b6c134` (2026-10-09,
+after v0.4.0) + mirror plumbing.
+
+**Private-repo access:** `.cargo/config.toml` sets `net.git-fetch-with-cli`, so Cargo fetches the
+mirror with your normal git credentials. CI for this repo will need a token that can read the
+mirror.
+
+The patch stack may hold only: mirror plumbing, a command-registration hook, `pub` visibility
+changes, ArtCraft brand removal for distributed builds, and fixes on their way upstream. Anything
+else belongs in Resolution's own crates.
 
 ## Sync procedure (weekly or fortnightly; prefer upstream release tags as bases)
 
-1. `scripts/upstream-status.sh` — what changed since our pin (commits, ROADMAP log, command ids).
-2. In the mirror: fetch upstream, fast-forward `main`, rebase `resolution` onto it, run
-   `cargo xtask ci` on all three OSes, tag `fc-sync-YYYYMMDD`.
-3. Here: move the `rev` in `Cargo.toml`, `cargo update -p filmcraft-engine`, then run the gates:
-   - `cargo test` — includes `every_mapped_id_exists_upstream` (command renames/removals) and the
-     adapter contract tests;
+1. `scripts/upstream-status.sh [ref]` — what changed since our pin: commits, engine churn, command
+   ids added/removed, ROADMAP log.
+2. `scripts/sync-mirror.sh [ref]` — fast-forwards the mirror's `upstream`, rebases `resolution`
+   onto it (removed upstream workflows stay removed; any other conflict stops for a human), and
+   pushes a new `sync/fc-*` branch, which starts mirror CI.
+3. When mirror CI is green: `scripts/sync-mirror.sh [ref] --apply` moves the `rev` here and runs
+   `cargo test`. The gates:
+   - `every_mapped_id_exists_upstream` (command renames/removals) and the adapter contract tests;
    - `.fcproj` round-trip and migration tests (to add);
-   - review the command-id diff from step 1 for new commands worth adding to the vocabulary.
+   - the command-id diff from step 1, for new commands worth adding to the vocabulary.
 4. Fix the adapter, never the engine in place. Commit the pin bump and adapter fixes together.
 
 ## Patches worth sending upstream

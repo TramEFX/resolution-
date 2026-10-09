@@ -1,6 +1,7 @@
 //! `resolution commands` — every command the engine offers (vocabulary, then raw engine commands)
 //! `resolution keys` — the Resolve keymap
-//! `resolution run <project?> <id> [json] [<id> [json]]…` — run commands headlessly, print results
+//! `resolution run [--project <path>] <id> [json] [<id> [json]]…` — run commands headlessly
+//! `resolution mcp [--project <path> | --demo]` — serve MCP over stdio for agents
 
 use std::process::ExitCode;
 
@@ -18,11 +19,7 @@ fn main() -> ExitCode {
                     "{:<48} {}{}",
                     c.id,
                     c.label,
-                    if c.params.is_empty() {
-                        String::new()
-                    } else {
-                        format!("  {}", c.params)
-                    }
+                    if c.params.is_empty() { String::new() } else { format!("  {}", c.params) }
                 );
             }
             ExitCode::SUCCESS
@@ -35,9 +32,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("run") => run(&args[1..]),
+        Some("mcp") => mcp(&args[1..]),
         _ => {
             eprintln!(
-                "usage: resolution commands | keys | run [--project <path>] <id> [json] [<id> [json]]…"
+                "usage: resolution commands | keys | run [--project <path>] <id> [json]… | mcp [--project <path> | --demo]"
             );
             ExitCode::FAILURE
         }
@@ -79,4 +77,29 @@ fn run(args: &[String]) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+fn mcp(args: &[String]) -> ExitCode {
+    let mut engine = FilmCraftEngine::new();
+    let opened = match args {
+        [] => Ok(()),
+        [flag] if flag == "--demo" => engine.execute("raw.filmcraft/file.openDemoProject", json!({})).map(|_| ()),
+        [flag, path] if flag == "--project" => engine.execute("project.open", json!({ "path": path })).map(|_| ()),
+        _ => {
+            eprintln!("usage: resolution mcp [--project <path> | --demo]");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = opened {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    // stdout belongs to the MCP protocol; diagnostics go to stderr.
+    match resolution_mcp::serve_stdio(Box::new(engine)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

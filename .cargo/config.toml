@@ -1,0 +1,4 @@
+# The engine mirror is private: fetch git dependencies with the git CLI so your normal git
+# credentials (credential helper, SSH rewrite, gh auth) are used.
+[net]
+git-fetch-with-cli = true

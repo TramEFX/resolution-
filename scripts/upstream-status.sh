@@ -1,34 +1,37 @@
 #!/usr/bin/env bash
-# What changed upstream since our pin: commits, ROADMAP log, and FilmCraft command ids.
-# Usage: scripts/upstream-status.sh [upstream-ref]   (default: origin/main of storytold/filmcraft)
+# What changed upstream since our pinned sync point: commits, engine churn, command ids, ROADMAP.
+# Usage: scripts/upstream-status.sh [upstream-ref]   (default: upstream/main)
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+dir="${MIRROR_DIR:-$root/target/mirror/resolution-filmcraft}"
 pin="$(sed -n 's/^filmcraft-engine = .*rev = "\([0-9a-f]*\)".*/\1/p' "$root/Cargo.toml")"
-url="$(sed -n 's/^filmcraft-engine = { git = "\([^"]*\)".*/\1/p' "$root/Cargo.toml")"
-cache="${FILMCRAFT_CACHE:-$root/target/upstream/filmcraft}"
-ref="${1:-origin/main}"
+ref="${1:-upstream/main}"
 
-if [ ! -d "$cache/.git" ]; then
-  mkdir -p "$(dirname "$cache")"
-  git clone --quiet --filter=blob:none https://github.com/storytold/filmcraft "$cache"
+if [ ! -d "$dir/.git" ]; then
+  mkdir -p "$(dirname "$dir")"
+  git clone --quiet https://github.com/TramEFX/resolution-filmcraft "$dir"
 fi
-git -C "$cache" fetch --quiet --tags origin
+git -C "$dir" remote get-url upstream >/dev/null 2>&1 || git -C "$dir" remote add upstream https://github.com/storytold/filmcraft
+git -C "$dir" fetch --quiet origin
+git -C "$dir" fetch --quiet --tags upstream
 
-echo "pinned:   $pin  ($url)"
-echo "upstream: $(git -C "$cache" rev-parse --short "$ref")  $(git -C "$cache" log -1 --format=%ci "$ref")"
-echo "commits since pin: $(git -C "$cache" rev-list --count "$pin..$ref")"
-echo "latest tag: $(git -C "$cache" describe --tags --abbrev=0 "$ref" 2>/dev/null || echo none)"
-
-echo
-echo "== engine-relevant churn since pin (files changed) =="
-git -C "$cache" diff --stat "$pin" "$ref" -- crates/engine crates/project crates/format crates/edit crates/platform | tail -n 15
-
-ids() { git -C "$cache" show "$1:crates/engine/src/commands.rs" | grep -oE '(cmd|query)!\(\s*"[A-Za-z0-9_.]+"' | grep -oE '"[^"]+"' | tr -d '"' | sort -u; }
-echo
-echo "== command ids (commands.rs) removed (-) / added (+) since pin =="
-diff <(ids "$pin") <(ids "$ref") | grep -E '^[<>]' | sed 's/^</-/; s/^>/+/' || echo "(none)"
+base="$(git -C "$dir" merge-base "$pin" "$ref")"
+echo "pinned:      $(git -C "$dir" rev-parse --short "$pin") (upstream base $(git -C "$dir" rev-parse --short "$base"), $(git -C "$dir" log -1 --format=%cs "$base"))"
+echo "upstream:    $(git -C "$dir" rev-parse --short "$ref") ($(git -C "$dir" log -1 --format=%cs "$ref"))"
+echo "behind by:   $(git -C "$dir" rev-list --count "$base..$ref") commits"
+echo "latest tag:  $(git -C "$dir" describe --tags --abbrev=0 "$ref" 2>/dev/null || echo none)"
+echo "patch stack: $(git -C "$dir" rev-list --count "$base..$pin") commits"
 
 echo
-echo "== ROADMAP.md changes since pin =="
-git -C "$cache" diff "$pin" "$ref" -- ROADMAP.md | grep -E '^[+-][^+-]' | head -n 60 || echo "(none)"
+echo "== engine-relevant churn (files changed) =="
+git -C "$dir" diff --stat "$base" "$ref" -- crates/engine crates/project crates/format crates/edit crates/platform | tail -n 15
+
+ids() { git -C "$dir" show "$1:crates/engine/src/commands.rs" | grep -oE '(cmd|query)!\(\s*"[A-Za-z0-9_.]+"' | grep -oE '"[^"]+"' | tr -d '"' | sort -u; }
+echo
+echo "== command ids in commands.rs removed (-) / added (+) =="
+diff <(ids "$base") <(ids "$ref") | grep -E '^[<>]' | sed 's/^</-/; s/^>/+/' || echo "(none)"
+
+echo
+echo "== ROADMAP.md changes =="
+git -C "$dir" diff "$base" "$ref" -- ROADMAP.md | grep -E '^[+-][^+-]' | head -n 60 || echo "(none)"

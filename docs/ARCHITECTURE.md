@@ -55,17 +55,38 @@
 Its tests are the upstream-drift gate: every vocabulary id must be mapped, and every FilmCraft id
 we map to must still exist at the pinned revision.
 
-## MCP design (next milestone)
+## MCP server (`crates/mcp`)
 
-Lessons from existing video MCP servers (details in the research report):
+`resolution mcp [--project <path> | --demo]` serves MCP over stdio; `.mcp.json` wires it into
+Claude Code for this repo. It is engine-agnostic (it only sees the `Engine` trait).
 
-- **Page-scoped tool domains loaded on demand** (Media, Cut, Edit, Fusion, Color, Fairlight,
-  Deliver, Project) behind a small always-loaded kernel: `list_domains`, `activate_domain`,
-  `search_commands`, `describe_command`, `run_command`. Not one tool per command.
-- **One result envelope:** operation id, diff summary, undo label, known limitations.
-- **Safety:** dry-run on every mutating tool; risk tiers with explicit `acknowledge` for
-  destructive operations; snapshot before mutation; source media is never modified; analysis
-  goes to sidecars.
-- **Agents work on a draft timeline** the user reviews and accepts.
-- **See what it did:** `render_frame` (PNG) plus numeric scope readouts.
-- **Transport:** stdio by default; any HTTP transport binds to loopback with a per-launch token.
+Ten fixed tools, not one per command: an agent's starting context stays small and the surface
+works with every MCP client (no dynamic tool lists needed). Resolve's pages organise discovery
+instead of tool loading.
+
+| Tool | What |
+|---|---|
+| `list_pages` | Resolve's pages and how many commands each offers. Start here. |
+| `search_commands` | By text, page, or Resolve shortcut (`Mod+B`, `F9`). Results carry page, risk, params, Resolve keys, and how this engine differs from Resolve. `include_raw` reaches the engine's own commands. |
+| `run` | One command. Returns result, undo label, and `timeline_changes` (a diff of the timeline, matched by clip/track id). `dry_run` measures then reverts. |
+| `run_batch` | Steps checked up front (preflight); `atomic` (default) undoes completed steps on failure; `dry_run` reverts everything after measuring the combined change. |
+| `inspect` | `timeline`, `project`, or `session` (edits made through this connection, checkpoints). |
+| `render_frame` | Program viewer as PNG at a time, without moving the playhead. |
+| `undo` / `redo` | Shared history with the user. |
+| `checkpoint` / `restore_checkpoint` | Name a point; undo this connection's edits back to it. |
+
+Resources: `resolution://timeline`, `resolution://commands`.
+
+Safety rules:
+
+- **Risk tiers** on every command (`read`, `edit`, `destructive`). Destructive commands (open or
+  save project files, delete files, exports) need `acknowledge: true`, cannot be dry-run, and may
+  only be the last step of an atomic batch.
+- **Strict arguments:** unknown fields are rejected, so a typo never silently does the default.
+- **Unknown commands** get suggestions; vocabulary commands the engine can't do headless say so.
+- Engine panics become an error for that call; the session survives.
+
+Still to build (from the research's lessons): agents editing a **draft timeline** the user
+accepts; provenance **receipts** per operation; per-command **JSON Schemas** (today `params` is a
+description string, as upstream FilmCraft has it, issue #347); an HTTP transport on loopback with
+a per-launch token; scope readouts so agents can grade by numbers.
