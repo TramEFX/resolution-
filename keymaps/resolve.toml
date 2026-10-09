@@ -1,0 +1,229 @@
+# DaVinci Resolve default keyboard, mapped onto Resolution command ids.
+#
+# Key notation: `Mod` = Cmd on macOS, Ctrl on Windows/Linux. `Alt` = Option on macOS.
+# Key assignments are functional facts about how Resolve is operated; no Blackmagic files are used.
+#
+# STATUS: seed table. Every entry must be checked against Resolve's own default map
+# (DaVinci Resolve > Keyboard Customization, "DaVinci Resolve" preset) before 1.0.
+# Mark an entry `verified = true` once it has been checked on a real Resolve install.
+
+[meta]
+name = "DaVinci Resolve"
+resolve_version = "20"
+
+# ---- pages ----
+[[bind]]
+keys = "Shift+2"
+command = "page.media"
+[[bind]]
+keys = "Shift+3"
+command = "page.cut"
+[[bind]]
+keys = "Shift+4"
+command = "page.edit"
+[[bind]]
+keys = "Shift+5"
+command = "page.fusion"
+[[bind]]
+keys = "Shift+6"
+command = "page.color"
+[[bind]]
+keys = "Shift+7"
+command = "page.fairlight"
+[[bind]]
+keys = "Shift+8"
+command = "page.deliver"
+
+# ---- history and clipboard ----
+[[bind]]
+keys = "Mod+Z"
+command = "edit.undo"
+[[bind]]
+keys = "Mod+Shift+Z"
+command = "edit.redo"
+[[bind]]
+keys = "Mod+X"
+command = "edit.cut"
+[[bind]]
+keys = "Mod+C"
+command = "edit.copy"
+[[bind]]
+keys = "Mod+V"
+command = "edit.paste"
+[[bind]]
+keys = "Mod+Shift+V"
+command = "edit.pasteInsert"
+[[bind]]
+keys = "Alt+V"
+command = "edit.pasteAttributes"
+[[bind]]
+keys = "Mod+A"
+command = "edit.selectAll"
+[[bind]]
+keys = "Mod+Shift+A"
+command = "edit.deselectAll"
+[[bind]]
+keys = "Mod+S"
+command = "project.save"
+[[bind]]
+keys = "Mod+I"
+command = "media.import"
+
+# ---- transport ----
+[[bind]]
+keys = "Space"
+command = "playback.playStop"
+[[bind]]
+keys = "J"
+command = "playback.reverse"
+[[bind]]
+keys = "K"
+command = "playback.stop"
+[[bind]]
+keys = "L"
+command = "playback.forward"
+[[bind]]
+keys = "Mod+/"
+command = "playback.loop"
+[[bind]]
+keys = "Alt+/"
+command = "playback.inToOut"
+[[bind]]
+keys = "Left"
+command = "playhead.previousFrame"
+[[bind]]
+keys = "Right"
+command = "playhead.nextFrame"
+[[bind]]
+keys = "Up"
+command = "playhead.previousEdit"
+[[bind]]
+keys = "Down"
+command = "playhead.nextEdit"
+[[bind]]
+keys = "Home"
+command = "playhead.timelineStart"
+[[bind]]
+keys = "End"
+command = "playhead.timelineEnd"
+
+# ---- marking ----
+[[bind]]
+keys = "I"
+command = "mark.in"
+[[bind]]
+keys = "O"
+command = "mark.out"
+[[bind]]
+keys = "X"
+command = "mark.clip"
+[[bind]]
+keys = "Alt+I"
+command = "mark.clearIn"
+[[bind]]
+keys = "Alt+O"
+command = "mark.clearOut"
+[[bind]]
+keys = "Alt+X"
+command = "mark.clearInOut"
+[[bind]]
+keys = "M"
+command = "marker.add"
+[[bind]]
+keys = "Shift+Down"
+command = "marker.next"
+[[bind]]
+keys = "Shift+Up"
+command = "marker.previous"
+
+# ---- edit modes ----
+[[bind]]
+keys = "A"
+command = "mode.selection"
+[[bind]]
+keys = "T"
+command = "mode.trim"
+[[bind]]
+keys = "B"
+command = "mode.blade"
+[[bind]]
+keys = "W"
+command = "mode.dynamicTrim"
+
+# ---- source → timeline edits ----
+[[bind]]
+keys = "F9"
+command = "edit.insert"
+[[bind]]
+keys = "F10"
+command = "edit.overwrite"
+[[bind]]
+keys = "F11"
+command = "edit.replace"
+[[bind]]
+keys = "F12"
+command = "edit.placeOnTop"
+[[bind]]
+keys = "Shift+F10"
+command = "edit.rippleOverwrite"
+[[bind]]
+keys = "Shift+F11"
+command = "edit.fitToFill"
+[[bind]]
+keys = "Shift+F12"
+command = "edit.appendAtEnd"
+
+# ---- timeline ----
+[[bind]]
+keys = "Mod+B"
+command = "timeline.split"
+[[bind]]
+keys = "Mod+\\"
+command = "timeline.split"
+[[bind]]
+keys = "Backspace"
+command = "timeline.delete"
+[[bind]]
+keys = "Shift+Backspace"
+command = "timeline.rippleDelete"
+[[bind]]
+keys = "Delete"
+command = "timeline.rippleDelete"
+[[bind]]
+keys = "Mod+Shift+["
+command = "timeline.rippleStartToPlayhead"
+[[bind]]
+keys = "Mod+Shift+]"
+command = "timeline.rippleEndToPlayhead"
+[[bind]]
+keys = "D"
+command = "timeline.toggleClipEnable"
+[[bind]]
+keys = "F"
+command = "timeline.matchFrame"
+[[bind]]
+keys = "Mod+T"
+command = "timeline.addTransition"
+[[bind]]
+keys = "Shift+T"
+command = "timeline.addVideoTransition"
+[[bind]]
+keys = "Alt+T"
+command = "timeline.addAudioTransition"
+[[bind]]
+keys = "N"
+command = "timeline.snapping"
+[[bind]]
+keys = "Mod+Shift+L"
+command = "timeline.linkedSelection"
+
+# ---- view ----
+[[bind]]
+keys = "Mod+="
+command = "view.zoomIn"
+[[bind]]
+keys = "Mod+-"
+command = "view.zoomOut"
+[[bind]]
+keys = "Shift+Z"
+command = "view.zoomToFit"

@@ -1,0 +1,80 @@
+[workspace]
+resolver = "3"
+members = ["crates/engine-api", "crates/filmcraft-adapter", "crates/keymap", "apps/resolution-cli"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[workspace.dependencies]
+# internal
+resolution-engine-api = { path = "crates/engine-api" }
+resolution-filmcraft-adapter = { path = "crates/filmcraft-adapter" }
+resolution-keymap = { path = "crates/keymap" }
+
+# The engine. Pinned to a tested upstream commit; bump it with scripts/sync-upstream.sh
+# (docs/UPSTREAM.md). Only crates/filmcraft-adapter may depend on filmcraft-* crates.
+filmcraft-engine = { git = "https://github.com/storytold/filmcraft", rev = "7b6c134472287db4367fca80bcb498240ba36567" }
+
+# foundation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "0.9"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+dbg_macro = "warn"
+
+# Upstream's codec hot loops need opt-level 3 even in dev builds; profile settings do not
+# carry over from a dependency's workspace, so they are mirrored here.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.filmcraft-h264]
+opt-level = 3
+
+[profile.dev.package.filmcraft-h264enc]
+opt-level = 3
+
+[profile.dev.package.filmcraft-hevc]
+opt-level = 3
+
+[profile.dev.package.filmcraft-prores]
+opt-level = 3
+
+[profile.dev.package.filmcraft-dnx]
+opt-level = 3
+
+[profile.dev.package.filmcraft-apv]
+opt-level = 3
+
+[profile.dev.package.filmcraft-av1]
+opt-level = 3
+
+[profile.dev.package.filmcraft-aac]
+opt-level = 3
+
+[profile.dev.package.filmcraft-audio-dsp]
+opt-level = 3
+
+[profile.dev.package.filmcraft-mxf]
+opt-level = 3
+
+[profile.dev.package.filmcraft-opus]
+opt-level = 3
+
+[profile.dev.package.filmcraft-vp9]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

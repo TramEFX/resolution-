@@ -1,0 +1,55 @@
+# Resolution
+
+An AI-native video editor in Rust that feels like home to DaVinci Resolve users.
+
+*"Resolution" is an internal codename. Run a trademark clearance before any public release
+(see [docs/research](docs/research/) — risk #14).*
+
+## Two invariants
+
+1. **Home for Resolve users.** Resolve's pages (Media, Cut, Edit, Fusion, Color, Fairlight,
+   Deliver), its edit types, its names for things and its default keyboard. A Resolve editor
+   should be productive in the first minute. We copy workflow and keys (functional); we never copy
+   Blackmagic's icons, artwork, styling or files.
+2. **AI-native from the ground up.** Every action, by a person or an agent, is a named command on
+   one engine, through one undo history. The MCP server is a first-class client, not a plugin;
+   the UI is just another client of the same command API.
+
+## How it is built
+
+- **Engine:** [FilmCraft](https://github.com/storytold/filmcraft) (MIT OR Apache-2.0), consumed as
+  pinned git dependencies. Upstream improvements are merged by moving one pin;
+  see [docs/UPSTREAM.md](docs/UPSTREAM.md).
+- **Boundary:** everything above the engine speaks Resolution's own command vocabulary through the
+  `Engine` trait in `crates/engine-api`. Only `crates/filmcraft-adapter` knows FilmCraft exists.
+  Swapping engines means writing one new adapter. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+| Path | What |
+|---|---|
+| `crates/engine-api` | `Engine` trait, command vocabulary (Resolve names, grouped by page), result and frame types |
+| `crates/filmcraft-adapter` | `Engine` on FilmCraft's headless `Session`; the Resolution→FilmCraft command map and the upstream-drift test |
+| `crates/keymap` | Keymaps as data; validates `keymaps/*.toml` against the vocabulary |
+| `keymaps/resolve.toml` | DaVinci Resolve default keyboard (seed; being verified) |
+| `apps/resolution-cli` | Headless CLI: `resolution commands`, `resolution keys`, `resolution run …` |
+
+## Try it
+
+```sh
+cargo test
+cargo run -p resolution-cli -- commands
+cargo run -p resolution-cli -- keys
+cargo run -p resolution-cli -- run project.inspect
+```
+
+## Docs
+
+- [Architecture and invariants](docs/ARCHITECTURE.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Tracking FilmCraft upstream](docs/UPSTREAM.md)
+- [Watch list: FilmCraft coverage and progress](docs/WATCHLIST.md)
+- [Engine research report (Oct 2026)](docs/research/FilmCraft%20engine%20alternatives.md)
+
+## Licence
+
+Not chosen yet. MIT OR Apache-2.0 (matching FilmCraft) is the default candidate. FilmCraft's
+licence and NOTICE apply to the engine code we depend on; see [NOTICE](NOTICE).

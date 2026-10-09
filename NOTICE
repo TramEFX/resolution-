@@ -1,0 +1,11 @@
+Resolution depends on FilmCraft (https://github.com/storytold/filmcraft),
+Copyright (c) the FilmCraft contributors, licensed under MIT OR Apache-2.0.
+FilmCraft's NOTICE and licence files apply to that code.
+
+The ArtCraft and FilmCraft names and logos are trademarks of their owners and are not licensed
+under MIT or Apache-2.0. Distributed builds of Resolution must not carry them
+(FilmCraft docs/brand/LICENSE-brand.txt).
+
+DaVinci Resolve is a trademark of Blackmagic Design. Resolution is not affiliated with or
+endorsed by Blackmagic Design. Keyboard assignments are reproduced as functional facts; no
+Blackmagic software, artwork or files are included.
