@@ -37,7 +37,10 @@ doc is updated *and* the entry says which section moved.
 | D-007 | 2026-10-09 | ci | Mirror CI builds with cargo's stock release settings | active |
 | B-004 | 2026-10-09 | ci | Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests | fixed by D-008 |
 | D-008 | 2026-10-09 | ci | Mirror CI uses a pinned static ffmpeg and requires the oracle tests | active |
-| B-005 | 2026-10-10 | ci | Upstream's GPU parity tests fail on a GPU-less runner's software OpenGL | open |
+| B-005 | 2026-10-10 | ci | Upstream's GPU parity tests fail on a GPU-less runner's software OpenGL | fixed |
+| D-009 | 2026-10-10 | ci | Mirror CI runs every test binary before the gate | active |
+| B-006 | 2026-10-10 | ci | Upstream's Japanese-UI test needs a system CJK font the runner lacks | open |
+| B-007 | 2026-10-10 | ci | Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1× | open |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -215,6 +218,11 @@ still uses thin LTO and one codegen unit.
 In the first run, no new crate started compiling for 136 minutes: a few large crates sat in
 single-unit release codegen. The layer, asset and wasm phases have not run under either setting yet.
 
+**Correction (2026-10-10):** the Cost paragraph says these settings change "how well code is optimised,
+not what correct code does". That misses one case: speed tests, which measure exactly that. Checked
+for the only speed test that fails in CI (B-007): no measurable difference, 4.4× realtime under
+both settings. So that failure comes from the runner, not from this decision.
+
 ### B-004 — Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests
 **Area:** ci · **Status:** fixed by D-008 · **Caught by:** running it (mirror run 38000818366)
 
@@ -267,7 +275,7 @@ no pinned ffmpeg yet, so their oracle tests still skip when ffmpeg is missing.
 ffmpeg can read APV (not checked), apt would remove the third-party download.
 
 ### B-005 — Upstream's GPU parity tests fail on a GPU-less runner's software OpenGL
-**Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38005601927)
+**Area:** ci · **Status:** fixed · **Caught by:** running it (mirror run 38005601927)
 
 **Symptom:** `filmcraft-golden`'s 4 GPU-vs-CPU parity tests (`gpu_matches_cpu_on_golden_scenes`,
 `gpu_blend_modes_match_cpu_render`, `gpu_transition_of_blended_clips_matches_cpu_render`,
@@ -285,10 +293,61 @@ software OpenGL (llvmpipe). The log does not name it. Same shape as B-004: the t
 missing tool, but not a present one that lacks a capability. Upstream develops on Macs with real
 GPUs, so it never sees this.
 
-**Fix options** (not yet chosen):
+**Fixed** (mirror `1e65df6`, run 38016792934): the apt step installs `libvulkan1 mesa-vulkan-drivers
+vulkan-tools`, and a step checks `vulkaninfo --summary` for a CPU-type device. The runner reported
+`llvmpipe (LLVM 20.1.2, 256 bits)`, `PHYSICAL_DEVICE_TYPE_CPU`, and all 4 GPU parity tests passed.
+Why wgpu picked Vulkan over the OpenGL adapter, from wgpu 30.0.1's source: with default options
+(`PowerPreference::None`) it does not sort adapters, and it adds backends in the order Vulkan,
+Metal, DX12, GLES.
+
+**Fix options considered:**
 - Install Mesa's software Vulkan driver (lavapipe, Ubuntu's `mesa-vulkan-drivers`). Vulkan
   requires `R32G32B32A32_SFLOAT` to be renderable. Unverified: whether wgpu then picks Vulkan over
   the OpenGL adapter, and whether software rendering stays within the parity tolerances.
 - Upstream: have `device()` also skip when the adapter cannot render `Rgba32Float`.
 - Run the workspace tests with `--no-fail-fast` before the gate, so one run lists every failure
   instead of one per 25-minute run.
+
+### D-009 — Mirror CI runs every test binary before the gate
+**Area:** ci · **Status:** active · **Doc:** mirror commit `1e65df6` (step "cargo test, every failure")
+
+**Decision:** before `cargo xtask ci`, the workflow runs `cargo test --workspace --release
+--no-fail-fast` with `continue-on-error`. The gate after it still decides the result. The job's
+limit rose from 180 to 240 minutes (60 for this pass, 165 for the gate).
+
+**Why:** the gate's `cargo test` stops at the first failing test binary, so each ~25-minute run
+showed one failure (B-004, then B-005). The first run with this pass listed the whole state at once:
+219 binaries, 2,293 passed, 2 failed, 40 ignored, 0 skipped. **Cost:** the gate reuses this pass's
+builds (same profile and flags), so it adds only the second test execution, about 4 minutes.
+
+### B-006 — Upstream's Japanese-UI test needs a system CJK font the runner lacks
+**Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38016792934, the D-009 pass)
+
+**Symptom:** `filmcraft-ui-egui`'s `i18n::tests::language_commands_switch_and_persist_without_a_document`
+failed with `no Japanese font is installed on this system (for example Noto Sans CJK JP); the
+interface stays in English`.
+
+**Root cause:** FilmCraft bundles no Japanese UI font unless built with `CRAFT_FONTS_DIR`. Otherwise
+it scans the system font folders for a face covering its Japanese sample text (`Noto Sans CJK JP`,
+`Noto Sans JP`, …). The runner has none, and the test unwraps the result instead of skipping.
+
+**Fix:** install Ubuntu's `fonts-noto-cjk` in the apt step. Not yet applied.
+
+### B-007 — Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1×
+**Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38016792934, both test passes)
+
+**Symptom:** `filmcraft-render`'s `mixer_tests::perf_24_tracks_3_effects_realtime_factor` reported
+`10 s of 48 kHz stereo in 4.804 s of CPU on one core = 2.1x realtime` and failed `realtime factor
+2.08`. The test requires more than 4.0× in release builds (1.0× in debug). On Unix it measures the
+thread's own CPU time, so other work on the runner is not the cause.
+
+**Root cause:** single-core speed. D-007 was ruled out by measurement. On this Windows desktop (16
+threads), the test was built from the pinned source both ways and run three times each, alternating:
+- upstream's profile (thin LTO, 1 codegen unit): 2.273 / 2.253 / 2.272 s, 4.4×;
+- the CI profile (no LTO, 16 codegen units): 2.250 / 2.288 / 2.247 s, 4.4–4.5×.
+
+The runner took 4.804 s for the same work, about 2.1× slower per core. Even this desktop clears
+the threshold by only ~10%. Caveat: on Windows the test times wall-clock instead of thread CPU. It
+ran single-threaded on an idle machine, and both variants were measured the same way.
+
+**Fix options:** not yet chosen.
