@@ -35,7 +35,9 @@ doc is updated *and* the entry says which section moved.
 | D-006 | 2026-10-09 | testing | MCP tested end to end over stdio, in both protocol modes | active |
 | B-003 | 2026-10-09 | ci | Mirror CI saved no cache on a failed run, and never caches the engine crates | mitigated |
 | D-007 | 2026-10-09 | ci | Mirror CI builds with cargo's stock release settings | active |
-| B-004 | 2026-10-09 | ci | Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests | open |
+| B-004 | 2026-10-09 | ci | Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests | fixed by D-008 |
+| D-008 | 2026-10-09 | ci | Mirror CI uses a pinned static ffmpeg and requires the oracle tests | active |
+| B-005 | 2026-10-10 | ci | Upstream's GPU parity tests fail on a GPU-less runner's software OpenGL | open |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -214,7 +216,7 @@ In the first run, no new crate started compiling for 136 minutes: a few large cr
 single-unit release codegen. The layer, asset and wasm phases have not run under either setting yet.
 
 ### B-004 — Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests
-**Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38000818366)
+**Area:** ci · **Status:** fixed by D-008 · **Caught by:** running it (mirror run 38000818366)
 
 **Symptom:** the gate failed in `cargo test --workspace --release` at `filmcraft-apv`'s
 `tests/oracle.rs`. All 3 tests failed with ffmpeg's `Unknown input format: 'apv'`. Cargo stops at
@@ -227,9 +229,66 @@ tests compare its decoders with the system ffmpeg, and upstream (developing on m
 current Homebrew ffmpeg) documents no minimum version. Its test kit skips an oracle test only when
 ffmpeg is *missing*. When ffmpeg is present but too old, the test fails.
 
-**Fix options** (not yet chosen):
+**Fixed** by D-008 (mirror `3ea75ec`). In run 38005601927, all three APV oracle binaries passed
+(`decoder_oracle`, `encoder_oracle`, `oracle`) with ffmpeg 9.0.2, and 51 test binaries passed
+before the next failure (B-005).
+
+**Fix options considered:**
 - Install a current static ffmpeg in CI and point `FILMCRAFT_FFMPEG` / `FILMCRAFT_FFPROBE` at it.
   This means downloading a third-party binary into CI; pin it by version and checksum.
 - Also set `FILMCRAFT_REQUIRE_ORACLES=1`, which upstream's docs/testing.md recommends for CI. It
   turns a skipped oracle test into a failure, so CI cannot pass by quietly skipping.
 - Upstream: have the APV oracle test skip, or fail clearly, when ffmpeg lacks the `apv` format.
+
+### D-008 — Mirror CI uses a pinned static ffmpeg and requires the oracle tests
+**Area:** ci · **Status:** active · **Doc:** mirror commit `3ea75ec` (`mirror-ci.yml`, step "ffmpeg for the oracle tests")
+
+**Decision:** the Linux gate no longer installs ffmpeg from apt. It downloads BtbN/FFmpeg-Builds'
+static `ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz` from release
+`autobuild-2026-09-30-13-08`, checks it against SHA-256 `68ee6468…d66269` (the value BtbN
+publishes in that release's `checksums.sha256`), confirms it lists the `apv` format, and points
+`FILMCRAFT_FFMPEG`, `FILMCRAFT_FFPROBE` and `PATH` at it. It also sets
+`FILMCRAFT_REQUIRE_ORACLES=1`, so a missing oracle fails the gate instead of skipping.
+
+**Why this source:** BtbN is the most widely used static FFmpeg build on GitHub. It deletes daily
+builds after about a month but keeps each month-end build (the oldest kept was November 2024), so
+a month-end URL stays valid. 9.0 is the newest stable FFmpeg branch. The checksum means the bytes
+cannot change under the pin. Checked before use: the tarball matched the published SHA-256. In WSL
+Ubuntu, it reported ffmpeg/ffprobe `n9.0.2-17-g2a571b6068-20260930`, the `apv` demuxer and
+decoder, and all 7 pixel formats the APV oracle test uses. The step's script ran cleanly under
+`bash -e` against the same file.
+
+**Cost and trust:** CI now runs a third-party binary. The pin and checksum fix *which* binary,
+but trusting its contents still means trusting BtbN's build pipeline. The oracle tests only read
+ffmpeg's output, and the runner holds no secrets beyond the job token. Windows and macOS runs get
+no pinned ffmpeg yet, so their oracle tests still skip when ffmpeg is missing.
+
+**Alternative to revisit:** `ubuntu-latest` moves to Ubuntu 26.04 from 2026-10-19. If 26.04's apt
+ffmpeg can read APV (not checked), apt would remove the third-party download.
+
+### B-005 — Upstream's GPU parity tests fail on a GPU-less runner's software OpenGL
+**Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38005601927)
+
+**Symptom:** `filmcraft-golden`'s 4 GPU-vs-CPU parity tests (`gpu_matches_cpu_on_golden_scenes`,
+`gpu_blend_modes_match_cpu_render`, `gpu_transition_of_blended_clips_matches_cpu_render`,
+`gpu_effect_chains_match_cpu_render`) panicked in wgpu 30.0.1 with `Validation Error … In
+Device::create_render_pipeline, label = 'fx-source' … Format Rgba32Float is not renderable`. Its 29
+CPU golden tests passed. As before, cargo stopped at this binary, so the rest of the workspace and
+the layer, asset and wasm checks still have not run in CI.
+
+**Root cause, partly inferred:** the runner has no GPU. The tests skip only when wgpu finds *no*
+adapter; here it found one that cannot render to `Rgba32Float`. The test asks for
+`wgpu::Instance::default()` with default adapter options. In wgpu 30 that does not read
+`WGPU_BACKEND` (checked in the wgpu source), so CI cannot force a backend. The only graphics
+driver the apt step pulls in is Mesa's EGL/OpenGL (`libegl-mesa0`), so the adapter was very likely
+software OpenGL (llvmpipe). The log does not name it. Same shape as B-004: the tests handle a
+missing tool, but not a present one that lacks a capability. Upstream develops on Macs with real
+GPUs, so it never sees this.
+
+**Fix options** (not yet chosen):
+- Install Mesa's software Vulkan driver (lavapipe, Ubuntu's `mesa-vulkan-drivers`). Vulkan
+  requires `R32G32B32A32_SFLOAT` to be renderable. Unverified: whether wgpu then picks Vulkan over
+  the OpenGL adapter, and whether software rendering stays within the parity tolerances.
+- Upstream: have `device()` also skip when the adapter cannot render `Rgba32Float`.
+- Run the workspace tests with `--no-fail-fast` before the gate, so one run lists every failure
+  instead of one per 25-minute run.
