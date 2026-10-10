@@ -44,7 +44,7 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 | Area | State |
 |---|---|
 | Engine | FilmCraft v0.4.0+ (`7b6c134`) via the private mirror, pinned at `sync/fc-20261009` |
-| Mirror CI | First run of FilmCraft's own gate (`cargo xtask ci`, Linux) was in progress at hand-off: https://github.com/TramEFX/resolution-filmcraft/actions/runs/37984421765 |
+| Mirror CI | **Green** for the pin: run [38019701912](https://github.com/TramEFX/resolution-filmcraft/actions/runs/38019701912) (2026-10-10, Linux), engine code identical to `2ba0629`: 2,294 tests passed, 0 failed; layers, assets, wasm ok; ~23 min. Getting there took six fixes to the CI environment (LOG B-003 to B-007, D-007 to D-010) |
 | Engine boundary | `engine-api` trait + vocabulary (71 Resolve-named commands; 46 run headless on FilmCraft today, the rest are front-end or not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
 | MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 30 tests across the workspace (passing on Windows), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
@@ -56,9 +56,10 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 
 ## 4. Next steps (pick any)
 
-1. **If mirror CI failed:** read the log at the link above. A failure in FilmCraft's own tests is
-   upstream's bug, not ours: note it, report it upstream if new, and keep the pin (our adapter
-   tests passed against this commit).
+1. **Report upstream** what mirror CI found (LOG B-004 to B-007): FilmCraft's tests assume a
+   recent ffmpeg, a real GPU, a Japanese system font, and an unloaded CPU for one speed test.
+   The fixes are small (skip or fail clearly when the tool lacks a capability), and they shrink
+   what our CI has to work around. A failure in FilmCraft's own tests is upstream's bug, not ours.
 2. **Real footage:** run `resolution mcp --project …` or `resolution run raw.filmcraft/file.import
    '{"paths":["clip.mp4"]}' …` on your own camera and phone files; note what fails to import or
    play (research risk #6). This decides how soon we need a fallback decoder.

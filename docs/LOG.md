@@ -38,9 +38,10 @@ doc is updated *and* the entry says which section moved.
 | B-004 | 2026-10-09 | ci | Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests | fixed by D-008 |
 | D-008 | 2026-10-09 | ci | Mirror CI uses a pinned static ffmpeg and requires the oracle tests | active |
 | B-005 | 2026-10-10 | ci | Upstream's GPU parity tests fail on a GPU-less runner's software OpenGL | fixed |
-| D-009 | 2026-10-10 | ci | Mirror CI runs every test binary before the gate | active |
+| D-009 | 2026-10-10 | ci | Mirror CI runs every test binary before the gate | folded into D-010 |
 | B-006 | 2026-10-10 | ci | Upstream's Japanese-UI test needs a system CJK font the runner lacks | open |
-| B-007 | 2026-10-10 | ci | Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1× | open |
+| B-007 | 2026-10-10 | ci | Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1× | worked around by D-010; cause corrected |
+| D-010 | 2026-10-10 | ci | Mirror CI runs upstream's gate phase by phase, leaving out one speed test | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -221,7 +222,8 @@ single-unit release codegen. The layer, asset and wasm phases have not run under
 **Correction (2026-10-10):** the Cost paragraph says these settings change "how well code is optimised,
 not what correct code does". That misses one case: speed tests, which measure exactly that. Checked
 for the only speed test that fails in CI (B-007): no measurable difference, 4.4× realtime under
-both settings. So that failure comes from the runner, not from this decision.
+both settings. So that failure comes from the runner, not from this decision. (Its actual
+cause is in B-007's correction: contention inside the suite.)
 
 ### B-004 — Mirror CI's ffmpeg (Ubuntu 6.1.1) cannot read APV, failing upstream's APV oracle tests
 **Area:** ci · **Status:** fixed by D-008 · **Caught by:** running it (mirror run 38000818366)
@@ -309,7 +311,7 @@ Metal, DX12, GLES.
   instead of one per 25-minute run.
 
 ### D-009 — Mirror CI runs every test binary before the gate
-**Area:** ci · **Status:** active · **Doc:** mirror commit `1e65df6` (step "cargo test, every failure")
+**Area:** ci · **Status:** folded into D-010 (the separate pass is gone; the gate's own `test` phase runs `--no-fail-fast`) · **Doc:** mirror commit `1e65df6` (step "cargo test, every failure")
 
 **Decision:** before `cargo xtask ci`, the workflow runs `cargo test --workspace --release
 --no-fail-fast` with `continue-on-error`. The gate after it still decides the result. The job's
@@ -331,7 +333,7 @@ interface stays in English`.
 it scans the system font folders for a face covering its Japanese sample text (`Noto Sans CJK JP`,
 `Noto Sans JP`, …). The runner has none, and the test unwraps the result instead of skipping.
 
-**Fix:** install Ubuntu's `fonts-noto-cjk` in the apt step. Not yet applied.
+**Fix:** install Ubuntu's `fonts-noto-cjk` in the apt step (mirror `e199881`).
 
 ### B-007 — Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1×
 **Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38016792934, both test passes)
@@ -350,4 +352,47 @@ The runner took 4.804 s for the same work, about 2.1× slower per core. Even thi
 the threshold by only ~10%. Caveat: on Windows the test times wall-clock instead of thread CPU. It
 ran single-threaded on an idle machine, and both variants were measured the same way.
 
-**Fix options:** not yet chosen.
+**Worked around** by D-010: CI leaves this one test out of the gate and runs it alone,
+report-only, so its realtime factor is still logged at every sync. The real fix is upstream: a
+threshold that does not assume a fast developer machine.
+
+**Correction (2026-10-10, run 38019701912):** the root cause above is wrong. Run alone on the same
+runner type, the test measured **6.6× realtime (1.523 s)**, faster than this desktop. The 2.1×
+figures (4.804 s and 4.825 s, both passes of run 38016792934) were measured *inside the full
+suite*, beside ~150 other `filmcraft-render` tests running in parallel. So the failure is most
+likely contention, even though the test measures its own thread's CPU time: threads sharing a
+core still slow each other through hyperthreading and shared caches. Not proven: the logs do not
+name the CPU, so the two runs may have had different hardware. One job measuring the test both
+in the suite and alone would settle it. The "Fix" line stands, but the upstream issue is a
+speed test that is sensitive to parallel load, not one tuned for fast machines. The mirror's
+workflow comments were corrected in `023f52f`.
+
+### D-010 — Mirror CI runs upstream's gate phase by phase, leaving out one speed test
+**Area:** ci · **Status:** active · **Doc:** UPSTREAM.md "Mirror branches"; mirror commit `e199881`
+
+**Decision:** CI no longer runs `cargo xtask ci` as one step. It runs that command's phases as
+separate steps, with upstream's exact arguments: `fmt --check`; `clippy --workspace --all-targets
+--release -- -D warnings`; `test --workspace --release`; `xtask layers`; `xtask assets`;
+`xtask wasm`. There are two differences. `test` adds `--no-fail-fast` (D-009) and
+`--skip mixer_tests::perf_24_tracks_3_effects_realtime_factor` (B-007). That test then runs alone,
+`continue-on-error`, so its number is logged without deciding the result. Every phase runs even if
+an earlier one failed, and each has its own time limit inside the job's 240 minutes.
+
+**Guard against drift:** a step before the phases compares `fn ci` in `xtask/src/main.rs` with a copy
+kept in the workflow. If upstream changes it, CI fails with a diff, saying the phases must be
+updated. Checked: it passes on the pinned source, and flags a simulated edit with a readable diff.
+
+**Why** (chosen over patching the test's threshold, or leaving the gate red): the test's 4× bar
+assumes a fast developer machine; the runner is ~2.1× slower per core (B-007). Splitting the gate
+keeps FilmCraft's code untouched, so no engine patch has to be carried and rebased at every sync.
+It also shows which phase failed. **Cost:** CI no longer literally runs `cargo xtask ci`. The
+drift guard makes any divergence loud rather than silent, but the phases must be kept in step by
+hand when it fires. Before any switch to upstream's own gate, check that `--skip` is still needed.
+The Why above repeats B-007's original cause; see B-007's correction.
+
+**Result: green.** Run 38019701912 on `resolution` @ `e199881` passed every phase in 23m20s:
+fmt 3s; clippy 41s; test 17m35s (219 binaries, 2,294 passed, 0 failed, 40 ignored, 1 left out,
+0 skipped); mixer speed alone 6.6×; `layers: ok`; `assets: ok (69 assets attributed)`;
+`wasm: ok (42 crates)`. Between the pin `2ba0629` and `e199881` the only changed file is
+`.github/workflows/mirror-ci.yml` (GitHub compare), so **this run confirms the pinned engine
+code.**
