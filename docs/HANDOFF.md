@@ -43,12 +43,12 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 
 | Area | State |
 |---|---|
-| Engine | FilmCraft v0.4.0+ (`7b6c134`) via the private mirror, pinned at `sync/fc-20261009` |
-| Mirror CI | **Green** for the pin: run [38019701912](https://github.com/TramEFX/resolution-filmcraft/actions/runs/38019701912) (2026-10-10, Linux), engine code identical to `2ba0629`: 2,294 tests passed, 0 failed; layers, assets, wasm ok; ~23 min. Getting there took six fixes to the CI environment (LOG B-003 to B-007, D-007 to D-010) |
+| Engine | FilmCraft **v0.6.0** (`2ff3f5e`) via the private mirror, pinned at `sync/fc-20261012` (`9acf816`), synced 2026-10-12 (LOG D-011) |
+| Mirror CI | **Green** for the pin: run [38216382326](https://github.com/TramEFX/resolution-filmcraft/actions/runs/38216382326) (2026-10-12, Linux, ~46 min) on the sync point: 2,808 tests passed, 0 failed, 0 skipped; layers, assets, wasm ok. The mixer speed test stays outside the gate (LOG B-007) |
 | Engine boundary | `engine-api` trait + vocabulary (71 Resolve-named commands; 46 run headless on FilmCraft today, the rest are front-end or not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
 | MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 30 tests across the workspace (passing on Windows), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
-| GPU parity, real hardware | Local, 2026-10-12: FilmCraft's 33 golden tests pass, the 4 GPU-vs-CPU ones on an AMD Radeon RX 9070 XT through Vulkan (the adapter wgpu's default request picks, checked with a probe). CI covers the same tests on software Vulkan (LOG B-005) |
+| GPU parity, real hardware | Local, 2026-10-12, at the previous pin (`2ba0629`): FilmCraft's 33 golden tests pass, the 4 GPU-vs-CPU ones on an AMD Radeon RX 9070 XT through Vulkan (the adapter wgpu's default request picks, checked with a probe). CI covers the same tests on software Vulkan (LOG B-005) |
 | UI | Not started (M2) |
 | CI for this repo | None yet: needs a token that can read the private mirror |
 

@@ -16,10 +16,10 @@ resolution-keymap = { path = "crates/keymap" }
 resolution-mcp = { path = "crates/mcp" }
 
 # The engine: FilmCraft via Resolution's private mirror (TramEFX/resolution-filmcraft), pinned to
-# a sync point's commit (branch sync/fc-20261009 = storytold/filmcraft@7b6c134 + mirror plumbing).
+# a sync point's commit (branch sync/fc-20261012 = storytold/filmcraft@2ff3f5e + mirror plumbing).
 # Move it with scripts/sync-mirror.sh (docs/UPSTREAM.md). Only crates/filmcraft-adapter may depend
 # on filmcraft-* crates.
-filmcraft-engine = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "2ba06295a4163552c0914e5672f7bffc20f8edae" }
+filmcraft-engine = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
 
 # foundation
 serde = { version = "1", features = ["derive"] }
