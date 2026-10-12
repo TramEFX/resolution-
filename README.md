@@ -51,6 +51,7 @@ The engine lives in a private mirror; Cargo fetches it with your git credentials
 
 - **[Picking up locally](docs/HANDOFF.md)**: setup, MCP in Claude Code, status, next steps
 - [Architecture and invariants](docs/ARCHITECTURE.md)
+- [Decision & issue log](docs/LOG.md): every design decision (`D-nnn`) and bug (`B-nnn`), as it happened
 - [Roadmap](docs/ROADMAP.md)
 - [Tracking FilmCraft upstream](docs/UPSTREAM.md)
 - [Watch list: FilmCraft coverage and progress](docs/WATCHLIST.md)

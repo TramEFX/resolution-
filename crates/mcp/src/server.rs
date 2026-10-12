@@ -212,7 +212,7 @@ impl ResolutionMcp {
 
     #[tool(
         title = "Run several commands",
-        description = "Run commands in order: {steps: [{command, params?}], dry_run?, atomic? (default true), acknowledge?}. Every step is checked before any runs; with atomic, a failure undoes the steps already run. Reports the combined timeline change.",
+        description = "Run commands in order: {steps: [{command, params?}], dry_run?, atomic? (default true), acknowledge?}. Every step is checked before any runs; with atomic, a failure undoes the steps already run. Reports the combined timeline change. Undo and redo cannot be steps: use the undo and redo tools.",
         annotations(read_only_hint = false, destructive_hint = true, idempotent_hint = false, open_world_hint = false)
     )]
     async fn run_batch(&self, Parameters(p): Parameters<BatchParams>) -> Result<CallToolResult, McpError> {

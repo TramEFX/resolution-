@@ -87,8 +87,9 @@ impl Engine for FilmCraftEngine {
         match map::target(id) {
             Some(Target::Engine(fc) | Target::Approx(fc, _)) => self.run(id, fc, params),
             Some(Target::Adapter) => {
+                // Undo and redo move through the history; they add no step of their own (LOG B-001).
                 let label = if id == "edit.undo" { self.undo() } else { self.redo() };
-                Ok(Outcome { result: Value::from(label.clone()), revision: self.revision(), undo_label: label })
+                Ok(Outcome { result: Value::from(label), revision: self.revision(), undo_label: None })
             }
             Some(Target::Ui) => Err(EngineError::Unsupported(id.to_string(), "headless (handled by the front end)")),
             Some(Target::Missing(_)) => Err(EngineError::Unsupported(id.to_string(), "filmcraft")),
@@ -208,6 +209,20 @@ mod tests {
         assert_ne!(e.execute("timeline.inspect", json!({})).expect("inspect").result, before);
         assert!(e.undo().is_some());
         assert_eq!(e.execute("timeline.inspect", json!({})).expect("inspect").result, before);
+    }
+
+    /// LOG B-001: undo and redo move through the history; they add no step of their own.
+    #[test]
+    fn undo_and_redo_commands_add_no_undo_step() {
+        let mut e = demo();
+        e.execute("playhead.set", json!({"seconds": 2.0})).expect("playhead");
+        let split = e.execute("timeline.split", json!({})).expect("split").undo_label.expect("split label");
+        let undo = e.execute("edit.undo", json!({})).expect("undo");
+        assert_eq!(undo.undo_label, None);
+        assert_eq!(undo.result, json!(split));
+        let redo = e.execute("edit.redo", json!({})).expect("redo");
+        assert_eq!(redo.undo_label, None);
+        assert_eq!(redo.result, json!(split));
     }
 
     #[test]

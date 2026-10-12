@@ -18,12 +18,19 @@ Mirror branches:
 - `resolution` (default) — `upstream` + our patch stack, rebased at each sync. Today the stack is
   mirror plumbing only (mirror CI, upstream workflows removed); engine code is untouched.
 - `sync/fc-YYYYMMDD` — one branch per sync point, never moved or deleted. Pushing one runs
-  `mirror-ci` (upstream's `cargo xtask ci`) on Linux; Windows and macOS are manual runs because
+  `mirror-ci` (upstream's own test gate) on Linux; Windows and macOS are manual runs because
   they cost 2x and 10x Actions minutes on a private repo. Branches rather than tags because agent
-  sessions can push branches but not tags.
+  sessions can push branches but not tags. Mirror CI runs the phases of upstream's
+  `cargo xtask ci` as separate steps, leaving one speed test out of the result, and fails with a
+  diff if upstream changes that gate (LOG D-010). It builds with cargo's stock release settings
+  rather than upstream's LTO profile, and keeps its dependency cache when a run fails (D-007,
+  B-003). Its Linux job installs what upstream's tests assume a developer machine has: a
+  pinned ffmpeg 9 (D-008), software Vulkan (B-005), and a Japanese font (B-006). To try a
+  workflow change without a new sync point, run `mirror-ci` by hand on `resolution`.
 
 **Current pin:** `sync/fc-20261009` = `2ba0629` = storytold/filmcraft@`7b6c134` (2026-10-09,
-after v0.4.0) + mirror plumbing.
+after v0.4.0) + mirror plumbing. Confirmed by mirror CI run 38019701912 on `resolution` @ `e199881`,
+whose engine code is identical (only the workflow differs; LOG D-010).
 
 **Private-repo access:** `.cargo/config.toml` sets `net.git-fetch-with-cli`, so Cargo fetches the
 mirror with your normal git credentials. CI for this repo will need a token that can read the

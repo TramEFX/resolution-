@@ -16,6 +16,8 @@ Hard rules:
 - Resolve-specific state (colour nodes, page layouts, Fairlight routing) lives in Resolution's
   own types, not in FilmCraft's project schema.
 - Copy Resolve's workflow and keys, never its icons, artwork, styling or files.
+- Record every bug (`B-nnn`) and design decision (`D-nnn`) in docs/LOG.md when it comes up, not
+  later. Entries are append-only and say what caught the bug (test, review, running it).
 
 Checks before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
 First builds compile ~45 FilmCraft crates; expect several minutes and several GB in `target/`.

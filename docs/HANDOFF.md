@@ -5,15 +5,19 @@ Where things stand and how to continue on your own machine. Last updated 2026-10
 ## 1. Set up (once)
 
 You need **Rust 1.95+** (`rustup update stable`) and **git** with access to both private repos
-(`TramEFX/resolution-` and `TramEFX/resolution-filmcraft`). Nothing else: the engine is pure Rust,
-so there are no system libraries to install.
+(`TramEFX/resolution-` and `TramEFX/resolution-filmcraft`). The engine is pure Rust, so there are
+no system libraries to install. On Windows, Rust's default MSVC toolchain also needs the Visual
+Studio C++ Build Tools for its linker.
 
 ```sh
 git clone https://github.com/TramEFX/resolution- resolution
 cd resolution
-cargo test              # first build compiles ~45 FilmCraft crates: several minutes, ~9 GB in target/
+cargo test              # first build compiles ~45 FilmCraft crates
 cargo run -p resolution-cli -- run project.inspect
 ```
+
+Measured on Windows 11 (Rust 1.99, 2026-10-09): the first `cargo test` took 3 min 12 s, and
+`target/` held 3.0 GB after tests and clippy.
 
 Cargo fetches the engine from the private mirror with your normal git credentials
 (`.cargo/config.toml` sets `git-fetch-with-cli`). If it fails with an authentication error, make
@@ -40,20 +44,25 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 | Area | State |
 |---|---|
 | Engine | FilmCraft v0.4.0+ (`7b6c134`) via the private mirror, pinned at `sync/fc-20261009` |
-| Mirror CI | First run of FilmCraft's own gate (`cargo xtask ci`, Linux) was in progress at hand-off: https://github.com/TramEFX/resolution-filmcraft/actions/runs/37984421765 |
+| Mirror CI | **Green** for the pin: run [38019701912](https://github.com/TramEFX/resolution-filmcraft/actions/runs/38019701912) (2026-10-10, Linux), engine code identical to `2ba0629`: 2,294 tests passed, 0 failed; layers, assets, wasm ok; ~23 min. Getting there took six fixes to the CI environment (LOG B-003 to B-007, D-007 to D-010) |
 | Engine boundary | `engine-api` trait + vocabulary (71 Resolve-named commands; 46 run headless on FilmCraft today, the rest are front-end or not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
-| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 21 tests + a stdio end-to-end check |
+| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 30 tests across the workspace (passing on Windows), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
+| GPU parity, real hardware | Local, 2026-10-12: FilmCraft's 33 golden tests pass, the 4 GPU-vs-CPU ones on an AMD Radeon RX 9070 XT through Vulkan (the adapter wgpu's default request picks, checked with a probe). CI covers the same tests on software Vulkan (LOG B-005) |
 | UI | Not started (M2) |
 | CI for this repo | None yet: needs a token that can read the private mirror |
 
 Gates before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
+Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 
 ## 4. Next steps (pick any)
 
-1. **If mirror CI failed:** read the log at the link above. A failure in FilmCraft's own tests is
-   upstream's bug, not ours: note it, report it upstream if new, and keep the pin (our adapter
-   tests passed against this commit).
+1. **Follow the upstream reports** from mirror CI (filed 2026-10-12): storytold/filmcraft#1249 (APV
+   oracle needs ffmpeg 8.0+), #1250 (GPU tests vs adapters that cannot render `Rgba32Float`),
+   #1251 (Japanese-UI test needs a font). When one is fixed and synced, the matching CI
+   workaround can go (LOG B-004 to B-006). B-007 was already fixed upstream.
+   The fixes are small (skip or fail clearly when the tool lacks a capability), and they shrink
+   what our CI has to work around. A failure in FilmCraft's own tests is upstream's bug, not ours.
 2. **Real footage:** run `resolution mcp --project …` or `resolution run raw.filmcraft/file.import
    '{"paths":["clip.mp4"]}' …` on your own camera and phone files; note what fails to import or
    play (research risk #6). This decides how soon we need a fallback decoder.

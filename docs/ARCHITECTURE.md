@@ -69,7 +69,7 @@ instead of tool loading.
 | `list_pages` | Resolve's pages and how many commands each offers. Start here. |
 | `search_commands` | By text, page, or Resolve shortcut (`Mod+B`, `F9`). Results carry page, risk, params, Resolve keys, and how this engine differs from Resolve. `include_raw` reaches the engine's own commands. |
 | `run` | One command. Returns result, undo label, and `timeline_changes` (a diff of the timeline, matched by clip/track id). `dry_run` measures then reverts. |
-| `run_batch` | Steps checked up front (preflight); `atomic` (default) undoes completed steps on failure; `dry_run` reverts everything after measuring the combined change. |
+| `run_batch` | Steps checked up front (preflight); `atomic` (default) undoes completed steps on failure; `dry_run` reverts everything after measuring the combined change. Undo and redo cannot be steps (LOG D-005). |
 | `inspect` | `timeline`, `project`, or `session` (edits made through this connection, checkpoints). |
 | `render_frame` | Program viewer as PNG at a time, without moving the playhead. |
 | `undo` / `redo` | Shared history with the user. |
