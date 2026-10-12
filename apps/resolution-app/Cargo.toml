@@ -17,6 +17,7 @@ path = "src/main.rs"
 resolution-engine-api = { workspace = true }
 resolution-filmcraft-adapter = { workspace = true }
 resolution-keymap = { workspace = true }
+resolution-playback = { workspace = true }
 serde_json = { workspace = true }
 egui = { workspace = true }
 eframe = { workspace = true }

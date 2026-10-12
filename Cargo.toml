@@ -1,6 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine-api", "crates/filmcraft-adapter", "crates/keymap", "crates/mcp", "apps/resolution-cli", "apps/resolution-app"]
+members = [
+    "crates/engine-api",
+    "crates/filmcraft-adapter",
+    "crates/keymap",
+    "crates/mcp",
+    "crates/playback",
+    "apps/resolution-cli",
+    "apps/resolution-app",
+]
 
 [workspace.package]
 version = "0.0.1"
@@ -14,17 +22,27 @@ resolution-engine-api = { path = "crates/engine-api" }
 resolution-filmcraft-adapter = { path = "crates/filmcraft-adapter" }
 resolution-keymap = { path = "crates/keymap" }
 resolution-mcp = { path = "crates/mcp" }
+resolution-playback = { path = "crates/playback" }
 
 # The engine: FilmCraft via Resolution's private mirror (TramEFX/resolution-filmcraft), pinned to
 # a sync point's commit (branch sync/fc-20261012 = storytold/filmcraft@2ff3f5e + mirror plumbing).
 # Move it with scripts/sync-mirror.sh (docs/UPSTREAM.md). Only crates/filmcraft-adapter may depend
-# on filmcraft-* crates.
+# on filmcraft-* crates. Every filmcraft-* line pins the same rev.
 filmcraft-engine = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
+# Beyond the session, for playback (LOG D-013, D-014): decoder hints and timing (media, frame), the
+# resampler to the device's rate (audio-dsp), the OS hardware decoders (platform).
+filmcraft-media = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
+filmcraft-frame = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
+filmcraft-audio-dsp = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
+filmcraft-platform = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
 
 # UI (LOG D-012): the same egui stack as FilmCraft's own UI, so its code is a working reference.
 egui = "0.36"
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
 rfd = "0.17"
+
+# Playback (LOG D-013): audio output, which is also the playback clock.
+cpal = "0.18"
 
 # foundation
 serde = { version = "1", features = ["derive"] }

@@ -27,11 +27,12 @@ An AI-native video editor in Rust that feels like home to DaVinci Resolve users.
 
 | Path | What |
 |---|---|
-| `crates/engine-api` | `Engine` trait, command vocabulary (Resolve names, grouped by page), result and frame types |
+| `crates/engine-api` | `Engine` trait, command vocabulary (Resolve names, grouped by page), result and frame types, the `Playback` snapshot |
 | `crates/filmcraft-adapter` | `Engine` on FilmCraft's headless `Session`; the Resolution→FilmCraft command map and the upstream-drift test |
 | `crates/keymap` | Keymaps as data; validates `keymaps/*.toml` against the vocabulary |
 | `keymaps/resolve.toml` | DaVinci Resolve default keyboard (seed; being verified) |
 | `crates/mcp` | MCP server: agents find, run, preview, check and undo edits through the same commands as people |
+| `crates/playback` | Real-time playback, engine-neutral: frames rendered ahead, sound mixed ahead, the audio device as the clock (ported from FilmCraft) |
 | `apps/resolution-cli` | Headless CLI: `resolution commands`, `resolution keys`, `resolution run …`, `resolution mcp` |
 | `apps/resolution-app` | The editor (egui): Resolve's page bar and Edit page over the same commands; `cargo run -p resolution-app` |
 

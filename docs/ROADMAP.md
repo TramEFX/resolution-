@@ -32,7 +32,10 @@ Resolution's own work sits where FilmCraft is thinnest and where Resolve is most
       without audio
 - [ ] Rest of the shell: source viewer next to the record viewer, track headers (lock, mute,
       targeting), trim and drag editing, edit modes, markers lane
-- [ ] Playback outside the UI (upstream a `filmcraft-playback` crate, or own a port)
+- [x] Real-time playback with sound (`crates/playback`, a port of FilmCraft's, LOG D-013), with
+      the operating system's GPU video decoders (D-014)
+- [ ] Faster playback where it is slow: GPU compositing for effects-heavy timelines, proxies for
+      footage too slow to decode (D-013 "Known limits")
 - [ ] Resolve edit types the engine lacks: place on top, ripple overwrite, fit to fill,
       append at end, replace; Trim mode semantics; dynamic trim
 - [ ] Proxies / optimized media workflow with Resolve's naming

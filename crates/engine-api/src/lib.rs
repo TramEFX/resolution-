@@ -6,11 +6,15 @@
 //! vocabulary onto a concrete engine. Swapping engines means writing a new adapter, nothing else.
 
 pub mod commands;
+pub mod playback;
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use commands::{COMMANDS, CommandSpec, Page, Risk};
+pub use playback::{Mixer, Playback, Rate, RenderHints};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -93,6 +97,12 @@ pub trait Engine {
     /// The program (record) viewer at `at_seconds` (default: the playhead), opaque, with its
     /// longest side at most `max_side` pixels. Never moves the playhead.
     fn render_frame(&self, at_seconds: Option<f64>, max_side: u32) -> Result<Frame>;
+
+    /// The open timeline as it is now, for real-time playback on other threads; `None` when no
+    /// timeline is open or the engine cannot play back.
+    fn playback(&self) -> Option<Arc<dyn Playback>> {
+        None
+    }
 
     /// Events since the last call.
     fn drain_events(&mut self) -> Vec<EngineEvent>;

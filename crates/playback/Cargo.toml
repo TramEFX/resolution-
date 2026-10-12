@@ -1,0 +1,20 @@
+[package]
+name = "resolution-playback"
+description = "Real-time playback for Resolution's front ends: frames rendered ahead, sound mixed ahead, the audio device as the clock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+resolution-engine-api = { workspace = true }
+cpal = { workspace = true }
+
+[dev-dependencies]
+resolution-filmcraft-adapter = { workspace = true }
+serde_json = { workspace = true }
+# the benchmark prints the engine's log (why a hardware decoder declined a stream)
+log = { version = "0.4", features = ["std"] }

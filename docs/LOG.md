@@ -48,6 +48,11 @@ doc is updated *and* the entry says which section moved.
 | B-010 | 2026-10-12 | engine | MP4 with a leading empty edit plays one frame early | open, reported upstream |
 | B-011 | 2026-10-12 | engine | Frames timestamped just after the timeline grid show one frame late | open, reported upstream |
 | D-012 | 2026-10-12 | ui | The editor is an egui app, a client of the command API like MCP | active |
+| D-013 | 2026-10-12 | playback | Playback is ported from FilmCraft into an engine-neutral crate, fed by a `Playback` snapshot | active |
+| D-014 | 2026-10-12 | playback | The editor decodes video with the operating system's hardware decoders | active |
+| B-012 | 2026-10-12 | playback | Frames slower than real time were never shown: each was cancelled as the next fell due | fixed |
+| B-013 | 2026-10-12 | engine | Hardware HEVC decoding gives up when the in-band PPS has one trailing zero byte fewer | open, reported upstream |
+| B-014 | 2026-10-12 | playback | Sound dropped out while frames rendered: the mixer queued behind them in rayon's global pool | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -588,3 +593,135 @@ so a Resolve-calibre finish is our own styling work; accessibility is weaker tha
 - Two defects the screenshots caught were fixed: missing glyphs (shown as boxes), and ruler labels
   stepping in seconds (00:00:01:23 at 23.976).
 - Not yet: playback with audio, a source viewer next to the record viewer, trimming by drag.
+
+### D-013 — Playback is ported from FilmCraft into an engine-neutral crate, fed by a `Playback` snapshot
+**Area:** playback · **Status:** active · **Doc:** ARCHITECTURE invariant 2 and "The editor"; ROADMAP M2
+
+**Decision:** real-time playback is Resolution's own code in `crates/playback`, ported from
+FilmCraft (MIT): the frame server (`ui-egui/src/frames.rs`), sound mixed ahead
+(`ui-egui/src/play_ahead.rs`), the clock (`ui-egui/src/lib.rs`) and audio output
+(`apps/filmcraft/src/audio.rs`, moved to cpal 0.18). It depends only on `engine-api`. The engine
+side is a new trait, `engine_api::Playback`: the open timeline frozen at one revision, which renders
+frames and mixes sound on any thread. `Engine::playback()` hands one out after every batch of
+commands. The FilmCraft adapter implements it over the session's shared project snapshot, as
+FilmCraft's own UI does. NOTICE carries FilmCraft's MIT notice for the ported code.
+
+**Why:** invariant 2 forbids depending on `ui-egui` and `apps/*`, where FilmCraft keeps playback.
+The other option, a UI-free `filmcraft-playback` crate upstream, would wait on upstream's
+schedule. The engine thread stays single-threaded and owns edits; frames need parallel decoding
+ahead of the playhead, so the trait gives out a read-only snapshot instead.
+
+**How it plays:** the audio device is the clock (the picture follows the sound). The clock waits for the
+first 6 frames, or 0.5 s. Sound is mixed 0.2 s ahead on its own thread, and edits made while
+playing are heard. J and L double the speed up to 8x; sound plays at 0.5x to 4x forward and is
+silent otherwise. Marks (I, O) made while playing keep playing; other commands stop playback
+first. The viewer shows the exact frame, or holds the newest one it has.
+
+**Where it differs from FilmCraft, each measured** (`crates/playback/examples/play_bench.rs`, this
+machine: AMD Ryzen 7 5700X3D, 8 cores / 16 threads; Radeon RX 9070 XT):
+- **Render cost counts the whole job.** FilmCraft leaves decoding out. Here that made the demo's
+  composited section 4.5 fps against 9.7, because generated media counts as decoding.
+- **Queued frames nearer than the plan's lead are dropped** (B-012).
+- **2 frame workers, not 2 to 6.** FilmCraft's renderer already uses every core for one frame; 1 to 3
+  workers played every clip measured as well as 6.
+- **Frames render in their own rayon pool** (B-014).
+- **Not ported:** GPU frame plans, render previews, thumbnails, profiling, audio device settings.
+
+**Verified:**
+- 69 workspace tests pass, among them FilmCraft's six play-ahead tests (ported), six frame-server
+  tests on a fake timeline, the clock's tests, the adapter rendering pixel-identical frames on other
+  threads and mixing at 48 and 44.1 kHz, and three UI tests: Space plays and stops where it stopped;
+  I marks while playing without stopping; J, K and L.
+- `resolution-app --play 6` on this PC: the Android 4K clip played 29.2 fps (timeline 30.01) with
+  sound on the default device (an M-Audio M-Track) driving the clock, 0 underruns.
+- **Not verified by ear:** no person had listened to the sound when this was written.
+
+| Benchmark (6 to 10 s, simulated 60 Hz display, simulated 48 kHz device) | Frames shown | Sound |
+|---|---|---|
+| Android 4K30 H.264, hardware decoding, 1920 px | 30.0 of 30 fps | 0 underruns |
+| 1080p60 H.264, hardware decoding, 1920 px | 58 fps (display-limited) | 0 underruns |
+| FilmCraft demo, single layer, 1440 px | 22 of 24 fps | 0 underruns |
+| FilmCraft demo, composited section, 1920 px | 8 to 9.5 fps (CPU-bound: about 100 ms a frame) | 0 underruns |
+| Android 4K30, software decoding, 1440 px | 7.6 to 9 fps (in order the decoder does 20) | 0 underruns |
+| 4K60 HEVC, software decoding (B-013), 1920 px | 1 fps (in order the decoder does 17) | 0 underruns |
+
+**Known limits:** footage that cannot be decoded in real time plays at a few frames a second; no
+scheduling fixes that. It needs hardware decoding (D-014; B-013 blocks some HEVC) or proxies.
+Effects-heavy timelines are limited by CPU compositing until frames composite on the GPU, as
+FilmCraft's GPU frame plans do.
+
+### D-014 — The editor decodes video with the operating system's hardware decoders
+**Area:** playback · **Status:** active · **Doc:** README; HANDOFF §2
+
+**Decision:** `resolution-app` calls `filmcraft_platform::register()` at startup, as FilmCraft's own
+app does. That puts Media Foundation (Windows), VideoToolbox (macOS) or VA-API/NVDEC (Linux) in front
+of FilmCraft's software decoders. A decoder that declines a stream falls back to software.
+`--software-decode` turns it off. The MCP server and the tests keep software decoding, so frames
+rendered for agents and goldens do not depend on the GPU.
+
+**Why:** measured on the Android 4K30 clip at a 1440 px viewer: software decoding showed 5.2 fps,
+with up to 1.8 s on one frame; Media Foundation showed 30.0 fps, the exact frame on 100% of
+refreshes. Software 4K H.264 decodes at about 20 fps in order, under real time even before rendering.
+
+**Cost:** `filmcraft-platform` holds FilmCraft's only `unsafe` code (OS FFI, behind their ADR 0001).
+On Windows it also registers an NVENC export encoder and starts a probe for one (absent here: no
+NVIDIA driver). Hardware and software decoders may differ in the last bit of a pixel; editing never
+depends on that.
+
+### B-012 — Frames slower than real time were never shown: each was cancelled as the next fell due
+**Area:** playback · **Status:** fixed · **Caught by:** running it (`resolution-app --demo --play 4`
+showed 3.2 fps), then `play_bench` · **Doc:** `crates/playback/src/frames.rs`
+
+**Symptom:** the demo's composited section played at 3.2 fps, holding one frame for up to 5 s, with
+58 of 136 frame jobs cancelled. One frame alone takes about 100 ms there, so about 10 fps was
+possible. Software-decoded 4K showed 2.6 fps where the decoder manages 20 in order.
+
+**Cause:** the frame server renders the nearest frame first. Frames queued earlier rose in priority as
+the playhead approached them, so the workers always started the frame about to fall due. When a
+frame takes longer than one frame period, it was late before it finished, and it was cancelled
+the moment the playhead passed it. Almost nothing completed. My first port had left out
+FilmCraft's `playback_plan`, which starts frames far enough ahead and skips evenly. Porting it
+was not enough: frames *already queued* closer than the plan's lead still won.
+
+**Fix:** port `playback_plan`, and drop queued frames nearer than the lead; frames already
+rendering finish unless the playhead has passed them. The demo's section went from 3.2 to 9.7 fps
+(1 worker), with the longest hold 0.4 s. Software 4K went to 8 to 9 fps.
+
+### B-013 — Hardware HEVC decoding gives up when the in-band PPS has one trailing zero byte fewer
+**Area:** engine (FilmCraft) · **Status:** open · **Caught by:**
+`play_bench` on a local 4K60 HEVC file, with the engine's log printed
+
+**Symptom:** a 3840×2160 60 fps HEVC Main file played at 1 fps although Media Foundation opened on the
+Radeon (HEVC Video Extension 2.5.33). The engine's log said: `Media Foundation HEVC failed (decode
+error: in-band parameter sets differ from the sample entry); continuing with the software decoder`.
+
+**Cause (read from FilmCraft's code, confirmed on the bytes):** `NalStreamInfo::parameters_changed`
+(`codecs/src/hw.rs:176`) compares each in-band VPS, SPS and PPS byte for byte with the `hvcC`
+copies. In this file the VPS and SPS match exactly. The PPS in `hvcC` is `4401e0f7c04c9000`; the
+one in the first sample is `4401e0f7c04c90`. The only difference is one zero byte after the PPS's
+RBSP trailing bits: byte-stream padding the muxer kept inside the stored NAL unit, which carries no
+syntax. So the same PPS reads as a change, and
+`HybridDecoder` (`platform/src/hybrid.rs:188`) moves the whole stream to software. The file was
+muxed by ffmpeg (`Lavf60.16.100`), which many capture tools use.
+
+**Fix (upstream):** compare parameter sets with trailing zero bytes removed (or compare their
+RBSPs). Not patched here (rule: no edits to FilmCraft in place).
+
+**Reported upstream** 2026-10-12: storytold/filmcraft#1483, with the bytes above; the file itself
+is not shared. The same code is on upstream `main` (71438c6).
+
+### B-014 — Sound dropped out while frames rendered: the mixer queued behind them in rayon's global pool
+**Area:** playback · **Status:** fixed · **Caught by:** `play_bench`'s underrun counter · **Doc:**
+`crates/filmcraft-adapter/src/playback.rs` (`frame_pool`)
+
+**Symptom:** on the demo's composited section, with 2 frame workers the simulated device hit 7 to 62
+underruns in 6 s, up to 0.57 s of silence; with 3 workers or more it was worse.
+
+**Cause:** FilmCraft's compositor (`render/src/blend.rs`, `effects.rs` and others) and its audio mixer
+(`render/src/mixer.rs:874`) both run parallel loops on rayon's global pool. Frame jobs filled the
+pool, and the sound's mixing tasks waited in line behind them. Raising the audio thread's OS
+priority would not have helped.
+
+**Fix:** the adapter renders playback frames inside a rayon pool of their own (one thread fewer than
+the machine has). Same section: 0 underruns, at least 135 ms of sound still buffered, and the
+picture unchanged.

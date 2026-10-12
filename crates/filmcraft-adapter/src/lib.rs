@@ -1,13 +1,15 @@
 //! Resolution's [`Engine`] on top of FilmCraft's headless `Session`.
 
 pub mod map;
+pub mod playback;
 
 use std::sync::Arc;
 
 use filmcraft_engine::time::Tick;
 use filmcraft_engine::{EngineError as FcError, Event, FsServices, Session};
 use map::Target;
-use resolution_engine_api::{CommandInfo, Engine, EngineError, EngineEvent, Frame, Outcome, Result, Risk};
+pub use playback::use_hardware_decoders;
+use resolution_engine_api::{CommandInfo, Engine, EngineError, EngineEvent, Frame, Outcome, Playback, Result, Risk};
 use serde_json::Value;
 
 /// Raw FilmCraft commands are reachable as `raw.filmcraft/<id>`.
@@ -150,6 +152,10 @@ impl Engine for FilmCraftEngine {
         Ok(Frame { width: img.w as u32, height: img.h as u32, rgba: img.over_black_rgba8() })
     }
 
+    fn playback(&self) -> Option<Arc<dyn Playback>> {
+        playback::Snapshot::of(&self.session).map(|s| Arc::new(s) as Arc<dyn Playback>)
+    }
+
     fn drain_events(&mut self) -> Vec<EngineEvent> {
         self.session
             .drain_events()
@@ -166,6 +172,7 @@ impl Engine for FilmCraftEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use resolution_engine_api::RenderHints;
     use serde_json::json;
 
     fn demo() -> FilmCraftEngine {
@@ -231,5 +238,54 @@ mod tests {
         let f = e.render_frame(Some(1.0), 64).expect("frame");
         assert!(f.width <= 64 && f.height <= 64 && f.width > 0);
         assert_eq!(f.rgba.len(), (f.width * f.height * 4) as usize);
+    }
+
+    #[test]
+    fn playback_renders_the_same_frames_on_other_threads() {
+        let e = demo();
+        let p = e.playback().expect("a timeline is open");
+        assert_eq!(p.revision(), e.revision());
+        let rate = p.rate();
+        assert!(p.frames() > 24);
+        let frames: Vec<i64> = vec![0, 1, 23, 24, p.frames() / 2];
+        let threads: Vec<_> = frames
+            .iter()
+            .map(|&f| {
+                let p = p.clone();
+                std::thread::spawn(move || p.render(f, 96, &RenderHints::default()).expect("frame"))
+            })
+            .collect();
+        for (f, t) in frames.iter().zip(threads) {
+            let from_thread = t.join().expect("render thread");
+            let from_engine = e.render_frame(Some(rate.seconds_of(*f)), 96).expect("frame");
+            assert_eq!(from_thread.rgba, from_engine.rgba, "frame {f}");
+        }
+        let cancelled = RenderHints::default();
+        cancelled.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(p.render(5, 96, &cancelled).is_err(), "a cancelled render is not a frame");
+        let timed = RenderHints::default();
+        p.render(30, 96, &timed).expect("frame");
+        assert!(timed.decode_ns.load(std::sync::atomic::Ordering::Relaxed) > 0, "getting source pictures is timed");
+    }
+
+    #[test]
+    fn playback_mixes_the_timeline_sound_at_any_rate() {
+        let e = demo();
+        let p = e.playback().expect("a timeline is open");
+        let start = p.rate().sample_of(24, 48_000);
+        for rate in [48_000, 44_100] {
+            let mut mix = p.mixer(rate);
+            let mut buf = vec![f32::NAN; 2 * 4800];
+            std::thread::spawn(move || {
+                mix(start, &mut buf, 2);
+                buf
+            })
+            .join()
+            .map(|buf| {
+                assert!(buf.iter().all(|x| x.is_finite() && x.abs() <= 1.0), "{rate} Hz");
+                assert!(buf.iter().any(|x| x.abs() > 1e-3), "the demo's tone and score are heard at {rate} Hz");
+            })
+            .expect("mix thread");
+        }
     }
 }

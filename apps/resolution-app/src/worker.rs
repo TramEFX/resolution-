@@ -1,17 +1,18 @@
-//! The engine on its own thread. The UI never waits on it: it sends requests and reads replies
-//! each frame, so a slow 4K seek or render cannot freeze the window. Renders are coalesced: only
-//! the newest request in a batch is rendered.
+//! The engine on its own thread. The UI never waits on it: it sends commands and reads replies
+//! each frame, so a slow command cannot freeze the window. After each batch of commands the
+//! engine sends a snapshot: the timeline and project to draw, and a [`Playback`] handle the
+//! viewer renders and plays from on other threads (LOG D-013).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
-use resolution_engine_api::{Engine, EngineEvent, Frame, Outcome};
+use resolution_engine_api::{Engine, EngineEvent, Outcome, Playback};
 use serde_json::{Value, json};
 
 pub enum Request {
     Run { id: String, params: Value },
-    Render { seconds: f64, max_side: u32 },
     Quit,
 }
 
@@ -20,15 +21,13 @@ pub enum Reply {
         id: String,
         result: Result<Outcome, String>,
     },
-    /// The project after a batch of commands. `timeline` is `None` when none is open.
+    /// The project after a batch of commands. `timeline` and `playback` are `None` when no
+    /// timeline is open.
     Snapshot {
         revision: u64,
         timeline: Option<Value>,
         project: Option<Value>,
-    },
-    Frame {
-        seconds: f64,
-        frame: Result<Frame, String>,
+        playback: Option<Arc<dyn Playback>>,
     },
     Notice {
         message: String,
@@ -58,10 +57,6 @@ impl Worker {
         let _ = self.tx.send(Request::Run { id: id.to_string(), params });
     }
 
-    pub fn render(&self, seconds: f64, max_side: u32) {
-        let _ = self.tx.send(Request::Render { seconds, max_side });
-    }
-
     pub fn poll(&self) -> Vec<Reply> {
         self.rx.try_iter().collect()
     }
@@ -86,7 +81,6 @@ fn serve(
     repaint();
     while let Ok(first) = requests.recv() {
         let batch: Vec<Request> = std::iter::once(first).chain(requests.try_iter()).collect();
-        let (mut ran, mut render) = (false, None);
         for request in batch {
             match request {
                 Request::Quit => return,
@@ -97,21 +91,11 @@ fn serve(
                             Err(resolution_engine_api::EngineError::Engine("the engine panicked".into()))
                         })
                         .map_err(|e| e.to_string());
-                    ran = true;
                     let _ = replies.send(Reply::Ran { id, result });
                 }
-                Request::Render { seconds, max_side } => render = Some((seconds, max_side)),
             }
         }
-        if ran {
-            let _ = replies.send(snapshot(engine.as_mut()));
-        }
-        if let Some((seconds, max_side)) = render {
-            let frame = catch_unwind(AssertUnwindSafe(|| engine.render_frame(Some(seconds), max_side)))
-                .unwrap_or_else(|_| Err(resolution_engine_api::EngineError::Engine("the engine panicked".into())))
-                .map_err(|e| e.to_string());
-            let _ = replies.send(Reply::Frame { seconds, frame });
-        }
+        let _ = replies.send(snapshot(engine.as_mut()));
         for event in engine.drain_events() {
             if let EngineEvent::Notice { message, error } = event {
                 let _ = replies.send(Reply::Notice { message, error });
@@ -125,42 +109,43 @@ fn snapshot(engine: &mut dyn Engine) -> Reply {
     let mut query = |id: &str| engine.execute(id, json!({})).ok().map(|o| o.result);
     let timeline = query("timeline.inspect");
     let project = query("project.inspect");
-    Reply::Snapshot { revision: engine.revision(), timeline, project }
+    Reply::Snapshot { revision: engine.revision(), timeline, project, playback: engine.playback() }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use resolution_engine_api::RenderHints;
     use resolution_filmcraft_adapter::FilmCraftEngine;
     use std::time::{Duration, Instant};
 
-    fn wait_for(w: &Worker, mut want: impl FnMut(&Reply) -> bool) -> bool {
+    fn wait_for<T>(w: &Worker, mut want: impl FnMut(Reply) -> Option<T>) -> Option<T> {
         let deadline = Instant::now() + Duration::from_secs(60);
         while Instant::now() < deadline {
-            if w.poll().iter().any(&mut want) {
-                return true;
+            if let Some(found) = w.poll().into_iter().find_map(&mut want) {
+                return Some(found);
             }
             thread::sleep(Duration::from_millis(10));
         }
-        false
+        None
     }
 
     #[test]
-    fn runs_commands_and_renders_off_the_ui_thread() {
+    fn runs_commands_off_the_ui_thread_and_hands_out_playback() {
         let w = Worker::spawn(Box::new(FilmCraftEngine::new()), || {});
         w.run("raw.filmcraft/file.openDemoProject", json!({}));
-        assert!(
-            wait_for(&w, |r| matches!(r, Reply::Snapshot { timeline: Some(_), .. })),
-            "a snapshot with the demo timeline"
-        );
-        // two renders in a row: at least the newest arrives, at the size asked for
-        w.render(0.5, 64);
-        w.render(1.0, 64);
-        assert!(wait_for(
-            &w,
-            |r| matches!(r, Reply::Frame { seconds, frame: Ok(f) } if *seconds == 1.0 && f.width <= 64)
-        ));
+        let playback = wait_for(&w, |r| match r {
+            Reply::Snapshot { timeline: Some(_), playback: Some(p), .. } => Some(p),
+            _ => None,
+        })
+        .expect("a snapshot with the demo timeline and its playback");
+        // the snapshot renders on this thread while the engine thread waits for commands
+        let f = playback.render(12, 64, &RenderHints::default()).expect("frame");
+        assert!(f.width <= 64 && f.width > 0);
         w.run("no.such.command", json!({}));
-        assert!(wait_for(&w, |r| matches!(r, Reply::Ran { result: Err(_), .. })), "errors come back as replies");
+        assert!(
+            wait_for(&w, |r| matches!(r, Reply::Ran { result: Err(_), .. }).then_some(())).is_some(),
+            "errors come back as replies"
+        );
     }
 }

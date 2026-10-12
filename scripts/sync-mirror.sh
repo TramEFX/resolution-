@@ -33,11 +33,12 @@ git -C "$dir" remote get-url upstream >/dev/null 2>&1 || git -C "$dir" remote ad
 git -C "$dir" fetch --quiet origin
 git -C "$dir" fetch --quiet --tags upstream
 
-# Move Cargo.toml's engine pin to sync point $2 (commit $1) and run the tests.
+# Move Cargo.toml's engine pins (every filmcraft-* line) to sync point $2 (commit $1) and run the
+# tests.
 apply_pin() {
   local rev=$1 sync_branch=$2 base
   base="$(git -C "$dir" rev-parse --short=7 "$new_base")"
-  sed -i.bak -E "s|^(filmcraft-engine = \{ git = \"[^\"]*\", rev = \")[0-9a-f]+(\" \})|\1$rev\2|" "$root/Cargo.toml"
+  sed -i.bak -E "s|^(filmcraft-[a-z0-9-]+ = \{ git = \"[^\"]*\", rev = \")[0-9a-f]+(\" \})|\1$rev\2|" "$root/Cargo.toml"
   sed -i.bak -E "s|^# a sync point's commit \(branch [^)]*\)|# a sync point's commit (branch $sync_branch = storytold/filmcraft@$base + mirror plumbing)|" "$root/Cargo.toml"
   rm -f "$root/Cargo.toml.bak"
   (cd "$root" && cargo update -p filmcraft-engine && cargo test)

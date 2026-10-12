@@ -4,10 +4,12 @@
 //! ticks, `video` / `audio` track lists, a bin tree under `root`. A typed, engine-neutral model in
 //! `engine-api` should replace it, so the UI never depends on one engine's output (LOG D-012).
 
+use resolution_engine_api::Rate;
 use serde_json::Value;
 
 /// Time unit of the inspect JSON (Premiere's ticks, which FilmCraft uses).
 pub const TICKS_PER_SECOND: f64 = 254_016_000_000.0;
+const TICKS: i64 = 254_016_000_000;
 
 fn seconds(v: &Value) -> Option<f64> {
     v.as_i64().map(|t| t as f64 / TICKS_PER_SECOND)
@@ -35,6 +37,10 @@ pub struct Timeline {
     pub name: String,
     /// Frame rate as a number (23.976…); [`Timeline::nominal_fps`] is the timecode base.
     pub fps: f64,
+    /// The same, exactly (24000/1001).
+    pub rate: Rate,
+    /// The playhead's frame, exactly (not rounded through seconds).
+    pub playhead_frame: i64,
     pub width: u32,
     pub height: u32,
     pub duration: f64,
@@ -51,10 +57,11 @@ impl Timeline {
     pub fn from_json(v: &Value) -> Option<Self> {
         let settings = &v["settings"];
         let rate = &settings["frame_rate"];
-        let fps = match (rate["num"].as_f64(), rate["den"].as_f64()) {
-            (Some(n), Some(d)) if n > 0.0 && d > 0.0 => n / d,
-            _ => 24.0,
+        let rate = match (rate["num"].as_i64(), rate["den"].as_i64()) {
+            (Some(n), Some(d)) if n > 0 && d > 0 => Rate::new(n, d),
+            _ => Rate::new(24, 1),
         };
+        let fps = rate.fps();
         let selection: Vec<u64> =
             v["selection"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
         let tracks = |key: &str| -> Vec<Track> {
@@ -91,6 +98,8 @@ impl Timeline {
         Some(Self {
             name: v["name"].as_str()?.to_string(),
             fps,
+            rate,
+            playhead_frame: v["playhead"].as_i64().map_or(0, |t| rate.frame_at_ticks(t, TICKS)),
             width: settings["width"].as_u64().unwrap_or(0) as u32,
             height: settings["height"].as_u64().unwrap_or(0) as u32,
             duration: seconds(&v["duration"]).unwrap_or(0.0),
@@ -107,14 +116,15 @@ impl Timeline {
         (self.fps.round() as u32).max(1)
     }
 
-    pub fn frame_seconds(&self) -> f64 {
-        1.0 / self.fps.max(1.0)
-    }
-
     /// `HH:MM:SS:FF`, non-drop.
     pub fn timecode(&self, seconds: f64) -> String {
-        let fps = self.nominal_fps() as u64;
-        let frames = (seconds.max(0.0) * self.fps + 1e-6).floor() as u64;
+        self.frame_timecode(self.rate.frame_at(seconds.max(0.0)))
+    }
+
+    /// The timecode of `frame`, non-drop.
+    pub fn frame_timecode(&self, frame: i64) -> String {
+        let fps = u64::from(self.nominal_fps());
+        let frames = frame.max(0) as u64;
         let (f, s) = (frames % fps, frames / fps);
         format!("{:02}:{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60, f)
     }
@@ -204,6 +214,8 @@ mod tests {
         assert!((tl.fps - 23.976).abs() < 0.001);
         assert_eq!(tl.nominal_fps(), 24);
         assert_eq!((tl.duration, tl.playhead, tl.mark_in, tl.mark_out), (10.0, 2.0, None, Some(5.0)));
+        // 2 s at 23.976 is 47.95 frames: frame 47, exactly
+        assert_eq!((tl.rate, tl.playhead_frame), (Rate::new(24_000, 1001), 47));
         assert_eq!(tl.video[0].clips[0].end, 4.0);
         assert_eq!(tl.selected().map(|(_, c)| c.id), Some(30));
         assert!(Timeline::from_json(&json!({"error": "no timeline"})).is_none());
