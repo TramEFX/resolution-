@@ -1,0 +1,27 @@
+[package]
+name = "resolution-app"
+description = "Resolution's desktop editor: Resolve's pages and keys over the engine's command API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "resolution-app"
+path = "src/main.rs"
+
+[dependencies]
+resolution-engine-api = { workspace = true }
+resolution-filmcraft-adapter = { workspace = true }
+resolution-keymap = { workspace = true }
+serde_json = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true }
+rfd = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["eframe"] }
