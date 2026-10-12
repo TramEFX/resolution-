@@ -19,5 +19,8 @@ Hard rules:
 - Record every bug (`B-nnn`) and design decision (`D-nnn`) in docs/LOG.md when it comes up, not
   later. Entries are append-only and say what caught the bug (test, review, running it).
 
+- The editor (`apps/resolution-app`) runs every action as a vocabulary id through the engine thread;
+  only its `model.rs` may read the engine's inspect JSON.
+
 Checks before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
 First builds compile ~45 FilmCraft crates; expect several minutes and several GB in `target/`.

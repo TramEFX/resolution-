@@ -26,7 +26,21 @@ sure `git clone https://github.com/TramEFX/resolution-filmcraft` works in the sa
 
 The scripts in `scripts/` are bash: on Windows run them from Git Bash or WSL.
 
-## 2. Use the MCP server from Claude Code
+## 2. Run the editor
+
+```sh
+cargo run -p resolution-app                                   # empty project: import with Ctrl+I or drop files
+cargo run -p resolution-app -- --import "test media/clip.mp4" # import, and make a timeline from it
+cargo run -p resolution-app -- --demo                         # FilmCraft's demo project
+```
+
+Resolve keys work: Space / J / K / L to play, Left / Right to step a frame, Up / Down for edits, I / O for
+marks, Ctrl+B to split, Delete to ripple delete, Ctrl+Z / Ctrl+Shift+Z for undo and redo, and Shift+2…8
+for pages. Double-click a clip in the Media Pool to open it in the source, then F9 / F10 to insert or
+overwrite at the playhead. Click a clip to select it; click or drag the ruler to move the playhead.
+Put local test clips in `test media/`, which git ignores.
+
+## 3. Use the MCP server from Claude Code
 
 Open Claude Code in the repo folder. `.mcp.json` registers a `resolution` server
 (`cargo run -q -p resolution-cli -- mcp --demo`, FilmCraft's demo project); approve it when asked,
@@ -39,7 +53,7 @@ To work on a real project instead of the demo, edit `.mcp.json` locally (`"mcp",
 "C:/path/to/edit.fcproj"`) or run `cargo run -p resolution-cli -- mcp --project <path>` from any MCP
 client. Destructive commands (save/open/delete) ask the agent to confirm with you first.
 
-## 3. Where things stand
+## 4. Where things stand
 
 | Area | State |
 |---|---|
@@ -49,13 +63,13 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
 | MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 30 tests across the workspace (passing on Windows), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
 | GPU parity, real hardware | Local, 2026-10-12, at the previous pin (`2ba0629`): FilmCraft's 33 golden tests pass, the 4 GPU-vs-CPU ones on an AMD Radeon RX 9070 XT through Vulkan (the adapter wgpu's default request picks, checked with a probe). CI covers the same tests on software Vulkan (LOG B-005) |
-| UI | Not started (M2) |
+| UI | **First slice of the Edit page** (`apps/resolution-app`, LOG D-012): page bar, Media Pool, viewer, timeline, inspector, Resolve keys. Preview playback has no audio yet. 10 tests, including UI tests that press keys and click clips |
 | CI for this repo | None yet: needs a token that can read the private mirror |
 
 Gates before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
 Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 
-## 4. Next steps (pick any)
+## 5. Next steps (pick any)
 
 1. **Follow the upstream reports** from mirror CI (filed 2026-10-12): storytold/filmcraft#1249 (APV
    oracle needs ffmpeg 8.0+), #1250 (GPU tests vs adapters that cannot render `Rgba32Float`),
@@ -74,7 +88,9 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 4. **Draft timelines for agents** (agents edit a copy you accept), the next MCP milestone.
 5. **CI for this repo:** a GitHub Actions workflow with a fine-grained token (read access to
    `resolution-filmcraft`) stored as a secret.
-6. **Start the Resolve-style UI shell** (M2): page bar, Media Pool, viewers, timeline.
+6. **Grow the Edit page** (M2): real-time playback with audio (port FilmCraft's frame pool and
+   read-ahead), a source viewer, track headers, trimming by drag. Then the app hosts the MCP
+   server so agents edit the timeline you are looking at.
 
 Weekly: `scripts/upstream-status.sh` to see what FilmCraft changed; `scripts/sync-mirror.sh` to
 take it (docs/UPSTREAM.md).

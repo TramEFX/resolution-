@@ -27,7 +27,11 @@ Resolution's own work sits where FilmCraft is thinnest and where Resolve is most
 
 ## M2 — Edit page
 
-- [ ] Resolve-style shell: page bar, Media Pool, source/record viewers, timeline, inspector
+- [x] First slice of the Edit page (`apps/resolution-app`, LOG D-012): page bar, Media Pool, viewer,
+      timeline, inspector; Resolve keys through the keymap; stepping and scrubbing, preview playback
+      without audio
+- [ ] Rest of the shell: source viewer next to the record viewer, track headers (lock, mute,
+      targeting), trim and drag editing, edit modes, markers lane
 - [ ] Playback outside the UI (upstream a `filmcraft-playback` crate, or own a port)
 - [ ] Resolve edit types the engine lacks: place on top, ripple overwrite, fit to fill,
       append at end, replace; Trim mode semantics; dynamic trim
