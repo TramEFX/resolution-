@@ -1,0 +1,69 @@
+# Real footage through the engine (first pass, October 2026)
+
+The research report's risk #6 says FilmCraft's decoders are bit-exact on conformance streams, but
+real camera and phone files are "less tested". This pass ran real files from the development
+machine through Resolution's engine (FilmCraft v0.6.0, pin `9acf816`) on Windows 11. **What it can
+and cannot say:** the machine held almost no camera originals, so the set is mostly downloads and
+re-encodes. It covers the awkward cases listed below, but not iPhone HEVC/HDR, 10-bit, GoPro,
+mirrorless or ProRes footage. That is the next pass.
+
+## Method
+
+1. **Survey:** `ffprobe` (FFmpeg 9.0.2) read 127 video files (40 MP4 + 1 MKV in Videos, 84 MP4 + 2
+   MOV in Downloads) and grouped them into **33 technical profiles** (source, container, codec and
+   profile, pixel format, size, frame rate, audio track count, rotation).
+2. **Engine:** for one file per profile, a fresh `resolution mcp` server did the following:
+   imported it (`file.import`), read `file.mediaProperties`, built a timeline from it
+   (`file.newSequenceFromClip`), and rendered frames at 10 %, 50 % and 90 % (`render_frame`, 640 px).
+3. **Reference:** ffmpeg decoded each time point at the same size. SSIM and PSNR compared each
+   pair, and side-by-side images settled the low scores.
+4. **Timing:** to tell a wrong frame from a neighbouring one, three synthetic H.264 MP4s with a
+   unique picture per frame (`testsrc`, with a 3-decimal timer) were rendered at known times:
+   constant 24 fps, the same clip starting 53 ms late, and variable frame rate.
+
+## Results
+
+| Check | Result |
+|---|---|
+| Import | **33/33 profiles**; no import errors, no crashes |
+| Timeline from clip | 33/33 |
+| Frames rendered | **99/99** |
+| H.264 Baseline / Main / High, `yuv420p` and full-range `yuvj420p` | decoded; full-range levels match ffmpeg (checked by eye) |
+| HEVC Main, including 3840×2160 at 60 fps | decoded |
+| 5 audio tracks (2560×1070 game captures) | **all 5 found**, one timeline track each |
+| Rotation tag (Android, −90°) | **applied**: renders portrait, upright, matching ffmpeg |
+| Odd sizes (1916×1080, 1260×720, 480×486, 464×688), MKV, MOV, files without audio | decoded |
+| Variable frame rate (synthetic) | **exact**: the frame on screen at each test time, including inside a 7-frame hold |
+| Constant frame rate (synthetic) | **exact** at 4/4 test times |
+| Stream starting 53 ms late (synthetic, and 2 real files) | **one frame early (LOG B-010)** |
+
+Most low similarity scores in the first comparison came from the reference, not the engine.
+`ffmpeg -ss t` returns the first frame *at or after* t, while the engine correctly shows the frame
+*on screen* at t. Measured against the right frame, constant-rate files agree within one frame
+interval. Resampling of fine text accounts for the rest: the game captures score PSNR ~20 on
+visually identical frames.
+
+### Findings
+
+- **B-010, open:** an MP4 whose video edit list starts with an empty edit, then a B-frame skip
+  edit, plays one frame early. In the synthetic clip (`elst` = 53 ms empty, then 10 000 ms at media
+  time 1024 of 12 288), FilmCraft shows timer **2.000** (frame 48) at 2.1042 s. The file's
+  presentation timeline puts frame 49 there; counting from the clip's first frame, it is frame 50.
+  Without the empty edit, FilmCraft is exact. Real files: 2 of 127 start late (53 ms, 67 ms). One
+  measured −2.0 / −2.1 frames against the zero-based expectation, which matches.
+- **Frame-rate label for variable-rate files:** `mediaProperties` and the timeline built from the
+  clip use an estimated rate (58.824 for a 59.98-average capture, 37.5 for a 32.06-average MOV).
+  Frames are still placed by their timestamps (exact in the synthetic test). The visible effect is
+  a timeline at an unusual rate. Cosmetic, but an editor would notice.
+
+## Not covered yet
+
+- **Camera and phone originals:** iPhone HEVC (HDR / Dolby Vision, 10-bit), Android HEVC, GoPro,
+  mirrorless (10-bit 4:2:2, long-GOP and All-I), ProRes, MTS/AVCHD, Blackmagic RAW. This is the
+  pass that decides how soon a fallback decoder is needed.
+- **Audio:** only track detection was checked. Decoded samples, sync and channel layouts were not.
+- **Playback speed:** render times were logged per frame, but real-time playback was not measured.
+- **Other platforms:** Windows only.
+
+The harness (Python + WSL ffmpeg) lives outside the repo for now. It can become a repeatable
+check once the camera-original corpus exists.
