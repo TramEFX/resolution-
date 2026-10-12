@@ -57,9 +57,10 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 
 ## 4. Next steps (pick any)
 
-1. **Report upstream** what mirror CI found (LOG B-004 to B-006): FilmCraft's tests assume
-   ffmpeg 8.0 or newer, a GPU that can render `Rgba32Float`, and a Japanese system font. B-007,
-   the speed test, is already fixed upstream.
+1. **Follow the upstream reports** from mirror CI (filed 2026-10-12): storytold/filmcraft#1249 (APV
+   oracle needs ffmpeg 8.0+), #1250 (GPU tests vs adapters that cannot render `Rgba32Float`),
+   #1251 (Japanese-UI test needs a font). When one is fixed and synced, the matching CI
+   workaround can go (LOG B-004 to B-006). B-007 was already fixed upstream.
    The fixes are small (skip or fail clearly when the tool lacks a capability), and they shrink
    what our CI has to work around. A failure in FilmCraft's own tests is upstream's bug, not ours.
 2. **Real footage:** run `resolution mcp --project …` or `resolution run raw.filmcraft/file.import

@@ -250,6 +250,9 @@ before the next failure (B-005).
   turns a skipped oracle test into a failure, so CI cannot pass by quietly skipping.
 - Upstream: have the APV oracle test skip, or fail clearly, when ffmpeg lacks the `apv` format.
 
+**Reported upstream** 2026-10-12: storytold/filmcraft#1249, with FFmpeg's changelog for the
+8.0 minimum.
+
 ### D-008 — Mirror CI uses a pinned static ffmpeg and requires the oracle tests
 **Area:** ci · **Status:** active · **Doc:** mirror commit `3ea75ec` (`mirror-ci.yml`, step "ffmpeg for the oracle tests")
 
@@ -310,6 +313,9 @@ Metal, DX12, GLES.
 - Run the workspace tests with `--no-fail-fast` before the gate, so one run lists every failure
   instead of one per 25-minute run.
 
+**Reported upstream** 2026-10-12: storytold/filmcraft#1250. It suggests `device()` also check
+`Rgba32Float` render support.
+
 ### D-009 — Mirror CI runs every test binary before the gate
 **Area:** ci · **Status:** folded into D-010 (the separate pass is gone; the gate's own `test` phase runs `--no-fail-fast`) · **Doc:** mirror commit `1e65df6` (step "cargo test, every failure")
 
@@ -334,6 +340,9 @@ it scans the system font folders for a face covering its Japanese sample text (`
 `Noto Sans JP`, …). The runner has none, and the test unwraps the result instead of skipping.
 
 **Fix:** install Ubuntu's `fonts-noto-cjk` in the apt step (mirror `e199881`).
+
+**Reported upstream** 2026-10-12: storytold/filmcraft#1251. The test is unchanged on main, and
+its neighbour `japanese_needs_an_installed_font` already handles the no-font case.
 
 ### B-007 — Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1×
 **Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38016792934, both test passes)
