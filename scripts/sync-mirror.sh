@@ -33,10 +33,32 @@ git -C "$dir" remote get-url upstream >/dev/null 2>&1 || git -C "$dir" remote ad
 git -C "$dir" fetch --quiet origin
 git -C "$dir" fetch --quiet --tags upstream
 
+# Move Cargo.toml's engine pin to sync point $2 (commit $1) and run the tests.
+apply_pin() {
+  local rev=$1 sync_branch=$2 base
+  base="$(git -C "$dir" rev-parse --short=7 "$new_base")"
+  sed -i.bak -E "s|^(filmcraft-engine = \{ git = \"[^\"]*\", rev = \")[0-9a-f]+(\" \})|\1$rev\2|" "$root/Cargo.toml"
+  sed -i.bak -E "s|^# a sync point's commit \(branch [^)]*\)|# a sync point's commit (branch $sync_branch = storytold/filmcraft@$base + mirror plumbing)|" "$root/Cargo.toml"
+  rm -f "$root/Cargo.toml.bak"
+  (cd "$root" && cargo update -p filmcraft-engine && cargo test)
+  echo "Cargo.toml now pins $rev. Review the command-id diff (scripts/upstream-status.sh) and commit."
+}
+
 new_base="$(git -C "$dir" rev-parse "$ref^{commit}")"
 old_base="$(git -C "$dir" rev-parse origin/upstream)"
 if [ "$new_base" = "$old_base" ]; then
   echo "mirror is already at $ref ($(git -C "$dir" rev-parse --short "$new_base")); nothing to sync"
+  [ "$apply" = 1 ] || exit 0
+  # --apply after the sync (the usual order: sync, wait for mirror-ci, then apply) pins the sync
+  # point that holds this base (docs/LOG.md B-009).
+  rev="$(git -C "$dir" rev-parse origin/resolution)"
+  sync_branch="$(git -C "$dir" for-each-ref --points-at "$rev" --format='%(refname:strip=3)' refs/remotes/origin/sync | sort | tail -n 1)"
+  if [ -z "$sync_branch" ]; then
+    echo "error: no sync/* branch points at resolution ($rev); run without --apply first" >&2
+    exit 1
+  fi
+  echo "sync point: $sync_branch = $rev"
+  apply_pin "$rev" "$sync_branch"
   exit 0
 fi
 if ! git -C "$dir" merge-base --is-ancestor "$old_base" "$new_base"; then
@@ -78,11 +100,7 @@ rev="$(git -C "$dir" rev-parse resolution)"
 echo "sync point: $sync_branch = $rev (mirror-ci is now running on Linux)"
 
 if [ "$apply" = 1 ]; then
-  sed -i.bak -E "s|^(filmcraft-engine = \{ git = \"[^\"]*\", rev = \")[0-9a-f]+(\" \})|\1$rev\2|" "$root/Cargo.toml"
-  sed -i.bak -E "s|^# a sync point's commit \(branch sync/[^ ]+ |# a sync point's commit (branch $sync_branch |" "$root/Cargo.toml"
-  rm -f "$root/Cargo.toml.bak"
-  (cd "$root" && cargo update -p filmcraft-engine && cargo test)
-  echo "Cargo.toml now pins $rev. Review the command-id diff (scripts/upstream-status.sh) and commit."
+  apply_pin "$rev" "$sync_branch"
 else
   echo "next: wait for mirror-ci, then re-run with --apply (or set rev = \"$rev\" in Cargo.toml)"
 fi

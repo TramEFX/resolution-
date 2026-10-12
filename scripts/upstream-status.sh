@@ -30,8 +30,11 @@ git -C "$dir" diff --stat "$base" "$ref" -- crates/engine crates/project crates/
 ids() { git -C "$dir" show "$1:crates/engine/src/commands.rs" | grep -oE '(cmd|query)!\(\s*"[A-Za-z0-9_.]+"' | grep -oE '"[^"]+"' | tr -d '"' | sort -u; }
 echo
 echo "== command ids in commands.rs removed (-) / added (+) =="
-diff <(ids "$base") <(ids "$ref") | grep -E '^[<>]' | sed 's/^</-/; s/^>/+/' || echo "(none)"
+# Captured first: under pipefail, diff's "differences found" exit status would also print "(none)".
+changes="$(diff <(ids "$base") <(ids "$ref") | grep -E '^[<>]' | sed 's/^</-/; s/^>/+/' || true)"
+echo "${changes:-(none)}"
 
 echo
 echo "== ROADMAP.md changes =="
-git -C "$dir" diff "$base" "$ref" -- ROADMAP.md | grep -E '^[+-][^+-]' | head -n 60 || echo "(none)"
+roadmap="$(git -C "$dir" diff "$base" "$ref" -- ROADMAP.md | grep -E '^[+-][^+-]' || true)"
+if [ -n "$roadmap" ]; then head -n 60 <<<"$roadmap"; else echo "(none)"; fi
