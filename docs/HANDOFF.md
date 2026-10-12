@@ -63,9 +63,11 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
    workaround can go (LOG B-004 to B-006). B-007 was already fixed upstream.
    The fixes are small (skip or fail clearly when the tool lacks a capability), and they shrink
    what our CI has to work around. A failure in FilmCraft's own tests is upstream's bug, not ours.
-2. **Real footage:** run `resolution mcp --project …` or `resolution run raw.filmcraft/file.import
-   '{"paths":["clip.mp4"]}' …` on your own camera and phone files; note what fails to import or
-   play (research risk #6). This decides how soon we need a fallback decoder.
+2. **Real footage:** first pass done on 2026-10-12 ([report](research/real-footage-2026-10.md)). 33 profiles
+   from 127 local files all import and render, including HEVC 4K60, 5-track audio, rotation and
+   variable frame rate. One timing defect was found (LOG B-010). Still needed: **camera and phone
+   originals** (iPhone HEVC/HDR, 10-bit, GoPro, mirrorless, ProRes, MTS). The local files are mostly
+   downloads. This decides how soon we need a fallback decoder (research risk #6).
 3. **Verify the keymap** on a machine with Resolve: open Keyboard Customization, compare each line
    of `keymaps/resolve.toml`, set `verified = true`, fix any wrong keys.
 4. **Draft timelines for agents** (agents edit a copy you accept), the next MCP milestone.

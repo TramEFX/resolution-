@@ -45,6 +45,7 @@ doc is updated *and* the entry says which section moved.
 | D-011 | 2026-10-12 | upstream | Sync to FilmCraft v0.6.0, a release tag, not main | active |
 | B-008 | 2026-10-12 | tooling | upstream-status.sh printed "(none)" after listing command-id changes | fixed |
 | B-009 | 2026-10-12 | tooling | sync-mirror.sh --apply did nothing after a sync | fixed |
+| B-010 | 2026-10-12 | engine | MP4 with a leading empty edit plays one frame early | open |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -402,6 +403,11 @@ isolation alone may not make the test pass on GitHub's runners. So keep it out o
 and point the skip and the report step at its new location (`--test mixer_perf`) instead of
 removing them. Logging the runner's CPU model in each run would let the numbers be compared.
 
+**CPU logging added** (mirror `57b937a`, 2026-10-12): a "Runner hardware" step prints lscpu's
+model, CPU and core counts, L3 cache and hypervisor. It also writes "Runner CPU: <model>, <n>
+CPUs" to the run summary. Tested in WSL. The first CI run with it will be the next sync, or a
+manual run.
+
 ### D-010 — Mirror CI runs upstream's gate phase by phase, leaving out one speed test
 **Area:** ci · **Status:** active · **Doc:** UPSTREAM.md "Mirror branches"; mirror commit `e199881`
 
@@ -497,3 +503,23 @@ newest `sync/*` branch that points at `resolution`, and errors if there is none.
 rewritten whole. Tested: `sync-mirror.sh v0.6.0 --apply` pinned `sync/fc-20261012` = `9acf816`,
 wrote `storytold/filmcraft@2ff3f5e` in the comment, updated `Cargo.lock`, and ran the tests (30
 passed).
+
+### B-010 — MP4 with a leading empty edit plays one frame early
+**Area:** engine (FilmCraft) · **Status:** open · **Caught by:** running real footage, then confirmed with a synthetic clip · **Doc:** [research/real-footage-2026-10.md](research/real-footage-2026-10.md)
+
+**Symptom:** a real file whose video starts 53 ms into the presentation showed a steady −2.0 / −2.1
+frame offset against ffmpeg. A synthetic reproduction confirmed it: H.264 `testsrc` with a
+3-decimal timer, 24 fps, `-bf 2`, written with `-output_ts_offset 0.0533`. Its edit list is
+`[53 ms empty (media_time -1), 10 000 ms from media_time 1024]` (timescale 12 288, so 2 frames).
+At 2.1042 s FilmCraft renders the frame whose timer reads **2.000** (frame 48). The file's
+presentation timeline puts frame 49 there (presented from 2.0946 s); counting from the clip's first
+frame, it is frame 50. The same clip without the empty edit is exact (timer 2.083, frame 50), as is
+a variable-frame-rate clip.
+
+**Root cause:** not investigated. FilmCraft's `crates/codecs/src/mp4.rs` handles empty edits (a
+test covers one followed by a media_time 0 edit) and B-frame skip edits. This case combines the two.
+
+**Impact:** 2 of 127 local files start late (53 ms, 67 ms). If audio follows its own timestamps,
+picture and sound would be one or two frames apart. Audio was not measured.
+
+**Next:** report upstream with the synthetic reproduction (not yet filed).
