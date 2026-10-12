@@ -45,7 +45,8 @@ doc is updated *and* the entry says which section moved.
 | D-011 | 2026-10-12 | upstream | Sync to FilmCraft v0.6.0, a release tag, not main | active |
 | B-008 | 2026-10-12 | tooling | upstream-status.sh printed "(none)" after listing command-id changes | fixed |
 | B-009 | 2026-10-12 | tooling | sync-mirror.sh --apply did nothing after a sync | fixed |
-| B-010 | 2026-10-12 | engine | MP4 with a leading empty edit plays one frame early | open |
+| B-010 | 2026-10-12 | engine | MP4 with a leading empty edit plays one frame early | open, reported upstream |
+| B-011 | 2026-10-12 | engine | Frames timestamped just after the timeline grid show one frame late | open, reported upstream |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -522,4 +523,36 @@ test covers one followed by a media_time 0 edit) and B-frame skip edits. This ca
 **Impact:** 2 of 127 local files start late (53 ms, 67 ms). If audio follows its own timestamps,
 picture and sound would be one or two frames apart. Audio was not measured.
 
-**Next:** report upstream with the synthetic reproduction (not yet filed).
+**Reported upstream** 2026-10-12: storytold/filmcraft#1276. It includes the one-line ffmpeg
+reproduction, and cross-references the closed #714 and #715.
+
+### B-011 — Frames timestamped just after the timeline grid show one frame late
+**Area:** engine (FilmCraft) · **Status:** open · **Caught by:** running real footage (an Android 4K clip), then confirmed with a synthetic clip · **Doc:** [research/real-footage-2026-10.md](research/real-footage-2026-10.md)
+
+**Symptom:** the clip was Android 15, 3840×2160 H.264 High, 30 fps, with no B-frames, no edit list
+and starting at 0. Its first frame lasts 34.14 ms, so later frames sit up to ~0.7 ms after the
+1/30 s grid. At 8 of 10 test times FilmCraft rendered the previous source frame, and the margin was
+decisive: the previous frame matched at 39.8 dB against 23.6 dB for the frame on screen. The 4K
+decode itself is correct: the full-resolution render matches that previous frame at 45.8 dB.
+
+**Root cause (measured, not read from FilmCraft's code):** the shown frame is the last source frame
+at or before the *start of the timeline frame* containing T. That rule predicts all 10
+measurements; "the frame on screen at T" predicts 2. So a source frame that arrives even a
+fraction of a millisecond after the grid line misses its own timeline frame.
+
+**Confirmed in isolation:** a 30 fps `testsrc` clip (3-decimal timer, `-bf 0`, no edit list) with
+every frame after the first moved 1 ms late. FilmCraft labels it 30.0 fps. At (k + 0.5)/30 for
+k = 1, 75, 150 it shows timers **0.000, 2.466, 4.966**; the same clip on the grid shows 0.033, 2.500,
+5.000. So the late clip runs one frame behind for its whole length, and frame 0 shows twice. When a
+real clip's drift crosses the grid (−1.6 ms by frame 900 here), a source frame should also be
+skipped.
+
+**Impact:** phone footage commonly has timestamp jitter like this; both Android clips tested show
+the offset. It means a stutter and a one-frame offset in the timeline, and possibly a ~33 ms
+offset between picture and sound (audio not measured). Related upstream: the closed #73, the same
+"floors the time against timestamps" class, fixed for WebM. Tested at v0.6.0; upstream `main` not
+tested.
+
+**Reported upstream** 2026-10-12: storytold/filmcraft#1282. It includes the one-line ffmpeg
+reproduction and the timer table, cross-references #73, and suggests picking the nearest source
+frame.

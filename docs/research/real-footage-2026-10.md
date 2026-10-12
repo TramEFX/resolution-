@@ -34,7 +34,7 @@ mirrorless or ProRes footage. That is the next pass.
 | Rotation tag (Android, −90°) | **applied**: renders portrait, upright, matching ffmpeg |
 | Odd sizes (1916×1080, 1260×720, 480×486, 464×688), MKV, MOV, files without audio | decoded |
 | Variable frame rate (synthetic) | **exact**: the frame on screen at each test time, including inside a 7-frame hold |
-| Constant frame rate (synthetic) | **exact** at 4/4 test times |
+| Constant frame rate (synthetic) | **exact** at 4/4 test times when frames sit exactly on the grid; one frame late when they sit just after it (B-011) |
 | Stream starting 53 ms late (synthetic, and 2 real files) | **one frame early (LOG B-010)** |
 
 Most low similarity scores in the first comparison came from the reference, not the engine.
@@ -55,6 +55,31 @@ visually identical frames.
   clip use an estimated rate (58.824 for a 59.98-average capture, 37.5 for a 32.06-average MOV).
   Frames are still placed by their timestamps (exact in the synthetic test). The visible effect is
   a timeline at an unusual rate. Cosmetic, but an editor would notice.
+
+## Android 4K clip (second pass, 2026-10-12)
+
+A phone original arrived after the first pass: Android 15, **3840×2160 H.264 High at level 5.1,
+~48 Mbit/s**, 30 fps nominal (953 of 958 frames 1/30 s, five jittered), 8-bit BT.709, AAC stereo,
+no B-frames, no edit list.
+
+| Check | Result |
+|---|---|
+| Import, metadata | correct: codec, 3840×2160, 30.01 fps (the measured average), 4:2:0 8-bit, BT.709, 31.921 s, AAC 2 ch 48 kHz |
+| Timeline from clip | 1 video and 1 audio clip |
+| Random seeks, 640 px preview | 10/10, **0.28 to 0.92 s** each |
+| Full 4K frame | rendered; **45.8 dB** against ffmpeg's decode of the same frame |
+| 30 consecutive frames, 640 px | **~17 frames/s** (median 28 ms) |
+| Frame timing | **one frame late at 8 of 10 times (B-011)** |
+
+The speed figures come from a development build (codec crates at opt-level 3), and each frame also
+pays for an MCP round trip and PNG encoding. Treat them as rough indicators, not playback speed.
+They do suggest 4K30 playback needs the multi-threaded read-ahead FilmCraft keeps in its UI crate.
+
+**B-011, open:** the engine shows the last source frame at or before the start of the timeline
+frame. That rule predicts 10/10 measurements on this clip; "the frame on screen" predicts 2/10.
+Frames that sit fractions of a millisecond after the grid therefore show one frame late. A synthetic
+clip with every frame 1 ms late shows 0.000 / 2.466 / 4.966 where 0.033 / 2.500 / 5.000 belong. The
+first pass's Android 720p clip (−1.1 to −1.6 frames) fits the same pattern.
 
 ## Not covered yet
 
