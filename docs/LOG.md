@@ -46,7 +46,7 @@ doc is updated *and* the entry says which section moved.
 | B-008 | 2026-10-12 | tooling | upstream-status.sh printed "(none)" after listing command-id changes | fixed |
 | B-009 | 2026-10-12 | tooling | sync-mirror.sh --apply did nothing after a sync | fixed |
 | B-010 | 2026-10-12 | engine | MP4 with a leading empty edit plays one frame early | open, reported upstream |
-| B-011 | 2026-10-12 | engine | Frames timestamped just after the timeline grid show one frame late | open |
+| B-011 | 2026-10-12 | engine | Frames timestamped just after the timeline grid show one frame late | open, reported upstream |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -553,4 +553,6 @@ offset between picture and sound (audio not measured). Related upstream: the clo
 "floors the time against timestamps" class, fixed for WebM. Tested at v0.6.0; upstream `main` not
 tested.
 
-**Next:** report upstream with the synthetic reproduction (awaiting approval).
+**Reported upstream** 2026-10-12: storytold/filmcraft#1282. It includes the one-line ffmpeg
+reproduction and the timer table, cross-references #73, and suggests picking the nearest source
+frame.
