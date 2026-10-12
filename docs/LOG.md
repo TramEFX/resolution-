@@ -40,7 +40,7 @@ doc is updated *and* the entry says which section moved.
 | B-005 | 2026-10-10 | ci | Upstream's GPU parity tests fail on a GPU-less runner's software OpenGL | fixed |
 | D-009 | 2026-10-10 | ci | Mirror CI runs every test binary before the gate | folded into D-010 |
 | B-006 | 2026-10-10 | ci | Upstream's Japanese-UI test needs a system CJK font the runner lacks | open |
-| B-007 | 2026-10-10 | ci | Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1× | worked around by D-010; cause corrected |
+| B-007 | 2026-10-10 | ci | Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1× | worked around by D-010; cause corrected; fixed upstream after the pin |
 | D-010 | 2026-10-10 | ci | Mirror CI runs upstream's gate phase by phase, leaving out one speed test | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
@@ -367,6 +367,15 @@ in the suite and alone would settle it. The "Fix" line stands, but the upstream 
 speed test that is sensitive to parallel load, not one tuned for fast machines. The mirror's
 workflow comments were corrected in `023f52f`.
 
+**Fixed upstream after the pin** (checked 2026-10-12): storytold/filmcraft `dcabbda` (2026-10-11,
+"isolate throughput gate") moved the test to `crates/render/tests/mixer_perf.rs`, its own
+executable, "so parallel correctness tests do not contend for CPU frequency, caches, or memory
+bandwidth during its timed workload", with the threshold unchanged. That is the same diagnosis
+as the correction above, reached independently. **At the next sync:** the test's path becomes
+`perf_24_tracks_3_effects_realtime_factor` in the `mixer_perf` binary, so our `--skip
+mixer_tests::…` no longer matches it and the report-only step runs zero tests. Remove both, and
+let the gate run it.
+
 ### D-010 — Mirror CI runs upstream's gate phase by phase, leaving out one speed test
 **Area:** ci · **Status:** active · **Doc:** UPSTREAM.md "Mirror branches"; mirror commit `e199881`
 
@@ -389,6 +398,8 @@ It also shows which phase failed. **Cost:** CI no longer literally runs `cargo x
 drift guard makes any divergence loud rather than silent, but the phases must be kept in step by
 hand when it fires. Before any switch to upstream's own gate, check that `--skip` is still needed.
 The Why above repeats B-007's original cause; see B-007's correction.
+Checked 2026-10-12: upstream main's `fn ci` still matches the copy, so the next sync's drift
+guard should pass. B-007 is fixed upstream; its skip and report step come out at the next sync.
 
 **Result: green.** Run 38019701912 on `resolution` @ `e199881` passed every phase in 23m20s:
 fmt 3s; clippy 41s; test 17m35s (219 binaries, 2,294 passed, 0 failed, 40 ignored, 1 left out,

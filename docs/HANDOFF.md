@@ -48,6 +48,7 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 | Engine boundary | `engine-api` trait + vocabulary (71 Resolve-named commands; 46 run headless on FilmCraft today, the rest are front-end or not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
 | MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 30 tests across the workspace (passing on Windows), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
+| GPU parity, real hardware | Local, 2026-10-12: FilmCraft's 33 golden tests pass, the 4 GPU-vs-CPU ones on an AMD Radeon RX 9070 XT through Vulkan (the adapter wgpu's default request picks, checked with a probe). CI covers the same tests on software Vulkan (LOG B-005) |
 | UI | Not started (M2) |
 | CI for this repo | None yet: needs a token that can read the private mirror |
 
@@ -56,8 +57,9 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 
 ## 4. Next steps (pick any)
 
-1. **Report upstream** what mirror CI found (LOG B-004 to B-007): FilmCraft's tests assume a
-   recent ffmpeg, a real GPU, a Japanese system font, and an unloaded CPU for one speed test.
+1. **Report upstream** what mirror CI found (LOG B-004 to B-006): FilmCraft's tests assume
+   ffmpeg 8.0 or newer, a GPU that can render `Rgba32Float`, and a Japanese system font. B-007,
+   the speed test, is already fixed upstream.
    The fixes are small (skip or fail clearly when the tool lacks a capability), and they shrink
    what our CI has to work around. A failure in FilmCraft's own tests is upstream's bug, not ours.
 2. **Real footage:** run `resolution mcp --project …` or `resolution run raw.filmcraft/file.import
