@@ -65,7 +65,8 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
    what our CI has to work around. A failure in FilmCraft's own tests is upstream's bug, not ours.
 2. **Real footage:** first pass done on 2026-10-12 ([report](research/real-footage-2026-10.md)). 33 profiles
    from 127 local files all import and render, including HEVC 4K60, 5-track audio, rotation and
-   variable frame rate. One timing defect was found (LOG B-010). Still needed: **camera and phone
+   variable frame rate. A phone 4K clip decodes correctly. Two timing defects were found (LOG B-010,
+   reported as storytold/filmcraft#1276; B-011). Still needed: **camera and phone
    originals** (iPhone HEVC/HDR, 10-bit, GoPro, mirrorless, ProRes, MTS). The local files are mostly
    downloads. This decides how soon we need a fallback decoder (research risk #6).
 3. **Verify the keymap** on a machine with Resolve: open Keyboard Customization, compare each line
