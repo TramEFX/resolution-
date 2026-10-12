@@ -42,6 +42,9 @@ doc is updated *and* the entry says which section moved.
 | B-006 | 2026-10-10 | ci | Upstream's Japanese-UI test needs a system CJK font the runner lacks | open |
 | B-007 | 2026-10-10 | ci | Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1× | worked around by D-010; cause corrected; fixed upstream after the pin |
 | D-010 | 2026-10-10 | ci | Mirror CI runs upstream's gate phase by phase, leaving out one speed test | active |
+| D-011 | 2026-10-12 | upstream | Sync to FilmCraft v0.6.0, a release tag, not main | active |
+| B-008 | 2026-10-12 | tooling | upstream-status.sh printed "(none)" after listing command-id changes | fixed |
+| B-009 | 2026-10-12 | tooling | sync-mirror.sh --apply did nothing after a sync | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -385,6 +388,20 @@ as the correction above, reached independently. **At the next sync:** the test's
 mixer_tests::…` no longer matches it and the report-only step runs zero tests. Remove both, and
 let the gate run it.
 
+**Second correction (2026-10-12, run 38216382326):** run *alone* in the report-only step, the test
+measured **2.6× (3.916 s)**, against 6.6× alone in run 38019701912. The evidence so far:
+- run 38016792934, pin, inside the suite: 2.1× (twice);
+- run 38019701912, pin, alone: 6.6×;
+- run 38216382326, v0.6.0, alone: 2.6×.
+
+The swing between runs is larger than the gap between in-suite and alone, so the first
+correction's "most likely contention" is not established either. Runner hardware, noisy
+neighbours on the host, or a change in v0.6.0's mixer could each explain it. The logs do not
+name the CPU, so this cannot be told apart yet. **Revised next-sync plan:** upstream's
+isolation alone may not make the test pass on GitHub's runners. So keep it out of the gate,
+and point the skip and the report step at its new location (`--test mixer_perf`) instead of
+removing them. Logging the runner's CPU model in each run would let the numbers be compared.
+
 ### D-010 — Mirror CI runs upstream's gate phase by phase, leaving out one speed test
 **Area:** ci · **Status:** active · **Doc:** UPSTREAM.md "Mirror branches"; mirror commit `e199881`
 
@@ -408,7 +425,9 @@ drift guard makes any divergence loud rather than silent, but the phases must be
 hand when it fires. Before any switch to upstream's own gate, check that `--skip` is still needed.
 The Why above repeats B-007's original cause; see B-007's correction.
 Checked 2026-10-12: upstream main's `fn ci` still matches the copy, so the next sync's drift
-guard should pass. B-007 is fixed upstream; its skip and report step come out at the next sync.
+guard should pass. ~~B-007 is fixed upstream; its skip and report step come out at the next
+sync.~~ Superseded by B-007's second correction: at the next sync, move the skip and report
+step to the test's new location rather than removing them.
 
 **Result: green.** Run 38019701912 on `resolution` @ `e199881` passed every phase in 23m20s:
 fmt 3s; clippy 41s; test 17m35s (219 binaries, 2,294 passed, 0 failed, 40 ignored, 1 left out,
@@ -416,3 +435,65 @@ fmt 3s; clippy 41s; test 17m35s (219 binaries, 2,294 passed, 0 failed, 40 ignore
 `wasm: ok (42 crates)`. Between the pin `2ba0629` and `e199881` the only changed file is
 `.github/workflows/mirror-ci.yml` (GitHub compare), so **this run confirms the pinned engine
 code.**
+
+### D-011 — Sync to FilmCraft v0.6.0, a release tag, not main
+**Area:** upstream · **Status:** active · **Doc:** UPSTREAM.md "Current pin"
+
+**Decision:** the sync point is `sync/fc-20261012` = `9acf816` = storytold/filmcraft@`2ff3f5e`
+(v0.6.0, published 2026-10-11) plus mirror plumbing. That is 537 commits past the previous base
+`7b6c134`. `main` was 378 commits further on (`78fe010`).
+
+**Why:** UPSTREAM.md prefers release tags, and FilmCraft tags almost daily (v0.4.0 10-08, v0.5.0
+10-10, v0.6.0 10-11), so a tag costs little freshness. **Cost:** v0.6.0 predates `dcabbda`, the
+speed-test isolation, so B-007's skip stays for one more sync.
+
+**What the sync found:**
+- No command ids were removed. Five were added: `effects.resetParam`, `sequence.removeTransition`,
+  `source.close`, `source.closeAll`, `timeline.selectGap`. None fills a `Missing` Resolve edit.
+- The adapter needed no change. All 30 Resolution tests pass against it (1m47s build), and fmt
+  and clippy are clean.
+- One new FilmCraft crate is in our graph: `filmcraft-tts`, for narration. The dev-profile
+  overrides match v0.6.0's; upstream's new ones (`dng`, `flac`, `vp8`) arrived after the tag and
+  are for crates we do not use.
+- The rebase met modify/delete conflicts on 4 upstream workflows we remove. The script kept them
+  removed, as designed. No new upstream workflow came in.
+- Pushing the sync branch started mirror-ci by itself (run 38216382326, event `push`). That is the
+  first proof that `6015b2f`'s push-ordering fix works; earlier runs were all started by hand.
+
+**Mirror CI: green** (run 38216382326 on the sync point itself, 45m48s). 245 test binaries, 2,808
+passed, 0 failed, 41 ignored, 0 skipped. The speed test was still left out. `layers` and
+`assets` are ok, and `wasm: ok (44 crates)`. Twice the previous run's time: compiling took
+23m25s against 11m21s. The dependency cache only partly matched, because `Cargo.lock` changed,
+and the workspace grew by 26 test binaries and 514 tests. Expect roughly 45 Actions minutes
+for a sync that moves many crates.
+
+### B-008 — upstream-status.sh printed "(none)" after listing command-id changes
+**Area:** tooling · **Status:** fixed · **Caught by:** running it (the v0.6.0 sync)
+
+**Symptom:** the command-id section listed 5 added ids, then printed `(none)`.
+
+**Root cause:** under `set -o pipefail`, `diff` exits 1 when there *are* differences, so the
+pipeline's `|| echo "(none)"` fired as well. The ROADMAP section had the same shape: piping into
+`head -n 60` would end the script with SIGPIPE on a long diff.
+
+**Fix:** capture the output, then print it or `(none)`. The ROADMAP excerpt goes through a
+here-string, so no pipe can fail. Tested both ways: against v0.6.0 it lists only the 5 ids, and
+against the pinned base it prints `(none)` for both sections. Both runs exit 0.
+
+### B-009 — sync-mirror.sh --apply did nothing after a sync
+**Area:** tooling · **Status:** fixed · **Caught by:** review, then confirmed by running it
+
+**Symptom:** UPSTREAM.md's order is: sync, wait for mirror-ci, then run with `--apply`. That last
+step printed `mirror is already at v0.6.0 (2ff3f5e2); nothing to sync`, exited 0, and left the
+pin unchanged. A documented step failed silently.
+
+**Root cause:** the "nothing to sync" check exits before the apply block, and after a sync the
+mirror's `upstream` branch is always already at the ref. A second defect was in the apply block:
+its comment edit replaced only the branch name, so `Cargo.toml` would have kept the old
+`storytold/filmcraft@…` commit.
+
+**Fix:** the apply logic is one function. When the mirror is already synced, `--apply` pins the
+newest `sync/*` branch that points at `resolution`, and errors if there is none. The comment is
+rewritten whole. Tested: `sync-mirror.sh v0.6.0 --apply` pinned `sync/fc-20261012` = `9acf816`,
+wrote `storytold/filmcraft@2ff3f5e` in the comment, updated `Cargo.lock`, and ran the tests (30
+passed).

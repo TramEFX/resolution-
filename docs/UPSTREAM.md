@@ -28,9 +28,9 @@ Mirror branches:
   pinned ffmpeg 9 (D-008), software Vulkan (B-005), and a Japanese font (B-006). To try a
   workflow change without a new sync point, run `mirror-ci` by hand on `resolution`.
 
-**Current pin:** `sync/fc-20261009` = `2ba0629` = storytold/filmcraft@`7b6c134` (2026-10-09,
-after v0.4.0) + mirror plumbing. Confirmed by mirror CI run 38019701912 on `resolution` @ `e199881`,
-whose engine code is identical (only the workflow differs; LOG D-010).
+**Current pin:** `sync/fc-20261012` = `9acf816` = storytold/filmcraft@`2ff3f5e` (v0.6.0, 2026-10-11)
++ mirror plumbing (LOG D-011). Confirmed by mirror CI run 38216382326 on the sync point itself.
+Previous: `sync/fc-20261009` = `2ba0629` (`7b6c134`).
 
 **Private-repo access:** `.cargo/config.toml` sets `net.git-fetch-with-cli`, so Cargo fetches the
 mirror with your normal git credentials. CI for this repo will need a token that can read the
@@ -52,7 +52,9 @@ else belongs in Resolution's own crates.
    - `every_mapped_id_exists_upstream` (command renames/removals) and the adapter contract tests;
    - `.fcproj` round-trip and migration tests (to add);
    - the command-id diff from step 1, for new commands worth adding to the vocabulary.
-4. Fix the adapter, never the engine in place. Commit the pin bump and adapter fixes together.
+4. Fix the adapter, never the engine in place. Compare upstream's `[profile.dev.package.*]`
+   overrides at the new base with ours in `Cargo.toml`, and mirror any for crates in our graph
+   (`cargo tree -i <crate>`). Commit the pin bump and adapter fixes together.
 
 ## Patches worth sending upstream
 

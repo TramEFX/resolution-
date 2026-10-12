@@ -260,8 +260,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-aac"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "thiserror",
@@ -269,16 +269,16 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-ac3"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "filmcraft-apv"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -287,13 +287,13 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-audio-dsp"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 
 [[package]]
 name = "filmcraft-av1"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -302,13 +302,13 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-bitstream"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 
 [[package]]
 name = "filmcraft-captions"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-color",
  "filmcraft-project",
@@ -320,13 +320,13 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-cfb"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 
 [[package]]
 name = "filmcraft-codecs"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-aac",
  "filmcraft-ac3",
@@ -358,16 +358,16 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-color"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "filmcraft-dnx"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -376,8 +376,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-edit"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-project",
  "filmcraft-time",
@@ -386,8 +386,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-engine"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-audio-dsp",
  "filmcraft-captions",
@@ -407,6 +407,7 @@ dependencies = [
  "filmcraft-speech",
  "filmcraft-text",
  "filmcraft-time",
+ "filmcraft-tts",
  "log",
  "serde",
  "serde_json",
@@ -416,8 +417,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-export"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-aac",
  "filmcraft-apv",
@@ -445,8 +446,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-format"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-media",
  "filmcraft-project",
@@ -458,8 +459,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-frame"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-color",
  "filmcraft-time",
@@ -469,16 +470,16 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-geom"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "filmcraft-h264"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -487,8 +488,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-h264enc"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -497,8 +498,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-hevc"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -507,8 +508,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-interchange"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-cfb",
  "filmcraft-color",
@@ -524,8 +525,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-isobmff"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "thiserror",
@@ -533,13 +534,13 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-matroska"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 
 [[package]]
 name = "filmcraft-media"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-color",
  "filmcraft-frame",
@@ -552,8 +553,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-mpeg2v"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "rayon",
  "thiserror",
@@ -561,31 +562,31 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-mpegts"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "thiserror",
 ]
 
 [[package]]
 name = "filmcraft-mxf"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 
 [[package]]
 name = "filmcraft-ogg"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 
 [[package]]
 name = "filmcraft-opus"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 
 [[package]]
 name = "filmcraft-project"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-color",
  "filmcraft-geom",
@@ -598,8 +599,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-prores"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
@@ -608,8 +609,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-render"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-audio-dsp",
  "filmcraft-captions",
@@ -627,8 +628,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-scopes"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-color",
  "serde",
@@ -636,8 +637,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-speech"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-project",
  "filmcraft-time",
@@ -649,8 +650,8 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-text"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-color",
  "harfrust",
@@ -662,16 +663,25 @@ dependencies = [
 
 [[package]]
 name = "filmcraft-time"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "serde",
 ]
 
 [[package]]
+name = "filmcraft-tts"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
+dependencies = [
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "filmcraft-vp9"
-version = "0.4.0"
-source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=2ba06295a4163552c0914e5672f7bffc20f8edae#2ba06295a4163552c0914e5672f7bffc20f8edae"
+version = "0.6.0"
+source = "git+https://github.com/TramEFX/resolution-filmcraft?rev=9acf816c17856622fba9d01767c0df597bd30052#9acf816c17856622fba9d01767c0df597bd30052"
 dependencies = [
  "filmcraft-bitstream",
  "rayon",
