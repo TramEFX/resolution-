@@ -12,4 +12,10 @@ workspace = true
 [dependencies]
 resolution-engine-api = { workspace = true }
 filmcraft-engine = { workspace = true }
+filmcraft-media = { workspace = true }
+filmcraft-frame = { workspace = true }
+filmcraft-audio-dsp = { workspace = true }
+filmcraft-platform = { workspace = true }
+# FilmCraft's own thread pool library: playback frames render in a pool of their own (playback.rs)
+rayon = "1"
 serde_json = { workspace = true }

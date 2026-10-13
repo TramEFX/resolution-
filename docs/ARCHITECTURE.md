@@ -23,8 +23,8 @@
 1. **Only `crates/filmcraft-adapter` depends on `filmcraft-*` crates.** No FilmCraft type crosses
    the `Engine` trait. (To enforce: a CI check over `cargo metadata`.)
 2. **Never depend on FilmCraft's `ui-egui`, `apps/*` or `automation`.** They are what we replace.
-   FilmCraft's playback (frame pool, play-ahead mixer, audio clock) currently lives in `ui-egui`;
-   we either upstream a UI-free `filmcraft-playback` crate or own a port behind the trait.
+   FilmCraft keeps its playback (frame pool, play-ahead mixer, audio clock) in `ui-egui`, so
+   Resolution owns a port of it, `crates/playback`, behind the `Playback` trait (LOG D-013).
 3. **Every action is a command.** The UI, keymap, MCP server and AI features all call
    `Engine::execute` with a vocabulary id. No front end mutates project state directly.
    One undo history for people and agents.
@@ -60,8 +60,14 @@ we map to must still exist at the pinned revision.
 An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP server:
 
 - **Engine thread.** The engine runs on its own thread (`worker.rs`). The UI sends commands and
-  frame requests and reads the replies each repaint, so a slow seek never freezes the window.
-  Frame requests are coalesced, and an engine panic fails one command, not the app.
+  reads the replies each repaint, so a slow command never freezes the window, and an engine
+  panic fails one command, not the app. After each batch the engine sends a snapshot: the
+  timeline and project to draw, and a `Playback` the viewer renders and plays from.
+- **Viewer and playback** (`crates/playback`, LOG D-013). Frames render on two worker threads into
+  a cache, ahead of the playhead while playing; the viewer shows the exact frame or holds the
+  newest one it has. Sound is mixed ahead on its own thread, and the audio device is the clock.
+  Stopping sends `playhead.set` with the frame on screen, so the engine's playhead is where you
+  stopped.
 - **Keys are data.** A key press becomes a keymap chord (`keys.rs`), the keymap gives a vocabulary
   id, and the id runs. Front-end ids (`Target::Ui`: pages, playback, zoom, edit modes) are handled
   in the app; everything else goes to the engine. The menus run the same ids.
@@ -70,7 +76,28 @@ An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP s
   replace it.
 - **Looks are Resolution's own.** Dark theme and its own palette; Resolve's layout and keys only.
 - **Tests drive the real UI.** `egui_kittest` presses keys and clicks clips headlessly.
-  `resolution-app --screenshot out.png` saves the window once a frame is on screen.
+  `resolution-app --screenshot out.png` saves the window once a frame is on screen; `--play <s>`
+  plays and prints what was shown and heard.
+
+## Playback (`crates/playback`)
+
+Engine-neutral: it plays any `engine_api::Playback`, the open timeline frozen at one revision,
+which renders frames and mixes sound on any thread (the FilmCraft adapter shares the session's
+project snapshot). Ported from FilmCraft (LOG D-013; NOTICE):
+
+| Module | Does | From FilmCraft |
+|---|---|---|
+| `frames` | Frame workers, priority queue, byte-budgeted cache; plays ahead and skips evenly when frames are slower than real time | `ui-egui/src/frames.rs` |
+| `ahead` | Sound mixed 0.2 s ahead into a lock-free ring; underruns stay in sync | `ui-egui/src/play_ahead.rs` |
+| `output` | The default audio device (cpal); its played samples are the clock | `apps/filmcraft/src/audio.rs` |
+| `transport` | Preroll, play/stop/shuttle, audio or wall clock, device failure hand-over | `ui-egui/src/lib.rs` |
+
+The FilmCraft adapter renders each frame worker's frames in a rayon pool of that worker's own:
+apart from the sound's mixing, which shares rayon's global pool (LOG B-014), and apart from each
+other, because FilmCraft's decoder holds its lock across rayon work (LOG B-015).
+
+`examples/play_bench.rs` plays a clip in real time without a window and reports frames shown and
+sound underruns; `--wav` saves the sound the device received. LOG D-013 has the numbers.
 
 ## MCP server (`crates/mcp`)
 

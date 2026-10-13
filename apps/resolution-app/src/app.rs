@@ -3,14 +3,16 @@
 //! engine thread, the same commands agents use over MCP (ARCHITECTURE invariant 3).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 
 use egui::{
     Align2, Color32, ColorImage, CornerRadius, FontId, RichText, TextureHandle, TextureOptions, Ui, ViewportCommand,
 };
-use resolution_engine_api::Page;
+use resolution_engine_api::{Page, Playback};
 use resolution_filmcraft_adapter::FilmCraftEngine;
 use resolution_keymap::Keymap;
+use resolution_playback::{AudioLost, AudioOut, AudioStats, FrameKey, FrameServer, Step, Transport, ahead};
 use serde_json::json;
 
 use crate::model::{self, Kind, MediaItem, Timeline};
@@ -30,12 +32,49 @@ pub struct Options {
     /// Self-test: once a frame is on screen, save a screenshot here and quit.
     pub screenshot: Option<PathBuf>,
     pub seek: Option<f64>,
+    /// Play without opening an audio device (tests, machines without one).
+    pub mute: bool,
+    /// How video is decoded, for the status bar (set by `main`).
+    pub decoding: String,
+    /// Self-test: once a frame is on screen, play this many seconds, print what was shown and
+    /// heard, and quit (after the screenshot, if one is asked for).
+    pub play_for: Option<f64>,
 }
 
-struct Playback {
-    origin: Instant,
-    from: f64,
-    rate: f64,
+/// Commands that run at the frame on screen without stopping playback.
+const WHILE_PLAYING: &[&str] = &["mark.in", "mark.out", "mark.clip", "marker.add"];
+
+/// Frames shown while playing: the viewer's frame-rate readout and the `--play` report.
+#[derive(Clone, Copy, Debug, Default)]
+struct Meter {
+    /// When the clock started (s, app clock).
+    started: f64,
+    shown: u64,
+    window: (f64, u32),
+    fps: Option<f64>,
+}
+
+impl Meter {
+    fn new(now: f64) -> Self {
+        Self { started: now, window: (now, 0), ..Self::default() }
+    }
+
+    fn frame_shown(&mut self, now: f64) {
+        self.shown += 1;
+        self.window.1 += 1;
+        let dt = now - self.window.0;
+        if dt >= 1.0 {
+            self.fps = Some(f64::from(self.window.1) / dt);
+            self.window = (now, 0);
+        }
+    }
+}
+
+/// `--play`: when it started (app clock), and the report once done.
+struct PlayTest {
+    seconds: f64,
+    started: Option<f64>,
+    done: bool,
 }
 
 pub struct ResolutionApp {
@@ -45,13 +84,26 @@ pub struct ResolutionApp {
     timeline: Option<Timeline>,
     media: Vec<MediaItem>,
     revision: u64,
+    /// The open timeline as the viewer renders and plays it, from the latest snapshot.
+    program: Option<Arc<dyn Playback>>,
+    frames: FrameServer,
     frame: Option<TextureHandle>,
-    frame_at: f64,
-    requested: Option<(u64, i64, u32)>,
+    /// The frame in `frame`.
+    shown: Option<FrameKey>,
     /// Longest side, in pixels, of the frames the viewer asks for: its size on screen.
     view_side: u32,
-    playing: Option<Playback>,
-    last_seek: Option<f64>,
+    transport: Transport,
+    /// Opened at the first play.
+    audio: Option<AudioOut>,
+    audio_stats: Arc<AudioStats>,
+    mute: bool,
+    clock: Instant,
+    /// A seek sent to the engine and not in a snapshot yet, shown meanwhile so the playhead does
+    /// not jump back while the engine catches up; and how many seeks are in flight.
+    pending_seek: Option<i64>,
+    seeks_in_flight: u32,
+    meter: Meter,
+    play_test: Option<PlayTest>,
     zoom: Option<f32>,
     /// Where each clip was drawn last frame: clip id by screen rectangle.
     clip_rects: Vec<(egui::Rect, u64)>,
@@ -70,6 +122,9 @@ impl ResolutionApp {
         cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
         let ctx = cc.egui_ctx.clone();
         let worker = Worker::spawn(Box::new(FilmCraftEngine::new()), move || ctx.request_repaint());
+        let frames = FrameServer::new(FrameServer::default_workers());
+        let ctx = cc.egui_ctx.clone();
+        frames.on_ready(move || ctx.request_repaint());
         if options.demo {
             worker.run("raw.filmcraft/file.openDemoProject", json!({}));
         }
@@ -86,17 +141,35 @@ impl ResolutionApp {
             timeline: None,
             media: Vec::new(),
             revision: 0,
+            program: None,
+            frames,
             frame: None,
-            frame_at: 0.0,
-            requested: None,
+            shown: None,
             view_side: 960,
-            playing: None,
-            last_seek: None,
+            transport: Transport::default(),
+            audio: None,
+            audio_stats: Arc::default(),
+            mute: options.mute,
+            clock: Instant::now(),
+            pending_seek: None,
+            seeks_in_flight: 0,
+            meter: Meter::default(),
+            play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
             zoom: None,
             clip_rects: Vec::new(),
             selected_media: None,
             source: None,
-            status: ("Import media with Ctrl+I, or drop files on the window.".into(), false),
+            status: (
+                format!(
+                    "Import media with Ctrl+I, or drop files on the window.{}",
+                    if options.decoding.is_empty() {
+                        String::new()
+                    } else {
+                        format!("   Video: {}.", options.decoding)
+                    }
+                ),
+                false,
+            ),
             auto_timeline: !options.import.is_empty(),
             seek_after_load: options.seek,
             screenshot: options.screenshot.map(|p| (p, 0)),
@@ -107,30 +180,48 @@ impl ResolutionApp {
         self.status = (text.into(), error);
     }
 
-    /// Where the viewer and timeline put the playhead: the engine's, or the playback clock's.
-    fn playhead(&self) -> f64 {
-        match (&self.playing, &self.timeline) {
-            (Some(p), Some(tl)) => (p.from + p.origin.elapsed().as_secs_f64() * p.rate).clamp(0.0, tl.duration),
-            (None, Some(tl)) => tl.playhead,
-            _ => 0.0,
-        }
+    /// The playhead's frame: playback's while playing, a seek on its way to the engine, or the
+    /// engine's.
+    fn playhead_frame(&self) -> i64 {
+        self.transport
+            .frame()
+            .or(self.pending_seek)
+            .unwrap_or_else(|| self.timeline.as_ref().map_or(0, |t| t.playhead_frame))
     }
 
-    fn apply(&mut self, ctx: &egui::Context, reply: Reply) {
+    /// The playhead in timeline seconds, for drawing.
+    fn playhead(&self) -> f64 {
+        self.timeline.as_ref().map_or(0.0, |t| t.rate.seconds_of(self.playhead_frame()))
+    }
+
+    fn apply(&mut self, reply: Reply) {
         match reply {
-            Reply::Ran { id, result } => match result {
-                Ok(out) => {
-                    if let Some(label) = out.undo_label {
-                        self.say(label, false);
-                    } else if !id.ends_with(".inspect") && !id.starts_with("playhead.") && id != "timeline.select" {
-                        self.say(format!("{id}: done"), false);
-                    }
+            Reply::Ran { id, result } => {
+                if id == "playhead.set" {
+                    self.seeks_in_flight = self.seeks_in_flight.saturating_sub(1);
                 }
-                Err(e) => self.say(e, true),
-            },
-            Reply::Snapshot { revision, timeline, project } => {
+                match result {
+                    Ok(out) => {
+                        if let Some(label) = out.undo_label {
+                            self.say(label, false);
+                        } else if !id.ends_with(".inspect") && !id.starts_with("playhead.") && id != "timeline.select" {
+                            self.say(format!("{id}: done"), false);
+                        }
+                    }
+                    Err(e) => self.say(e, true),
+                }
+            }
+            Reply::Snapshot { revision, timeline, project, playback } => {
                 self.revision = revision;
                 self.timeline = timeline.as_ref().and_then(Timeline::from_json);
+                self.program = playback;
+                if self.seeks_in_flight == 0 {
+                    self.pending_seek = None;
+                }
+                if self.program.is_none() {
+                    self.transport.stop();
+                    self.stop_audio();
+                }
                 self.media = project.as_ref().map(model::media_items).unwrap_or_default();
                 if self.auto_timeline
                     && self.timeline.is_none()
@@ -145,17 +236,6 @@ impl ResolutionApp {
                     self.worker.run("playhead.set", json!({ "seconds": t }));
                 }
             }
-            Reply::Frame { seconds, frame } => match frame {
-                Ok(f) => {
-                    let image = ColorImage::from_rgba_unmultiplied([f.width as usize, f.height as usize], &f.rgba);
-                    match &mut self.frame {
-                        Some(t) => t.set(image, TextureOptions::LINEAR),
-                        None => self.frame = Some(ctx.load_texture("viewer", image, TextureOptions::LINEAR)),
-                    }
-                    self.frame_at = seconds;
-                }
-                Err(e) => self.say(format!("viewer: {e}"), true),
-            },
             Reply::Notice { message, error } => self.say(message, error),
         }
     }
@@ -163,10 +243,16 @@ impl ResolutionApp {
     /// A vocabulary command from a key or a menu. Front-end commands (pages, playback, zoom,
     /// edit modes) are handled here; everything else goes to the engine.
     fn command(&mut self, id: &str) {
-        let is_transport = id.starts_with("playback.");
-        if !is_transport {
-            self.stop();
+        if !id.starts_with("playback.") && self.transport.is_playing() {
+            if WHILE_PLAYING.contains(&id) {
+                if let Some(frame) = self.transport.frame() {
+                    self.worker.run("playhead.set", json!({ "frame": frame }));
+                }
+            } else {
+                self.stop();
+            }
         }
+        let speed = self.transport.speed();
         match id {
             _ if id.starts_with("page.") => {
                 if let Some(p) = Page::ALL.into_iter().find(|p| format!("page.{}", p.name()) == id) {
@@ -174,17 +260,15 @@ impl ResolutionApp {
                 }
             }
             "playback.playStop" => {
-                if self.playing.is_some() {
+                if self.transport.is_playing() {
                     self.stop();
                 } else {
                     self.play(1.0);
                 }
             }
-            "playback.forward" => self
-                .play(self.playing.as_ref().map_or(1.0, |p| if p.rate > 0.0 { (p.rate * 2.0).min(8.0) } else { 1.0 })),
-            "playback.reverse" => self.play(
-                self.playing.as_ref().map_or(-1.0, |p| if p.rate < 0.0 { (p.rate * 2.0).max(-8.0) } else { -1.0 }),
-            ),
+            // each press doubles the speed in its direction, up to 8x
+            "playback.forward" => self.play(speed.filter(|s| *s > 0.0).map_or(1.0, |s| (s * 2.0).min(8.0))),
+            "playback.reverse" => self.play(speed.filter(|s| *s < 0.0).map_or(-1.0, |s| (s * 2.0).max(-8.0))),
             "playback.stop" => self.stop(),
             "view.zoomIn" | "view.zoomOut" => {
                 let base = self.zoom.unwrap_or(40.0);
@@ -203,30 +287,118 @@ impl ResolutionApp {
         }
     }
 
-    fn play(&mut self, rate: f64) {
-        let from = self.playhead();
-        if self.timeline.is_some() {
-            self.playing = Some(Playback { origin: Instant::now(), from, rate });
+    /// Play from the playhead at `speed` (from the start when it is on the last frame). Starts
+    /// with the preroll; [`ResolutionApp::advance_playback`] starts the clock and the sound.
+    fn play(&mut self, speed: f64) {
+        let Some(p) = self.program.clone() else { return };
+        let mut from = self.playhead_frame();
+        if speed > 0.0 && from >= p.frames() - 1 {
+            from = 0;
         }
+        self.stop_audio();
+        self.transport.play(from, speed, p.rate());
     }
 
     /// Stop playback and leave the engine's playhead where it stopped.
     fn stop(&mut self) {
-        if self.playing.is_some() {
-            let at = self.playhead();
-            self.playing = None;
-            self.worker.run("playhead.set", json!({ "seconds": at }));
+        if let Some(frame) = self.transport.stop() {
+            self.stop_audio();
+            self.frames.stop_prefetch();
+            self.send_seek(frame);
         }
     }
 
-    fn seek(&mut self, t: f64) {
-        let half = self.timeline.as_ref().map_or(0.02, |tl| tl.frame_seconds() / 2.0);
-        if self.last_seek.is_some_and(|l| (l - t).abs() < half) {
+    fn stop_audio(&mut self) {
+        if let Some(a) = &mut self.audio {
+            a.stop();
+        }
+    }
+
+    /// Move the playhead to `frame` (ruler clicks and drags), stopping playback.
+    fn seek(&mut self, frame: i64) {
+        self.stop();
+        let last = self.program.as_ref().map_or(0, |p| p.frames() - 1).max(0);
+        self.send_seek(frame.clamp(0, last));
+    }
+
+    fn send_seek(&mut self, frame: i64) {
+        if self.playhead_frame() == frame {
             return;
         }
-        self.last_seek = Some(t);
-        self.stop();
-        self.worker.run("playhead.set", json!({ "seconds": t }));
+        self.pending_seek = Some(frame);
+        self.seeks_in_flight += 1;
+        self.worker.run("playhead.set", json!({ "frame": frame }));
+    }
+
+    fn frame_key(&self, p: &Arc<dyn Playback>, frame: i64) -> FrameKey {
+        FrameKey { revision: p.revision(), frame, side: self.view_side, draft: false }
+    }
+
+    /// Playing: wait for the first frames, then start the sound and the clock; afterwards move
+    /// the playhead with the clock and keep the frames ahead of it rendering.
+    fn advance_playback(&mut self, ctx: &egui::Context) {
+        if !self.transport.is_playing() {
+            return;
+        }
+        let Some(p) = self.program.clone() else { return };
+        ctx.request_repaint();
+        let speed = self.transport.speed().unwrap_or(1.0);
+        let last = p.frames() - 1;
+        let now = self.clock.elapsed().as_secs_f64();
+        if self.transport.in_preroll() {
+            let key = self.frame_key(&p, self.transport.frame().unwrap_or(0));
+            self.frames.schedule_playback(&p, key, speed, true);
+            if self.transport.preroll_done(now, self.frames.preroll_ready(key, speed, last)) {
+                let audio = self.start_audio(&p, key.frame, speed);
+                let now = self.clock.elapsed().as_secs_f64();
+                self.transport.start_clock(now, audio);
+                self.meter = Meter::new(now);
+            }
+            return;
+        }
+        let played = self
+            .audio
+            .as_ref()
+            .filter(|_| self.transport.audio_clock())
+            .and_then(|a| a.played_frames().map(|f| (f, a.sample_rate())));
+        let Some((step, lost)) = self.transport.advance(now, played, p.rate(), last) else { return };
+        if let Some(lost) = lost {
+            self.stop_audio();
+            let why = match lost {
+                AudioLost::Failed => "Audio output failed",
+                AudioLost::Stalled => "Audio output is not responding",
+            };
+            self.say(format!("{why}: playing without sound."), true);
+        }
+        match step {
+            Step::Play(f) => self.frames.schedule_playback(&p, self.frame_key(&p, f), speed, false),
+            Step::End(f) => {
+                self.stop_audio();
+                self.frames.stop_prefetch();
+                self.send_seek(f);
+            }
+            Step::Preroll(_) => {}
+        }
+    }
+
+    /// Start the sound from `from`; whether it started (it then drives the clock). Reverse and
+    /// shuttle faster than 4x play silent.
+    fn start_audio(&mut self, p: &Arc<dyn Playback>, from: i64, speed: f64) -> bool {
+        if self.mute || resolution_playback::shuttle_mix_rate(48_000, speed).is_none() {
+            return false;
+        }
+        let (p, stats) = (p.clone(), self.audio_stats.clone());
+        let started = self.audio.get_or_insert_with(AudioOut::new).start(move |device_rate, channels| {
+            let mix_rate = resolution_playback::shuttle_mix_rate(device_rate, speed).unwrap_or(device_rate);
+            ahead::spawn(p.mixer(mix_rate), p.rate().sample_of(from, mix_rate), device_rate, channels, stats)
+        });
+        match started {
+            Ok(_) => true,
+            Err(e) => {
+                self.say(format!("No sound ({e}): playing without it."), true);
+                false
+            }
+        }
     }
 
     fn import_dialog(&mut self) {
@@ -449,12 +621,15 @@ impl ResolutionApp {
         self.view_side = ((px / 240.0).ceil() as u32 * 240).clamp(480, 3840);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(12, 13, 16));
-        let playhead = self.playhead();
+        let playhead = self.playhead_frame();
         match (&self.frame, &self.timeline) {
             (Some(tex), Some(tl)) => {
+                // the picture between a strip for the name and frame rate above and one for the
+                // timecode below, so no text sits on it
+                let area = egui::Rect::from_min_max(rect.min + egui::vec2(8.0, 28.0), rect.max - egui::vec2(8.0, 34.0));
                 let size = tex.size_vec2();
-                let scale = ((rect.width() - 16.0) / size.x).min((rect.height() - 40.0) / size.y).max(0.01);
-                let img = egui::Rect::from_center_size(rect.center() - egui::vec2(0.0, 10.0), size * scale);
+                let scale = (area.width() / size.x).min(area.height() / size.y).max(0.01);
+                let img = egui::Rect::from_center_size(area.center(), size * scale);
                 painter.image(
                     tex.id(),
                     img,
@@ -471,10 +646,26 @@ impl ResolutionApp {
                 painter.text(
                     rect.center_bottom() - egui::vec2(0.0, 8.0),
                     Align2::CENTER_BOTTOM,
-                    tl.timecode(playhead),
+                    tl.frame_timecode(playhead),
                     FontId::monospace(18.0),
                     Color32::WHITE,
                 );
+                // while playing: the speed, and the frames per second actually reaching the screen
+                if let Some(speed) = self.transport.speed() {
+                    let speed = if speed == 1.0 { String::new() } else { format!("{speed}x   ") };
+                    let fps = match (self.transport.in_preroll(), self.meter.fps) {
+                        (true, _) => "starting".to_string(),
+                        (false, Some(fps)) => format!("{fps:.1} fps"),
+                        (false, None) => String::new(),
+                    };
+                    painter.text(
+                        rect.right_top() + egui::vec2(-10.0, 8.0),
+                        Align2::RIGHT_TOP,
+                        format!("{speed}{fps}"),
+                        FontId::monospace(13.0),
+                        Color32::GRAY,
+                    );
+                }
             }
             _ => {
                 painter.text(
@@ -489,19 +680,111 @@ impl ResolutionApp {
         ui.allocate_rect(rect, egui::Sense::hover());
     }
 
-    /// Ask for the frame at the playhead when it, or the project, changed.
-    fn request_frame(&mut self) {
-        let Some(tl) = &self.timeline else { return };
-        let at = self.playhead();
-        let key = (self.revision, (at / tl.frame_seconds()).floor() as i64, self.view_side);
-        if self.requested != Some(key) {
-            self.requested = Some(key);
-            self.worker.render(at, self.view_side);
+    /// Put the frame at the playhead on screen: the exact frame when it is rendered; until then
+    /// the one already there (while playing, the newest rendered frame before the playhead).
+    fn update_viewer(&mut self, ctx: &egui::Context) {
+        let Some(p) = self.program.clone() else { return };
+        let frame = self.playhead_frame().clamp(0, (p.frames() - 1).max(0));
+        let key = self.frame_key(&p, frame);
+        let found = if self.transport.is_playing() {
+            let dir = if self.transport.speed().unwrap_or(1.0) < 0.0 { -1 } else { 1 };
+            self.frames.nearest(key, 48, dir)
+        } else {
+            self.frames.request(&p, key);
+            self.frames.get(&key).map(|f| (key, f))
+        };
+        match found {
+            Some((k, f)) if self.shown != Some(k) => {
+                let image = ColorImage::from_rgba_unmultiplied([f.width as usize, f.height as usize], &f.rgba);
+                match &mut self.frame {
+                    Some(t) => t.set(image, TextureOptions::LINEAR),
+                    None => self.frame = Some(ctx.load_texture("viewer", image, TextureOptions::LINEAR)),
+                }
+                self.shown = Some(k);
+                if self.transport.is_playing() && !self.transport.in_preroll() {
+                    self.meter.frame_shown(self.clock.elapsed().as_secs_f64());
+                }
+            }
+            None if !self.transport.is_playing() => {
+                if let Some(e) = self.frames.error(&key) {
+                    let text = format!("Viewer: {e}");
+                    if self.status.0 != text {
+                        self.say(text, true);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// `--play`: once a frame is on screen, play for the time asked, report, stop, and quit (or
+    /// hand over to `--screenshot`).
+    fn play_test(&mut self, ctx: &egui::Context) {
+        let Some(test) = &self.play_test else { return };
+        let (seconds, started, done) = (test.seconds, test.started, test.done);
+        let now = self.clock.elapsed().as_secs_f64();
+        ctx.request_repaint();
+        if done {
+            return;
+        }
+        let Some(started) = started else {
+            if self.shown.is_some() && self.seek_after_load.is_none() && self.pending_seek.is_none() {
+                self.command("playback.playStop");
+                if let Some(t) = &mut self.play_test {
+                    t.started = Some(now);
+                }
+            }
+            return;
+        };
+        let played = now - self.meter.started;
+        let reached_end = !self.transport.is_playing();
+        if self.transport.in_preroll() || (played < seconds && !reached_end) {
+            return;
+        }
+        let fps = self.timeline.as_ref().map_or(0.0, |t| t.fps);
+        let audio = self.audio.as_ref();
+        let stats = &self.audio_stats;
+        let load = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed);
+        let st = self.frames.stats();
+        eprintln!(
+            "play test: preroll {:.0} ms, played {played:.1} s{}",
+            (self.meter.started - started) * 1e3,
+            if reached_end { " (reached the end)" } else { "" }
+        );
+        eprintln!(
+            "  picture: {} frames shown, {:.1} fps (timeline {fps:.3} fps); frame jobs {} done, {} cancelled, {} failed",
+            self.meter.shown,
+            self.meter.shown as f64 / played.max(1e-9),
+            st.jobs,
+            st.cancelled,
+            st.failed
+        );
+        eprintln!(
+            "  sound: device {:?}, {} Hz, {} channels; clock from {}; {} device callbacks, {} underruns, {} frames of silence",
+            audio.and_then(AudioOut::device),
+            audio.map_or(0, AudioOut::sample_rate),
+            audio.map_or(0, AudioOut::channels),
+            if self.transport.audio_clock() { "the audio device" } else { "the wall clock" },
+            load(&stats.callbacks),
+            load(&stats.underruns),
+            load(&stats.missing_frames)
+        );
+        eprintln!("  status: {}", self.status.0);
+        if let Some(t) = &mut self.play_test {
+            t.done = true;
+        }
+        if self.screenshot.is_some() {
+            ctx.send_viewport_cmd(ViewportCommand::Screenshot(Default::default()));
+        } else {
+            self.stop();
+            ctx.send_viewport_cmd(ViewportCommand::Close);
         }
     }
 
     /// `--screenshot`: once a frame has been on screen for a few repaints, save the window and quit.
     fn self_test(&mut self, ctx: &egui::Context) {
+        self.play_test(ctx);
+        let playing_test = self.play_test.as_ref().is_some_and(|t| !t.done);
         let Some((path, frames)) = &mut self.screenshot else { return };
         let shot = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
@@ -519,7 +802,7 @@ impl ResolutionApp {
         }
         let ready = self.frame.is_some() && self.timeline.is_some() && self.seek_after_load.is_none();
         *frames += 1;
-        if (ready && *frames == 30) || *frames == 1800 {
+        if !playing_test && ((ready && *frames == 30) || *frames == 1800) {
             ctx.send_viewport_cmd(ViewportCommand::Screenshot(Default::default()));
         }
         ctx.request_repaint();
@@ -530,17 +813,11 @@ impl eframe::App for ResolutionApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         for reply in self.worker.poll() {
-            self.apply(&ctx, reply);
+            self.apply(reply);
         }
         self.keys(&ctx);
-        if let (Some(p), Some(tl)) = (&self.playing, &self.timeline) {
-            let at = p.from + p.origin.elapsed().as_secs_f64() * p.rate;
-            if at <= 0.0 || at >= tl.duration {
-                self.stop();
-            }
-            ctx.request_repaint();
-        }
-        self.request_frame();
+        self.advance_playback(&ctx);
+        self.update_viewer(&ctx);
 
         egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
         egui::Panel::bottom("pages").exact_size(34.0).show(ui, |ui| self.page_bar(ui));
@@ -572,11 +849,12 @@ impl eframe::App for ResolutionApp {
             let playhead = self.playhead();
             match &self.timeline {
                 Some(tl) => {
+                    let rate = tl.rate;
                     let (actions, rects) = timeline_ui::show(ui, tl, playhead, &timeline_ui::View { zoom: self.zoom });
                     self.clip_rects = rects;
                     for a in actions {
                         match a {
-                            Action::Seek(t) => self.seek(t),
+                            Action::Seek(t) => self.seek(rate.frame_at(t.max(0.0))),
                             Action::Select { clip, add } => {
                                 self.worker.run("timeline.select", json!({ "clips": [clip], "add": add }))
                             }
@@ -605,7 +883,7 @@ mod tests {
     fn demo() -> Harness<'static, ResolutionApp> {
         let mut h = Harness::builder()
             .with_size(egui::vec2(1600.0, 920.0))
-            .build_eframe(|cc| ResolutionApp::new(cc, Options { demo: true, ..Default::default() }));
+            .build_eframe(|cc| ResolutionApp::new(cc, Options { demo: true, mute: true, ..Default::default() }));
         pump(&mut h, "the demo timeline", |a| a.timeline.is_some());
         h
     }
@@ -632,11 +910,62 @@ mod tests {
         pump(&mut h, "Ctrl+B to split the clip at the playhead", |a| v1_clips(a) == clips + 1);
         h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
         pump(&mut h, "Ctrl+Z to undo the split", |a| v1_clips(a) == clips);
-        let t0 = h.state().timeline.as_ref().map_or(0.0, |t| t.playhead);
+        let f0 = h.state().timeline.as_ref().map_or(0, |t| t.playhead_frame);
         h.key_press(Key::ArrowRight);
-        pump(&mut h, "Right to step one frame", |a| {
-            a.timeline.as_ref().is_some_and(|t| (t.playhead - t0 - t.frame_seconds()).abs() < 1e-3)
+        pump(&mut h, "Right to step one frame", |a| a.timeline.as_ref().is_some_and(|t| t.playhead_frame == f0 + 1));
+    }
+
+    #[test]
+    fn space_plays_and_stopping_leaves_the_playhead_where_it_stopped() {
+        let mut h = demo();
+        pump(&mut h, "the program to play", |a| a.program.is_some() && a.shown.is_some());
+        h.key_press(Key::Space);
+        h.step();
+        let start = h.state().transport.frame().expect("playing");
+        pump(&mut h, "playback to move the playhead a few frames", |a| {
+            a.transport.frame().is_some_and(|f| f >= start + 6) && !a.transport.in_preroll()
         });
+        pump(&mut h, "frames rendered ahead to reach the viewer", |a| a.shown.is_some_and(|k| k.frame > start));
+        h.key_press(Key::Space);
+        h.step();
+        let stopped = h.state().playhead_frame();
+        assert!(!h.state().transport.is_playing());
+        assert!(stopped > start);
+        pump(&mut h, "the engine's playhead to land where playback stopped", |a| {
+            a.pending_seek.is_none() && a.timeline.as_ref().is_some_and(|t| t.playhead_frame == stopped)
+        });
+        pump(&mut h, "the viewer to show the frame it stopped on", |a| a.shown.is_some_and(|k| k.frame == stopped));
+    }
+
+    #[test]
+    fn marking_in_while_playing_keeps_playing() {
+        let mut h = demo();
+        pump(&mut h, "the program to play", |a| a.program.is_some() && a.shown.is_some());
+        h.key_press(Key::Space);
+        pump(&mut h, "the clock to start", |a| a.transport.is_playing() && !a.transport.in_preroll());
+        h.key_press(Key::I);
+        h.step();
+        let marked = h.state().transport.frame().expect("still playing");
+        pump(&mut h, "the In point at the frame that was on screen", |a| {
+            a.timeline.as_ref().is_some_and(|t| t.mark_in.is_some_and(|s| (s - t.rate.seconds_of(marked)).abs() < 0.1))
+        });
+        assert!(h.state().transport.is_playing(), "marking does not stop playback");
+    }
+
+    #[test]
+    fn l_doubles_the_speed_and_k_stops() {
+        let mut h = demo();
+        pump(&mut h, "the program to play", |a| a.program.is_some());
+        h.key_press(Key::L);
+        h.key_press(Key::L);
+        h.step();
+        assert_eq!(h.state().transport.speed(), Some(2.0));
+        h.key_press(Key::J);
+        h.step();
+        assert_eq!(h.state().transport.speed(), Some(-1.0), "J reverses at normal speed");
+        h.key_press(Key::K);
+        h.step();
+        assert!(!h.state().transport.is_playing());
     }
 
     #[test]
