@@ -47,6 +47,29 @@ impl FilmCraftEngine {
         };
         Ok(Outcome { result, revision: self.session.revision, undo_label })
     }
+
+    /// `timeline.inspect`: FilmCraft's `sequence.inspect`, plus what the track headers and the
+    /// timeline toolbar show and FilmCraft keeps outside the sequence: which tracks are targeted
+    /// (auto track selectors), where source edits go (destination controls), and whether
+    /// snapping and linked selection are on.
+    fn inspect_timeline(&mut self) -> Result<Outcome> {
+        let mut out = self.run("timeline.inspect", "sequence.inspect", Value::Object(Default::default()))?;
+        let s = &self.session;
+        let tg = s.targeting();
+        if let Value::Object(m) = &mut out.result {
+            m.insert(
+                "targeting".into(),
+                serde_json::json!({
+                    "targeted": tg.targeted.iter().map(|t| t.0).collect::<Vec<_>>(),
+                    "videoDest": tg.video_dest.map(|t| t.0),
+                    "audioDest": tg.audio_dest.map(|t| t.0),
+                }),
+            );
+            m.insert("snapping".into(), Value::Bool(s.state.snapping));
+            m.insert("linkedSelection".into(), Value::Bool(s.state.linked_selection));
+        }
+        Ok(out)
+    }
 }
 
 fn convert(id: &str, e: FcError) -> EngineError {
@@ -88,6 +111,7 @@ impl Engine for FilmCraftEngine {
         }
         match map::target(id) {
             Some(Target::Engine(fc) | Target::Approx(fc, _)) => self.run(id, fc, params),
+            Some(Target::Adapter) if id == "timeline.inspect" => self.inspect_timeline(),
             Some(Target::Adapter) => {
                 // Undo and redo move through the history; they add no step of their own (LOG B-001).
                 let label = if id == "edit.undo" { self.undo() } else { self.redo() };
@@ -216,6 +240,31 @@ mod tests {
         assert_ne!(e.execute("timeline.inspect", json!({})).expect("inspect").result, before);
         assert!(e.undo().is_some());
         assert_eq!(e.execute("timeline.inspect", json!({})).expect("inspect").result, before);
+    }
+
+    /// What the track headers show and change: lock, mute, targeting, destination; and the
+    /// snapping and linked-selection toggles.
+    #[test]
+    fn track_headers_round_trip_through_timeline_inspect() {
+        let mut e = demo();
+        let tl = |e: &mut FilmCraftEngine| e.execute("timeline.inspect", json!({})).expect("inspect").result;
+        let v1 = tl(&mut e)["video"][0]["id"].as_u64().expect("V1 id");
+        let a1 = tl(&mut e)["audio"][0]["id"].as_u64().expect("A1 id");
+        e.execute("track.set", json!({"track": "V1", "locked": true})).expect("lock");
+        e.execute("track.set", json!({"track": "A1", "muted": true})).expect("mute");
+        let t = tl(&mut e);
+        assert_eq!((t["video"][0]["locked"].as_bool(), t["audio"][0]["muted"].as_bool()), (Some(true), Some(true)));
+        e.execute("track.target", json!({"track": "A1", "targeted": false})).expect("untarget");
+        e.execute("track.target", json!({"track": "V1", "sourcePatch": true})).expect("patch");
+        let t = tl(&mut e);
+        let targeted: Vec<u64> =
+            t["targeting"]["targeted"].as_array().expect("targeted").iter().filter_map(Value::as_u64).collect();
+        assert!(!targeted.contains(&a1), "A1 untargeted: {targeted:?}");
+        assert_eq!(t["targeting"]["videoDest"].as_u64(), Some(v1));
+        let snapping = t["snapping"].as_bool().expect("snapping");
+        e.execute("timeline.snapping", json!({"on": !snapping})).expect("snap");
+        assert_eq!(tl(&mut e)["snapping"].as_bool(), Some(!snapping));
+        assert!(tl(&mut e)["linkedSelection"].is_boolean());
     }
 
     /// LOG B-001: undo and redo move through the history; they add no step of their own.

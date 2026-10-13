@@ -28,8 +28,32 @@ pub struct Clip {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Track {
+    /// The engine's track id.
+    pub id: u64,
+    /// "V1", "A2": how Resolve and the vocabulary name it.
+    pub label: String,
     pub name: String,
     pub clips: Vec<Clip>,
+    pub locked: bool,
+    /// Video tracks: shown. Audio tracks use `muted`.
+    pub enabled: bool,
+    pub muted: bool,
+    pub solo: bool,
+    /// Auto track selector: edits and navigation that work on tracks use this one.
+    pub targeted: bool,
+    /// Destination control: source edits land here.
+    pub destination: bool,
+}
+
+/// A timeline marker.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Marker {
+    pub id: u64,
+    /// Timeline seconds.
+    pub start: f64,
+    pub duration: f64,
+    pub name: String,
+    pub color: [u8; 3],
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -50,6 +74,9 @@ pub struct Timeline {
     /// Bottom-up: `video[0]` is V1.
     pub video: Vec<Track>,
     pub audio: Vec<Track>,
+    pub markers: Vec<Marker>,
+    pub snapping: bool,
+    pub linked_selection: bool,
 }
 
 impl Timeline {
@@ -64,12 +91,28 @@ impl Timeline {
         let fps = rate.fps();
         let selection: Vec<u64> =
             v["selection"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default();
+        let ids = |v: &Value| -> Vec<u64> {
+            v.as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default()
+        };
+        let targeting = &v["targeting"];
+        let targeted = ids(&targeting["targeted"]);
+        let dests = [targeting["videoDest"].as_u64(), targeting["audioDest"].as_u64()];
         let tracks = |key: &str| -> Vec<Track> {
+            let prefix = if key == "video" { "V" } else { "A" };
             v[key]
                 .as_array()
                 .map(|ts| {
                     ts.iter()
-                        .map(|t| Track {
+                        .enumerate()
+                        .map(|(n, t)| Track {
+                            id: t["id"].as_u64().unwrap_or_default(),
+                            label: format!("{prefix}{}", n + 1),
+                            locked: t["locked"].as_bool().unwrap_or(false),
+                            enabled: t["enabled"].as_bool().unwrap_or(true),
+                            muted: t["muted"].as_bool().unwrap_or(false),
+                            solo: t["solo"].as_bool().unwrap_or(false),
+                            targeted: t["id"].as_u64().is_some_and(|id| targeted.contains(&id)),
+                            destination: t["id"].as_u64().is_some_and(|id| dests.contains(&Some(id))),
                             name: t["name"].as_str().unwrap_or_default().to_string(),
                             clips: t["items"]
                                 .as_array()
@@ -108,6 +151,24 @@ impl Timeline {
             mark_out: seconds(&v["out"]),
             video: tracks("video"),
             audio: tracks("audio"),
+            markers: v["markers"]
+                .as_array()
+                .map(|ms| {
+                    ms.iter()
+                        .filter_map(|m| {
+                            Some(Marker {
+                                id: m["id"].as_u64()?,
+                                start: seconds(&m["start"])?,
+                                duration: seconds(&m["duration"]).unwrap_or(0.0),
+                                name: m["name"].as_str().unwrap_or_default().to_string(),
+                                color: label_rgb(m["color"].as_str().unwrap_or_default()),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            snapping: v["snapping"].as_bool().unwrap_or(true),
+            linked_selection: v["linkedSelection"].as_bool().unwrap_or(true),
         })
     }
 
@@ -159,6 +220,32 @@ pub struct MediaItem {
     pub active: bool,
 }
 
+/// A label colour by its engine name (FilmCraft's labels, used for markers), brightened to read
+/// on a dark ruler; unknown names are a neutral light grey.
+pub fn label_rgb(name: &str) -> [u8; 3] {
+    let rgb: [u8; 3] = match name {
+        "Violet" => [0x38, 0x0e, 0xa7],
+        "Iris" => [0x1d, 0x4a, 0x64],
+        "Caribbean" => [0x35, 0x54, 0x18],
+        "Lavender" => [0x6b, 0x1c, 0x82],
+        "Cerulean" => [0x23, 0x53, 0x5a],
+        "Forest" => [0x40, 0x4a, 0x11],
+        "Rose" => [0x80, 0x18, 0x36],
+        "Mango" => [0x80, 0x3f, 0x17],
+        "Purple" => [0x59, 0x0d, 0xb0],
+        "Blue" => [0x19, 0x2d, 0x94],
+        "Teal" => [0x1f, 0x4d, 0x45],
+        "Magenta" => [0x79, 0x1c, 0x56],
+        "Tan" => [0x6c, 0x5b, 0x47],
+        "Green" => [0x29, 0x5c, 0x2d],
+        "Brown" => [0x58, 0x3d, 0x14],
+        "Yellow" => [0x6e, 0x66, 0x28],
+        _ => return [0xc8, 0xc8, 0xc8],
+    };
+    // halfway to white
+    rgb.map(|c| ((u16::from(c) + 255) / 2) as u8)
+}
+
 /// The project's name, for the interface toolbar.
 pub fn project_name(project: &Value) -> Option<String> {
     project["name"].as_str().filter(|n| !n.is_empty()).map(str::to_string)
@@ -207,8 +294,11 @@ mod tests {
             "name": "Main Edit", "duration": 10 * T, "playhead": 2 * T, "in": null, "out": 5 * T,
             "selection": [30],
             "settings": {"frame_rate": {"num": 24000, "den": 1001}, "width": 1920, "height": 1080},
-            "video": [{"name": "Video 1", "items": [{"clip": 29, "name": "a.mp4", "start": 0, "end": 4 * T, "enabled": true}]}],
-            "audio": [{"name": "Audio 1", "items": [{"clip": 30, "name": "a.mp4", "start": 0, "end": 4 * T}]}]
+            "video": [{"id": 1, "name": "Video 1", "locked": true, "items": [{"clip": 29, "name": "a.mp4", "start": 0, "end": 4 * T, "enabled": true}]}],
+            "audio": [{"id": 2, "name": "Audio 1", "muted": true, "items": [{"clip": 30, "name": "a.mp4", "start": 0, "end": 4 * T}]}],
+            "markers": [{"id": 5, "start": 3 * T, "duration": 0, "name": "beat", "color": "Blue"}],
+            "targeting": {"targeted": [1], "videoDest": 1, "audioDest": null},
+            "snapping": false
         })
     }
 
@@ -223,6 +313,11 @@ mod tests {
         assert_eq!((tl.rate, tl.playhead_frame), (Rate::new(24_000, 1001), 47));
         assert_eq!(tl.video[0].clips[0].end, 4.0);
         assert_eq!(tl.selected().map(|(_, c)| c.id), Some(30));
+        let (v1, a1) = (&tl.video[0], &tl.audio[0]);
+        assert_eq!((v1.label.as_str(), v1.locked, v1.targeted, v1.destination), ("V1", true, true, true));
+        assert_eq!((a1.label.as_str(), a1.muted, a1.targeted, a1.destination), ("A1", true, false, false));
+        assert_eq!((tl.markers[0].start, tl.markers[0].name.as_str()), (3.0, "beat"));
+        assert_eq!((tl.snapping, tl.linked_selection), (false, true));
         assert!(Timeline::from_json(&json!({"error": "no timeline"})).is_none());
     }
 

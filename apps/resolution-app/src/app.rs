@@ -1118,13 +1118,15 @@ impl ResolutionApp {
         painter.text(name_rect.right_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, tc, look.mono(17.0), t.text);
         let has = self.timeline.is_some();
         let on = |b: bool| if !has { State::Disabled } else { State::on(b) };
-        let groups: [&[(Icon, &str, State)]; 4] = [
+        let (snap, linked) = self.timeline.as_ref().map_or((false, false), |tl| (tl.snapping, tl.linked_selection));
+        let groups: [&[(Icon, &str, State)]; 5] = [
             &[
                 (Icon::Selection, "mode.selection", on(self.mode == EditMode::Selection)),
                 (Icon::Trim, "mode.trim", on(self.mode == EditMode::Trim)),
                 (Icon::Blade, "mode.blade", on(self.mode == EditMode::Blade)),
             ],
             &[(Icon::Insert, "edit.insert", on(false)), (Icon::Overwrite, "edit.overwrite", on(false))],
+            &[(Icon::Snapping, "timeline.snapping", on(snap)), (Icon::Linked, "timeline.linkedSelection", on(linked))],
             &[(Icon::Marker, "marker.add", on(false))],
             &[
                 (Icon::ZoomFit, "view.zoomToFit", on(false)),
@@ -1181,6 +1183,10 @@ impl ResolutionApp {
                             Action::Seek(s) => self.seek(rate.frame_at(s.max(0.0))),
                             Action::Select { clip, add } => {
                                 self.worker.run("timeline.select", json!({ "clips": [clip], "add": add }))
+                            }
+                            // track switches change the project, not playback: no stop
+                            Action::Track { track, command, field, value } => {
+                                self.worker.run(command, json!({ "track": track, field: value }))
                             }
                         }
                     }
@@ -1565,6 +1571,31 @@ mod tests {
         assert!(h.state().workspace.mixer);
         h.state_mut().command("workspace.resetLayout");
         assert_eq!(h.state().workspace, Workspace::default());
+    }
+
+    #[test]
+    fn track_header_switches_change_the_track() {
+        let mut h = demo();
+        let v1 = |a: &ResolutionApp| a.timeline.as_ref().map(|t| t.video[0].clone()).expect("V1");
+        assert!(!v1(h.state()).locked);
+        click(&mut h, "Lock V1");
+        pump(&mut h, "V1 to lock", |a| v1(a).locked);
+        click(&mut h, "Lock V1");
+        pump(&mut h, "V1 to unlock", |a| !v1(a).locked);
+        let targeted = v1(h.state()).targeted;
+        click(&mut h, "Auto Select V1");
+        pump(&mut h, "V1's auto track selector to flip", |a| v1(a).targeted != targeted);
+        click(&mut h, "Show V1");
+        pump(&mut h, "V1 to hide", |a| !v1(a).enabled);
+    }
+
+    #[test]
+    fn snapping_toggles_from_the_toolbar() {
+        let mut h = demo();
+        let snap = |a: &ResolutionApp| a.timeline.as_ref().map(|t| t.snapping).expect("timeline");
+        let before = snap(h.state());
+        click(&mut h, "Snapping");
+        pump(&mut h, "snapping to flip", |a| snap(a) != before);
     }
 
     #[test]
