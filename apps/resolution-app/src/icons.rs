@@ -46,10 +46,15 @@ pub enum Icon {
     PageColor,
     PageFairlight,
     PageDeliver,
+    Lock,
+    Eye,
+    AutoSelect,
+    Snapping,
+    Linked,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 33] = [
+    pub const ALL: [Icon; 38] = [
         Icon::MediaPool,
         Icon::Effects,
         Icon::Index,
@@ -83,6 +88,11 @@ impl Icon {
         Icon::PageColor,
         Icon::PageFairlight,
         Icon::PageDeliver,
+        Icon::Lock,
+        Icon::Eye,
+        Icon::AutoSelect,
+        Icon::Snapping,
+        Icon::Linked,
     ];
 
     /// The drawing, in a 16×16 box.
@@ -127,6 +137,15 @@ impl Icon {
             Icon::PageColor => "M8 14a6 6 0 1 1 0-12a6 6 0 1 1 0 12zM8 9a1 1 0 1 1 0-2a1 1 0 1 1 0 2z",
             Icon::PageFairlight => "M2 8h1M4.5 5v6M7 3v10M9.5 6v4M12 4.5v7M14 8h.5",
             Icon::PageDeliver => "M8 10V2.5M5 5.5l3-3 3 3M2.5 9.5v4h11v-4",
+            Icon::Lock => "M4 7.5h8v6H4zM5.5 7.5V5a2.5 2.5 0 0 1 5 0v2.5",
+            Icon::Eye => {
+                "M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM8 10a2 2 0 1 1 0-4a2 2 0 1 1 0 4z"
+            }
+            Icon::AutoSelect => "M2.5 2.5h11v11h-11zM5.5 8l2 2 3.5-4",
+            Icon::Snapping => "M3.5 2.5h3v5a1.5 1.5 0 0 0 3 0v-5h3v5a4.5 4.5 0 0 1-9 0zM3.5 5.5h3M9.5 5.5h3",
+            Icon::Linked => {
+                "M7 9a2.5 2.5 0 0 0 3.5 0l2-2a2.5 2.5 0 0 0-3.5-3.5l-.75.75M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.75-.75"
+            }
         }
     }
 

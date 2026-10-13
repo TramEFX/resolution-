@@ -64,6 +64,7 @@ doc is updated *and* the entry says which section moved.
 | D-017 | 2026-10-13 | ui | What Resolve does comes from its Reference Manual, then from the local install | active |
 | D-018 | 2026-10-13 | ui | The editor's look is "Black Box", with a few colour themes now and skins later | active |
 | B-021 | 2026-10-13 | docs | HANDOFF counted 71 vocabulary commands and 46 headless; there were 75 and 50 | fixed |
+| D-019 | 2026-10-13 | engine | The adapter answers `timeline.inspect`, adding the editor state FilmCraft keeps outside the sequence | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1017,3 +1018,28 @@ had not been counted. (This entry's first draft repeated the 46 without checking
 **Fix:** counted from the source (ids in `COMMANDS`, targets in `map.rs`). After D-018 there are
 83 commands: 50 run headless (47 engine, 1 approximate, 2 in the adapter), 27 are front-end and
 6 are missing. HANDOFF says so.
+
+### D-019 — The adapter answers `timeline.inspect`, adding the editor state FilmCraft keeps outside the sequence
+**Area:** engine · **Status:** active · **Doc:** ARCHITECTURE "The editor"; `crates/filmcraft-adapter/src/lib.rs`
+
+**Decision:** `timeline.inspect` maps to the adapter (`Target::Adapter`) rather than straight to
+FilmCraft's `sequence.inspect`. The adapter runs `sequence.inspect` and adds three things the
+track headers and the timeline toolbar need. FilmCraft keeps them in its session state, not in
+the sequence:
+- `targeting`: the targeted tracks (Resolve's auto track selectors), and the video and audio
+  destinations for source edits (destination controls);
+- `snapping`;
+- `linkedSelection`.
+
+Two vocabulary ids came with it, both passed straight to FilmCraft: `track.set` (lock, enable,
+mute, solo; `timeline.setTrack`) and `track.target` (auto track selector and destination;
+`timeline.setTargeting`).
+
+**Why:** the UI must show these switches' state. The alternatives were worse. The UI could
+remember what it last sent, but that is wrong after undo, project open, or an agent's edit. Each
+switch could get a query of its own, but that means more round trips per snapshot. MCP clients
+read the same JSON, so agents see the same state.
+
+**Caught by / checked:** an adapter test round-trips lock, mute, targeting and destination
+through `timeline.inspect`; UI tests click "Lock V1", "Auto Select V1", "Show V1" and the
+Snapping button.

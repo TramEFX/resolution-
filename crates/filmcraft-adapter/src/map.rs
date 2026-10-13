@@ -10,7 +10,7 @@ pub enum Target {
     Engine(&'static str),
     /// A close but not identical FilmCraft command; the note says how it differs from Resolve.
     Approx(&'static str, &'static str),
-    /// Handled by the adapter itself (undo, redo).
+    /// Handled by the adapter itself (undo, redo, inspecting the timeline).
     Adapter,
     /// Owned by the front end: page switching, panels, timeline zoom, edit modes and playback. FilmCraft
     /// keeps these in its egui crate, which we replace; Resolution's UI implements them.
@@ -41,7 +41,8 @@ pub const MAP: &[(&str, Target)] = &[
     ("project.save", Engine("file.save")),
     ("project.saveAs", Engine("file.saveAs")),
     ("project.inspect", Engine("project.inspect")),
-    ("timeline.inspect", Engine("sequence.inspect")),
+    // FilmCraft's sequence.inspect, plus targeting, snapping and linked selection
+    ("timeline.inspect", Adapter),
     ("media.import", Engine("file.import")),
     ("timeline.createFromClips", Engine("file.newSequenceFromClip")),
     ("source.open", Engine("source.open")),
@@ -108,6 +109,8 @@ pub const MAP: &[(&str, Target)] = &[
     ("timeline.snapping", Engine("sequence.snap")),
     ("timeline.linkedSelection", Engine("sequence.linkedSelection")),
     ("timeline.closeGap", Engine("sequence.closeGap")),
+    ("track.set", Engine("timeline.setTrack")),
+    ("track.target", Engine("timeline.setTargeting")),
     ("view.zoomIn", Ui),
     ("view.zoomOut", Ui),
     ("view.zoomToFit", Ui),

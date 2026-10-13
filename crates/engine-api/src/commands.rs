@@ -191,6 +191,19 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("timeline.snapping", "Snapping", Edit, ""),
     c("timeline.linkedSelection", "Linked Selection", Edit, ""),
     c("timeline.closeGap", "Close Gap", Edit, ""),
+    // track headers
+    c(
+        "track.set",
+        "Track Settings (Lock, Enable, Mute, Solo)",
+        Edit,
+        r#"{"track": "V1"|"A1"|id, "locked"?: bool, "enabled"?: bool, "muted"?: bool, "solo"?: bool}"#,
+    ),
+    c(
+        "track.target",
+        "Auto Track Selector and Destination Control",
+        Edit,
+        r#"{"track": "V1"|"A1"|id, "targeted"?: bool (auto track selector), "sourcePatch"?: bool (destination for source edits)}"#,
+    ),
     // view
     c("view.zoomIn", "Zoom In", Edit, ""),
     c("view.zoomOut", "Zoom Out", Edit, ""),
