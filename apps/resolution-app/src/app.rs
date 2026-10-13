@@ -147,7 +147,8 @@ pub struct ResolutionApp {
     waveforms: Waveforms,
     clock: Instant,
     play_test: Option<PlayTest>,
-    zoom: Option<f32>,
+    /// Where the timeline is zoomed and scrolled.
+    nav: timeline_ui::Nav,
     /// Where each clip was drawn last frame: clip id by screen rectangle.
     clip_rects: Vec<(egui::Rect, u64)>,
     selected_media: Option<(Kind, u64)>,
@@ -203,7 +204,7 @@ impl ResolutionApp {
             },
             clock: Instant::now(),
             play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
-            zoom: None,
+            nav: timeline_ui::Nav::default(),
             clip_rects: Vec::new(),
             selected_media: None,
             source_clip: None,
@@ -419,11 +420,9 @@ impl ResolutionApp {
                     self.worker.run(id, json!({ "target": "source" }));
                 }
             }
-            "view.zoomIn" | "view.zoomOut" => {
-                let base = self.zoom.unwrap_or(40.0);
-                self.zoom = Some(if id == "view.zoomIn" { base * 1.5 } else { base / 1.5 }.clamp(2.0, 2000.0));
-            }
-            "view.zoomToFit" => self.zoom = None,
+            "view.zoomIn" => self.nav.zoom_by(1.5),
+            "view.zoomOut" => self.nav.zoom_by(1.0 / 1.5),
+            "view.zoomToFit" => self.nav.fit(),
             "media.import" => self.import_dialog(),
             "edit.insert" | "edit.overwrite" if self.source_clip.is_none() => {
                 self.say("Open a clip in the source viewer first: double-click it in the Media Pool.", true);
@@ -1207,8 +1206,8 @@ impl ResolutionApp {
                         EditMode::Blade => timeline_ui::Tool::Blade,
                     };
                     let waveforms = self.waveforms.ready();
-                    let view = timeline_ui::View { zoom: self.zoom, tool, waveforms: &waveforms };
-                    let (actions, rects) = timeline_ui::show(ui, &look, tl, playhead, &view);
+                    let view = timeline_ui::View { tool, waveforms: &waveforms };
+                    let (actions, rects) = timeline_ui::show(ui, &look, tl, playhead, &view, &mut self.nav);
                     self.clip_rects = rects;
                     for a in actions {
                         match a {
@@ -1824,6 +1823,61 @@ mod tests {
         });
         let ready = h.state().waveforms.ready();
         assert!(ready.values().any(|p| !p.buckets.is_empty() && p.loudest > 0.0), "some clip has sound");
+    }
+
+    /// Roll the wheel over the timeline, with `modifiers`.
+    fn wheel(h: &mut Harness<'_, ResolutionApp>, at: Pos2, delta: egui::Vec2, modifiers: Modifiers) {
+        h.event(egui::Event::PointerMoved(at));
+        h.step();
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta,
+            phase: egui::TouchPhase::Move,
+            modifiers,
+        });
+        // the wheel scrolls smoothly over a few frames
+        for _ in 0..30 {
+            h.step();
+        }
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_tracks_and_alt_zooms() {
+        let mut h = demo();
+        pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
+        // over a clip, so the pointer is on the timeline
+        let at = h.state().clip_rects[0].0.center();
+        assert_eq!(h.state().nav.down, 0.0);
+        wheel(&mut h, at, egui::vec2(0.0, -60.0), Modifiers::NONE);
+        assert!(h.state().nav.down > 0.0, "the demo's six tracks overflow, so the wheel scrolls down");
+        assert!(h.state().nav.zoom.is_none(), "a plain wheel does not zoom");
+        let at = h.state().clip_rects[0].0.center();
+        h.event(egui::Event::ModifiersChanged(Modifiers::ALT));
+        wheel(&mut h, at, egui::vec2(0.0, 120.0), Modifiers::ALT);
+        assert!(h.state().nav.zoom.is_some(), "Alt with the wheel zooms in");
+    }
+
+    #[test]
+    fn zooming_keeps_the_playhead_in_view_and_fit_shows_everything() {
+        let mut h = demo();
+        pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
+        for _ in 0..6 {
+            h.state_mut().command("view.zoomIn");
+            h.step();
+        }
+        let zoomed = h.state().nav;
+        assert!(zoomed.zoom.is_some());
+        // jump to the end: the view pages to follow the playhead
+        h.key_press(Key::End);
+        pump(&mut h, "the playhead at the end", |a| {
+            a.timeline.as_ref().is_some_and(|t| t.playhead_frame >= t.rate.frame_at(t.duration) - 1)
+        });
+        h.step();
+        h.step();
+        assert!(h.state().nav.first > zoomed.first, "the view followed the playhead to the end");
+        h.state_mut().command("view.zoomToFit");
+        h.step();
+        assert_eq!((h.state().nav.zoom, h.state().nav.first), (None, 0.0));
     }
 
     #[test]

@@ -70,6 +70,7 @@ doc is updated *and* the entry says which section moved.
 | B-023 | 2026-10-13 | engine | FilmCraft refuses a ripple that Resolve makes by cutting sync-locked clips across the edit | open; worked around with sync lock switches |
 | D-021 | 2026-10-13 | ui | A source viewer beside the timeline viewer: a second `Playback`, and keys act on the active viewer | active |
 | D-022 | 2026-10-13 | ui | Waveforms come from `Playback::peaks`, read on a background thread | active |
+| D-023 | 2026-10-13 | ui | Timeline navigation follows Resolve's wheel and scroll-bar controls; the view pages to the playhead | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1174,3 +1175,35 @@ of the Samsung clip was checked by eye: quiet start, louder later.
 
 **Not yet:** waveforms in the source viewer; per-channel display; the clip's gain and volume
 keyframes do not scale the drawing (FilmCraft's does).
+
+### D-023 — Timeline navigation follows Resolve's wheel and scroll-bar controls; the view pages to the playhead
+**Area:** ui · **Status:** active · **Doc:** `apps/resolution-app/src/timeline_ui.rs` (module comment)
+
+**Decision:** the timeline keeps a `Nav` (zoom, first second in view, vertical scroll), held by
+the app between frames. Moving around follows the manual (p. 853):
+
+| Input | What it does |
+|---|---|
+| Wheel | Scrolls the tracks up and down |
+| Alt + wheel | Zooms about the pointer |
+| Ctrl + wheel | Moves through time |
+| Shift + wheel, sideways trackpad swipe | Scrolls sideways |
+| Middle-drag | Pans |
+| Scroll bars (bottom, right) | Drag or click to move; the bottom one marks the playhead |
+
+The zoom commands zoom about the playhead, and Zoom to Fit shows the whole timeline. Zooming out
+past the whole timeline snaps back to fit. When the playhead moves out of view (playing,
+stepping, a seek from a viewer), the view pages so it sits near the left. A view the user
+scrolled away from stays put until the playhead next moves.
+
+**Why:** before this, a zoomed-in timeline always centred on the playhead, so there was no way to
+look at another part without moving the playhead. Tracks past the panel's height could not be
+reached at all.
+
+**Detail worth knowing:** egui reads Ctrl with the wheel as a zoom gesture (`zoom_delta`) and
+gives no scroll delta. The timeline turns that back into a distance through time. Edits and
+scrubbing take only the primary button, so a middle-drag pans and does not seek.
+
+**Checked:** UI tests roll the wheel (the demo's six tracks scroll; Alt zooms) and zoom in, then
+press End: the view follows the playhead, and Zoom to Fit restores the whole timeline. A
+screenshot shows the scroll bars and A3 reachable by scrolling.

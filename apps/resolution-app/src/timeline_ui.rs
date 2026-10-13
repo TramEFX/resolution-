@@ -12,6 +12,12 @@
 //!
 //! A drag shows where the edit will land and becomes one command, one undo step, when it ends.
 //! With snapping on, moving edges snap to the playhead, marks, markers and other clips' edges.
+//!
+//! Moving around, as Resolve's Edit page (manual p. 853): the wheel scrolls the tracks, Alt with
+//! the wheel zooms about the pointer, Ctrl with the wheel moves through time, and Shift with the
+//! wheel (or a sideways trackpad swipe) scrolls sideways. Middle-dragging pans, and scroll bars sit
+//! along the bottom and the right; the bottom one marks where the playhead is. When the playhead
+//! moves out of view (playing, stepping, a seek from a viewer), the view pages to it.
 
 use egui::{
     Align2, Color32, CornerRadius, CursorIcon, Id, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2,
@@ -137,12 +143,43 @@ const ROLL: f32 = 3.0;
 /// How close (px) a moving edge snaps.
 const SNAP: f32 = 8.0;
 
-/// Pixels per second (`None` fits the whole timeline), the tool, and the waveforms read so far.
+/// The tool, and the waveforms read so far.
 pub struct View<'a> {
-    pub zoom: Option<f32>,
     pub tool: Tool,
     pub waveforms: &'a Ready,
 }
+
+/// Where the timeline is zoomed and scrolled. The app keeps it between frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Nav {
+    /// Pixels per second; `None` fits the whole timeline in view.
+    pub zoom: Option<f32>,
+    /// The first second in view.
+    pub first: f64,
+    /// How far the tracks are scrolled down (px).
+    pub down: f32,
+    /// A zoom asked for by a command, made about the playhead once the lane width is known.
+    zoom_by: Option<f32>,
+    /// The playhead on the last frame: when it moves out of view, the view follows.
+    last_playhead: Option<f64>,
+}
+
+impl Nav {
+    /// Zoom in (`factor` > 1) or out about the playhead.
+    pub fn zoom_by(&mut self, factor: f32) {
+        self.zoom_by = Some(self.zoom_by.unwrap_or(1.0) * factor);
+    }
+
+    /// Show the whole timeline.
+    pub fn fit(&mut self) {
+        self.zoom = None;
+        self.zoom_by = None;
+        self.first = 0.0;
+    }
+}
+
+/// Thickness of the scroll bars.
+const BAR: f32 = 10.0;
 
 /// A clip as drawn this frame.
 struct Placed<'a> {
@@ -154,7 +191,14 @@ struct Placed<'a> {
 
 /// Draws the timeline and returns what the user did, plus where each clip was drawn (for
 /// hit-testing and UI tests).
-pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View) -> (Vec<Action>, Vec<(Rect, u64)>) {
+pub fn show(
+    ui: &mut Ui,
+    look: &Look,
+    tl: &Timeline,
+    playhead: f64,
+    view: &View,
+    nav: &mut Nav,
+) -> (Vec<Action>, Vec<(Rect, u64)>) {
     let t = look.theme;
     let mut actions = Vec::new();
     let rect = ui.available_rect_before_wrap();
@@ -163,18 +207,19 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
     painter.rect_filled(rect, CornerRadius::ZERO, t.panel);
 
     let lane_x = rect.left() + HEADER;
-    let lane_w = (rect.width() - HEADER).max(1.0);
+    let lane_w = (rect.width() - HEADER - BAR).max(1.0);
     let span = tl.duration.max(1.0) * 1.02;
-    let pps = view.zoom.unwrap_or(lane_w / span as f32).max(1.0);
-    // keep the playhead in view when zoomed in
-    let visible = (lane_w / pps) as f64;
-    let first = if visible >= span { 0.0 } else { (playhead - visible / 2.0).clamp(0.0, span - visible) };
+    let (pps, first) = navigate(ui, &response, nav, rect, lane_x, lane_w, span, playhead);
+    let visible = f64::from(lane_w / pps);
     let x_of = |s: f64| lane_x + ((s - first) as f32) * pps;
     let t_of = |x: f32| (first + ((x - lane_x) / pps) as f64).clamp(0.0, tl.duration.max(0.0));
     let frames_of = |seconds: f64| (seconds * tl.fps).round() as i64;
 
     // ruler with timecode labels
     let ruler = Rect::from_min_size(pos2(lane_x, rect.top()), vec2(lane_w, RULER));
+    // where tracks show: below the ruler, inside the scroll bars
+    let lanes_area =
+        Rect::from_min_max(pos2(rect.left(), ruler.bottom()), pos2(rect.right() - BAR, rect.bottom() - BAR));
     painter.rect_filled(Rect::from_min_size(rect.min, vec2(rect.width(), RULER)), CornerRadius::ZERO, t.head);
     painter.line_segment([pos2(rect.left(), ruler.bottom()), pos2(rect.right(), ruler.bottom())], look.sep_stroke());
     // ticks on whole timecode seconds (24 frames at 23.976), so labels read 00:00:02:00, not 00:00:01:23
@@ -195,8 +240,10 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
     }
 
     // tracks: V(n)..V1 on top, then A1..A(n)
+    let content: f32 = tl.video.len() as f32 * look.skin.video_track + tl.audio.len() as f32 * look.skin.audio_track;
+    nav.down = nav.down.clamp(0.0, (content - lanes_area.height()).max(0.0));
     let rows: Vec<(&Track, bool, Rect)> = {
-        let mut y = ruler.bottom();
+        let mut y = ruler.bottom() - nav.down;
         tl.video
             .iter()
             .rev()
@@ -211,10 +258,15 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
     };
     let any_solo = tl.audio.iter().any(|a| a.solo);
     let mut placed: Vec<Placed> = Vec::new();
+    let lanes = painter.with_clip_rect(lanes_area);
     for (n, (track, video, lane)) in rows.iter().enumerate() {
+        if !lane.intersects(lanes_area) {
+            continue;
+        }
+        let painter = &lanes;
         painter.rect_filled(*lane, CornerRadius::ZERO, if n % 2 == 0 { t.track } else { t.track_alt });
         let head = Rect::from_min_max(pos2(rect.left(), lane.top()), pos2(lane_x, lane.bottom()));
-        actions.extend(track_header(ui, look, head, track, *video));
+        actions.extend(track_header(ui, look, head, lanes_area, track, *video));
         painter.line_segment([pos2(rect.left(), lane.bottom()), pos2(rect.right(), lane.bottom())], look.sep_stroke());
         painter.line_segment([pos2(lane_x - 0.5, lane.top()), pos2(lane_x - 0.5, lane.bottom())], look.sep_stroke());
         // a hidden video track, or an audio track that is muted or silenced by another's solo
@@ -227,11 +279,15 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
             }
             let r =
                 Rect::from_x_y_ranges(x0..=(x1 - 1.0).min(lane.right()), (lane.top() + 3.0)..=(lane.bottom() - 3.0));
-            draw_clip(&painter, look, r, c, fill, *video, silent);
+            draw_clip(painter, look, r, c, fill, *video, silent);
             if !*video && let Some(peaks) = view.waveforms.get(&c.item) {
-                draw_waveform(&painter, look, r, x_of(c.start), pps, c, peaks, c.enabled && !silent);
+                draw_waveform(painter, look, r, x_of(c.start), pps, c, peaks, c.enabled && !silent);
             }
-            placed.push(Placed { row: n, track, clip: c, rect: r });
+            // only the part in view takes clicks
+            let shown = r.intersect(lanes_area);
+            if shown.height() > 0.0 {
+                placed.push(Placed { row: n, track, clip: c, rect: shown });
+            }
         }
         if track.locked {
             hatch(&painter.with_clip_rect(*lane), *lane, t.line);
@@ -290,7 +346,7 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
     let drag_id: Id = ui.id().with("timeline-drag");
     let mut drag: Option<Drag> = ui.data(|d| d.get_temp::<Option<Drag>>(drag_id)).flatten();
     let pointer = response.hover_pos().or(response.interact_pointer_pos());
-    let in_lanes = |p: Pos2| p.x >= lane_x && p.y > ruler.bottom();
+    let in_lanes = |p: Pos2| p.x >= lane_x && lanes_area.contains(p);
     // where moving edges may snap to
     let snap_targets = |exclude: &[u64]| -> Vec<f64> {
         let mut v = vec![0.0, playhead];
@@ -304,7 +360,7 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
     };
     let tolerance = f64::from(SNAP / pps);
 
-    if response.drag_started()
+    if response.drag_started_by(egui::PointerButton::Primary)
         && view.tool != Tool::Blade
         && let Some(from) = ui.input(|i| i.pointer.press_origin()).filter(|p| in_lanes(*p))
         && let Some((gesture, i)) = gesture_at(from, view.tool, &placed, tl.fps)
@@ -346,7 +402,7 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
                 .unwrap_or(d.row),
             _ => d.row,
         };
-        draw_preview(&painter, look, &rows, d, target_row, shown, x_of);
+        draw_preview(&lanes, look, &rows, d, target_row, shown, x_of);
         let label = format!("{}{}", if frames < 0 { "-" } else { "+" }, tl.frame_timecode(frames.abs()));
         painter.text(p + vec2(12.0, -14.0), Align2::LEFT_BOTTOM, label, look.mono(11.0), t.text);
 
@@ -398,6 +454,7 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
         }
     }
     ui.data_mut(|d| d.insert_temp(drag_id, drag));
+    scroll_bars(ui, look, nav, rect, lane_x, lanes_area, span, visible, content, playhead);
 
     let px = x_of(playhead);
     if px >= lane_x {
@@ -431,7 +488,9 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
                 _ => actions.push(Action::Seek(t_of(p.x))),
             }
         } else if (response.clicked() && on_clip.is_none())
-            || (response.dragged() && !editing && (on_clip.is_none() || p.y <= ruler.bottom()))
+            || (response.dragged_by(egui::PointerButton::Primary)
+                && !editing
+                && (on_clip.is_none() || p.y <= ruler.bottom()))
         {
             // the Blade tool's clicks off a clip, and drags that are not edits, scrub
             actions.push(Action::Seek(t_of(p.x)));
@@ -621,9 +680,9 @@ fn hatch(painter: &egui::Painter, r: Rect, colour: Color32) {
 /// A track header: the destination control with the track's name ("V1"), its name and clip
 /// count, then its switches (lock, auto track selector, and show for video or solo and mute for
 /// audio). Each switch is a widget with a name, for screen readers and UI tests.
-fn track_header(ui: &mut Ui, look: &Look, head: Rect, track: &Track, video: bool) -> Vec<Action> {
+fn track_header(ui: &mut Ui, look: &Look, head: Rect, area: Rect, track: &Track, video: bool) -> Vec<Action> {
     let t = look.theme;
-    let painter = ui.painter_at(head);
+    let painter = ui.painter_at(head.intersect(area));
     painter.rect_filled(head, CornerRadius::ZERO, t.head);
     let mut out = Vec::new();
     let mut flip = |command: &'static str, field: &'static str, value: bool| {
@@ -632,7 +691,7 @@ fn track_header(ui: &mut Ui, look: &Look, head: Rect, track: &Track, video: bool
 
     // destination control: source edits land on the patched track
     let badge = Rect::from_min_size(head.left_center() + vec2(8.0, -10.0), vec2(28.0, 20.0));
-    let r = switch(ui, head, badge, &format!("Destination {}", track.label), track.destination);
+    let r = switch(ui, head, area, badge, &format!("Destination {}", track.label), track.destination);
     painter.rect_filled(badge, look.radius(), if track.destination { t.accent } else { t.field });
     if r.hovered() && !track.destination {
         painter.rect_stroke(badge, look.radius(), Stroke::new(1.0, t.line), StrokeKind::Inside);
@@ -670,7 +729,7 @@ fn track_header(ui: &mut Ui, look: &Look, head: Rect, track: &Track, video: bool
     for (kind, on) in kinds {
         let rect = Rect::from_min_size(pos2(x, head.center().y - SWITCH / 2.0), vec2(SWITCH, SWITCH));
         x += SWITCH + 1.0;
-        let r = switch(ui, head, rect, &format!("{kind} {}", track.label), *on);
+        let r = switch(ui, head, area, rect, &format!("{kind} {}", track.label), *on);
         let lit = *kind != "Show" && *on;
         if lit {
             painter.rect_filled(rect, look.radius(), t.active_bg);
@@ -726,10 +785,138 @@ fn track_header(ui: &mut Ui, look: &Look, head: Rect, track: &Track, video: bool
 }
 
 /// A clickable switch in a track header, named for screen readers and UI tests.
-fn switch(ui: &mut Ui, head: Rect, rect: Rect, label: &str, on: bool) -> Response {
-    let r = ui.interact(rect, ui.id().with(("track-switch", label, head.top() as i32)), Sense::click());
+fn switch(ui: &mut Ui, head: Rect, area: Rect, rect: Rect, label: &str, on: bool) -> Response {
+    // a switch scrolled partly out of view does not take clicks
+    let sense = if area.contains_rect(rect) { Sense::click() } else { Sense::hover() };
+    let r = ui.interact(rect, ui.id().with(("track-switch", label, head.top() as i32)), sense);
     r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
     r.on_hover_text(label)
+}
+
+/// Apply this frame's zoom and scroll input to `nav`, and return the pixels per second and the
+/// first second in view.
+#[allow(clippy::too_many_arguments)]
+fn navigate(
+    ui: &Ui,
+    response: &Response,
+    nav: &mut Nav,
+    rect: Rect,
+    lane_x: f32,
+    lane_w: f32,
+    span: f64,
+    playhead: f64,
+) -> (f32, f64) {
+    let fit = (lane_w / span as f32).max(1e-3);
+    let mut pps = nav.zoom.unwrap_or(fit);
+    let mut first = if nav.zoom.is_some() { nav.first } else { 0.0 };
+    let zoom_about = |pps: &mut f32, first: &mut f64, factor: f32, at_x: f32| {
+        let at = *first + f64::from((at_x - lane_x) / *pps);
+        let new = (*pps * factor).clamp(fit, 4000.0);
+        *first = at - f64::from((at_x - lane_x) / new);
+        *pps = new;
+    };
+    if let Some(factor) = nav.zoom_by.take() {
+        let at_x = lane_x + ((playhead - first) as f32 * pps).clamp(0.0, lane_w);
+        zoom_about(&mut pps, &mut first, factor, at_x);
+    }
+    if let Some(p) = response.hover_pos().filter(|p| rect.contains(*p)) {
+        let speed = ui.ctx().options(|o| o.input_options.scroll_zoom_speed);
+        let (wheel, zoom, alt) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.modifiers.alt));
+        if alt && wheel.y != 0.0 {
+            // Alt: zoom about the pointer
+            zoom_about(&mut pps, &mut first, (wheel.y * 0.003).exp(), p.x.max(lane_x));
+        } else if zoom != 1.0 {
+            // Ctrl (egui reads Ctrl with the wheel as a zoom): move through time instead
+            first -= f64::from(zoom.ln() / speed.max(1e-6) / pps);
+        } else {
+            nav.down -= wheel.y;
+            first -= f64::from(wheel.x / pps);
+        }
+    }
+    if response.dragged_by(egui::PointerButton::Middle) {
+        let d = response.drag_delta();
+        first -= f64::from(d.x / pps);
+        nav.down -= d.y;
+    }
+    // follow the playhead when it moves out of view: page so it sits near the left
+    let visible = f64::from(lane_w / pps);
+    let moved = nav.last_playhead.is_some_and(|last| (last - playhead).abs() > 1e-9);
+    nav.last_playhead = Some(playhead);
+    if moved && (playhead < first || playhead > first + visible) {
+        first = playhead - visible * 0.1;
+    }
+    if pps <= fit * 1.000_1 {
+        // zoomed out to the whole timeline, or further
+        nav.zoom = None;
+        nav.first = 0.0;
+        return (fit, 0.0);
+    }
+    nav.zoom = Some(pps);
+    nav.first = first.clamp(0.0, (span - visible).max(0.0));
+    (pps, nav.first)
+}
+
+/// The scroll bars: along the bottom (time, with a mark where the playhead is) and down the
+/// right (tracks). Dragging a thumb scrolls; clicking a bar jumps there.
+#[allow(clippy::too_many_arguments)]
+fn scroll_bars(
+    ui: &mut Ui,
+    look: &Look,
+    nav: &mut Nav,
+    rect: Rect,
+    lane_x: f32,
+    lanes_area: Rect,
+    span: f64,
+    visible: f64,
+    content: f32,
+    playhead: f64,
+) {
+    let t = look.theme;
+    let painter = ui.painter_at(rect);
+    let across = Rect::from_min_max(pos2(lane_x, rect.bottom() - BAR), pos2(rect.right() - BAR, rect.bottom()));
+    let down = Rect::from_min_max(pos2(rect.right() - BAR, lanes_area.top()), pos2(rect.right(), rect.bottom() - BAR));
+    painter.rect_filled(Rect::from_min_max(pos2(rect.left(), across.top()), rect.max), CornerRadius::ZERO, t.head);
+    painter.rect_filled(down, CornerRadius::ZERO, t.head);
+    let thumb = |bar: Rect, start: f32, len: f32, horizontal: bool| {
+        if horizontal {
+            Rect::from_x_y_ranges((bar.left() + start)..=(bar.left() + start + len.max(12.0)), bar.y_range())
+                .shrink2(vec2(0.0, 2.0))
+        } else {
+            Rect::from_x_y_ranges(bar.x_range(), (bar.top() + start)..=(bar.top() + start + len.max(12.0)))
+                .shrink2(vec2(2.0, 0.0))
+        }
+    };
+    // time
+    let w = across.width().max(1.0);
+    let share = (visible / span).min(1.0) as f32;
+    let first = nav.first;
+    let r = ui.interact(across, ui.id().with("timeline-scroll-across"), Sense::click_and_drag());
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Timeline position"));
+    if share < 1.0 {
+        let th = thumb(across, (first / span) as f32 * w, share * w, true);
+        painter.rect_filled(th, look.radius(), if r.hovered() || r.dragged() { t.dim } else { t.line });
+        if r.dragged() {
+            nav.first = (first + f64::from(r.drag_delta().x / w) * span).clamp(0.0, (span - visible).max(0.0));
+        } else if r.clicked()
+            && let Some(p) = r.interact_pointer_pos()
+        {
+            nav.first =
+                (f64::from((p.x - across.left()) / w) * span - visible / 2.0).clamp(0.0, (span - visible).max(0.0));
+        }
+    }
+    let px = across.left() + (playhead / span) as f32 * w;
+    painter.line_segment([pos2(px, across.top() + 1.0), pos2(px, across.bottom() - 1.0)], Stroke::new(2.0, t.accent));
+    // tracks
+    let h = down.height().max(1.0);
+    if content > h {
+        let r = ui.interact(down, ui.id().with("timeline-scroll-down"), Sense::click_and_drag());
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Slider, true, "Timeline tracks"));
+        let th = thumb(down, nav.down / content * h, h / content * h, false);
+        painter.rect_filled(th, look.radius(), if r.hovered() || r.dragged() { t.dim } else { t.line });
+        if r.dragged() {
+            nav.down = (nav.down + r.drag_delta().y / h * content).clamp(0.0, content - h);
+        }
+    }
 }
 
 /// A ruler step (seconds) of at least `min`: 1, 2, 5, 10, 15, 30 s, minutes, …
