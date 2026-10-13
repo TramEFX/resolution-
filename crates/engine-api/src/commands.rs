@@ -136,6 +136,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("source.seek", "Move the Source Playhead", Edit, r#"{"frame": int}"#),
     c("view.toggleViewer", "Toggle Between Source and Timeline Viewers", Edit, ""),
     c("timeline.open", "Open Timeline", Media, r#"{"item": id}"#),
+    c("timeline.new", "New Timeline", Media, r#"{"name": string, "width"?: int, "height"?: int, "fps"?: float}"#),
     // history
     c("edit.undo", "Undo", Global, ""),
     c("edit.redo", "Redo", Global, ""),

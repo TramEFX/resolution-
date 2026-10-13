@@ -270,6 +270,8 @@ pub struct SourceClip {
     pub mark_in: Option<i64>,
     /// The last frame in (inclusive), as Resolve's Out mark.
     pub mark_out: Option<i64>,
+    /// The media's own timecode at frame 0 (in frames), when the file carries one.
+    pub start_timecode: i64,
 }
 
 impl SourceClip {
@@ -294,12 +296,13 @@ impl SourceClip {
             playhead_frame: frame("playhead").unwrap_or(0),
             mark_in: frame("markIn"),
             mark_out: frame("markOut"),
+            start_timecode: v["startTimecodeFrames"].as_i64().unwrap_or(0),
         })
     }
 
-    /// `HH:MM:SS:FF` from the start of its range, non-drop.
+    /// `HH:MM:SS:FF` in the media's own timecode, non-drop.
     pub fn timecode(&self, frame: i64) -> String {
-        timecode(frame, (self.rate.fps().round() as u32).max(1))
+        timecode(self.start_timecode + frame, (self.rate.fps().round() as u32).max(1))
     }
 }
 
@@ -396,11 +399,12 @@ mod tests {
         assert_eq!(SourceClip::from_json(&json!({"item": null})), None);
         let s = SourceClip::from_json(&json!({
             "item": 4, "name": "a.mp4", "start": 0, "end": 10 * T, "playhead": 2 * T, "markIn": T, "markOut": null,
-            "frameRate": {"num": 25, "den": 1}
+            "frameRate": {"num": 25, "den": 1}, "startTimecodeFrames": 90_000
         }))
         .expect("source clip");
         assert_eq!((s.frames, s.playhead_frame, s.mark_in, s.mark_out), (250, 50, Some(25), None));
-        assert_eq!(s.timecode(51), "00:00:02:01");
+        // its own timecode: 01:00:00:00 at frame 0
+        assert_eq!(s.timecode(51), "01:00:02:01");
     }
 
     #[test]
