@@ -22,8 +22,13 @@ pub struct Clip {
     /// Timeline seconds.
     pub start: f64,
     pub end: f64,
+    /// The media item it plays.
+    pub item: u64,
     /// Where in its media the clip starts (seconds).
     pub source_in: f64,
+    /// Playback speed (1.0 is 100%); `reverse` plays it backwards.
+    pub speed: f64,
+    pub reverse: bool,
     pub enabled: bool,
     pub selected: bool,
 }
@@ -131,7 +136,10 @@ impl Timeline {
                                                 name: c["name"].as_str().unwrap_or_default().to_string(),
                                                 start: seconds(&c["start"])?,
                                                 end: seconds(&c["end"])?,
+                                                item: c["item"].as_u64().unwrap_or_default(),
                                                 source_in: seconds(&c["sourceIn"]).unwrap_or(0.0),
+                                                speed: c["speed"].as_f64().unwrap_or(1.0),
+                                                reverse: c["reverse"].as_bool().unwrap_or(false),
                                                 enabled: c["enabled"].as_bool().unwrap_or(true),
                                                 selected: selection.contains(&id),
                                             })

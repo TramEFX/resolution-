@@ -30,6 +30,7 @@ use crate::model::{self, Kind, MediaItem, SourceClip, Timeline};
 use crate::monitor::{Monitor, Sound};
 use crate::theme::{self, Look, Theme};
 use crate::timeline_ui::{self, Action};
+use crate::waveforms::Waveforms;
 use crate::worker::{Reply, Worker};
 
 const MEDIA_EXTENSIONS: &[&str] = &[
@@ -143,6 +144,7 @@ pub struct ResolutionApp {
     /// The viewer that playback keys, marks and frame steps act on.
     active: Viewer,
     sound: Sound,
+    waveforms: Waveforms,
     clock: Instant,
     play_test: Option<PlayTest>,
     zoom: Option<f32>,
@@ -195,6 +197,10 @@ impl ResolutionApp {
             source_viewer: Monitor::new(&cc.egui_ctx, "source.seek", "source viewer"),
             active: Viewer::Timeline,
             sound: Sound::new(options.mute),
+            waveforms: {
+                let ctx = cc.egui_ctx.clone();
+                Waveforms::new(move || ctx.request_repaint())
+            },
             clock: Instant::now(),
             play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
             zoom: None,
@@ -295,6 +301,11 @@ impl ResolutionApp {
                 self.timeline_viewer.update_program(playback, frame, &mut self.sound);
                 let frame = self.source_clip.as_ref().map_or(0, |s| s.playhead_frame);
                 self.source_viewer.update_program(source_playback, frame, &mut self.sound);
+                // read the waveforms of the timeline's sound, in the background
+                if let (Some(tl), Some(p)) = (&self.timeline, &self.timeline_viewer.program) {
+                    let items = tl.audio.iter().flat_map(|t| t.clips.iter().map(|c| c.item));
+                    self.waveforms.want(items, p);
+                }
                 self.media = project.as_ref().map(model::media_items).unwrap_or_default();
                 self.project_name = project.as_ref().and_then(model::project_name);
                 if self.auto_timeline
@@ -1195,8 +1206,9 @@ impl ResolutionApp {
                         EditMode::Trim => timeline_ui::Tool::Trim,
                         EditMode::Blade => timeline_ui::Tool::Blade,
                     };
-                    let (actions, rects) =
-                        timeline_ui::show(ui, &look, tl, playhead, &timeline_ui::View { zoom: self.zoom, tool });
+                    let waveforms = self.waveforms.ready();
+                    let view = timeline_ui::View { zoom: self.zoom, tool, waveforms: &waveforms };
+                    let (actions, rects) = timeline_ui::show(ui, &look, tl, playhead, &view);
                     self.clip_rects = rects;
                     for a in actions {
                         match a {
@@ -1794,6 +1806,24 @@ mod tests {
         h.key_press(Key::K);
         h.step();
         assert!(!h.state().source_viewer.is_playing());
+    }
+
+    #[test]
+    fn waveforms_arrive_for_the_timelines_sound() {
+        let mut h = demo();
+        let items: Vec<u64> = h
+            .state()
+            .timeline
+            .as_ref()
+            .map(|t| t.audio.iter().flat_map(|a| a.clips.iter().map(|c| c.item)).collect())
+            .unwrap_or_default();
+        assert!(!items.is_empty());
+        pump(&mut h, "every audio clip's waveform", |a| {
+            let ready = a.waveforms.ready();
+            items.iter().all(|i| ready.contains_key(i))
+        });
+        let ready = h.state().waveforms.ready();
+        assert!(ready.values().any(|p| !p.buckets.is_empty() && p.loudest > 0.0), "some clip has sound");
     }
 
     #[test]

@@ -20,6 +20,8 @@ use egui::{
 use crate::icons::{self, Icon};
 use crate::model::{Clip, Timeline, Track};
 use crate::theme::Look;
+use crate::waveforms::{Peaks, Ready, column_height};
+use resolution_engine_api::{PEAK_RATE, PEAK_SAMPLES};
 
 pub enum Action {
     Seek(f64),
@@ -135,10 +137,11 @@ const ROLL: f32 = 3.0;
 /// How close (px) a moving edge snaps.
 const SNAP: f32 = 8.0;
 
-/// Pixels per second (`None` fits the whole timeline) and the tool.
-pub struct View {
+/// Pixels per second (`None` fits the whole timeline), the tool, and the waveforms read so far.
+pub struct View<'a> {
     pub zoom: Option<f32>,
     pub tool: Tool,
+    pub waveforms: &'a Ready,
 }
 
 /// A clip as drawn this frame.
@@ -225,6 +228,9 @@ pub fn show(ui: &mut Ui, look: &Look, tl: &Timeline, playhead: f64, view: &View)
             let r =
                 Rect::from_x_y_ranges(x0..=(x1 - 1.0).min(lane.right()), (lane.top() + 3.0)..=(lane.bottom() - 3.0));
             draw_clip(&painter, look, r, c, fill, *video, silent);
+            if !*video && let Some(peaks) = view.waveforms.get(&c.item) {
+                draw_waveform(&painter, look, r, x_of(c.start), pps, c, peaks, c.enabled && !silent);
+            }
             placed.push(Placed { row: n, track, clip: c, rect: r });
         }
         if track.locked {
@@ -559,6 +565,48 @@ fn draw_clip(painter: &egui::Painter, look: &Look, r: Rect, c: &Clip, fill: Colo
         look.small(),
         if live { t.clip_text } else { t.dim },
     );
+}
+
+/// The clip's sound as a waveform under its name, from its media's peaks: one column per pixel,
+/// mirrored about the middle.
+#[allow(clippy::too_many_arguments)]
+fn draw_waveform(
+    painter: &egui::Painter,
+    look: &Look,
+    r: Rect,
+    clip_x: f32,
+    pps: f32,
+    c: &Clip,
+    peaks: &Peaks,
+    live: bool,
+) {
+    if peaks.buckets.is_empty() || c.speed <= 0.0 || c.reverse {
+        return;
+    }
+    let area = Rect::from_min_max(pos2(r.left() + 1.0, r.top() + 18.0), pos2(r.right() - 1.0, r.bottom() - 2.0));
+    if area.height() < 4.0 {
+        return;
+    }
+    let (mid, half) = (area.center().y, area.height() / 2.0);
+    let per_bucket = PEAK_SAMPLES as f64 / f64::from(PEAK_RATE);
+    let colour = if live { look.theme.wave.gamma_multiply(0.8) } else { look.theme.dim.gamma_multiply(0.4) };
+    let source_at = |x: f32| c.source_in + f64::from((x - clip_x) / pps) * c.speed;
+    let visible = painter.clip_rect().intersect(area);
+    let mut mesh = egui::Mesh::default();
+    for x in (visible.left().floor() as i32)..(visible.right().ceil() as i32) {
+        let x = x as f32;
+        let b0 = (source_at(x) / per_bucket).floor().max(0.0) as usize;
+        let b1 = ((source_at(x + 1.0) / per_bucket).ceil().max(0.0) as usize).max(b0 + 1).min(peaks.buckets.len());
+        if b0 >= b1 {
+            continue;
+        }
+        let m = peaks.buckets[b0..b1].iter().fold(0f32, |m, (lo, hi)| m.max(lo.abs()).max(hi.abs()));
+        let h = column_height(m, peaks.loudest) * half;
+        if h > 0.3 {
+            mesh.add_colored_rect(Rect::from_min_max(pos2(x, mid - h), pos2(x + 1.0, mid + h)), colour);
+        }
+    }
+    painter.add(mesh);
 }
 
 /// Diagonal lines over a locked track.

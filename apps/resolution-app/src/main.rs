@@ -22,6 +22,7 @@ mod model;
 mod monitor;
 mod theme;
 mod timeline_ui;
+mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \

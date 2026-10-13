@@ -49,7 +49,7 @@ pub const BLACK_BOX: Skin = Skin {
     header: 30.0,
     labels: false,
     video_track: 48.0,
-    audio_track: 40.0,
+    audio_track: 48.0,
     clip_edge: true,
 };
 

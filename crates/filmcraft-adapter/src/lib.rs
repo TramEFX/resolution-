@@ -384,6 +384,23 @@ mod tests {
         assert!(s["markIn"].as_i64().is_some_and(|t| t > 0));
     }
 
+    /// Waveforms for the timeline's clips: peaks of a media item's sound, one per 256 samples.
+    #[test]
+    fn peaks_summarise_a_clips_sound() {
+        let e = demo();
+        let t = e.session.active_sequence().expect("demo timeline").clone();
+        let music =
+            t.audio_tracks.iter().flat_map(|tr| &tr.items).find(|i| i.name == "Ambient_Score.wav").expect("demo music");
+        let p = e.playback().expect("playback");
+        let peaks = p.peaks(music.item.0).expect("the music has sound");
+        // about 60 s of music at 48 kHz, 256 samples a peak
+        let seconds = peaks.len() as f64 * resolution_engine_api::PEAK_SAMPLES as f64 / 48_000.0;
+        assert!((seconds - 60.0).abs() < 2.0, "{seconds} s of peaks");
+        let loudest = peaks.iter().fold(0f32, |m, (lo, hi)| m.max(lo.abs()).max(hi.abs()));
+        assert!(loudest > 0.01 && loudest <= 1.0, "loudest peak {loudest}");
+        assert!(peaks.iter().all(|(lo, hi)| lo <= hi));
+    }
+
     /// LOG B-001: undo and redo move through the history; they add no step of their own.
     #[test]
     fn undo_and_redo_commands_add_no_undo_step() {
