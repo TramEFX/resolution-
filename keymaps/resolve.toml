@@ -227,3 +227,9 @@ command = "view.zoomOut"
 [[bind]]
 keys = "Shift+Z"
 command = "view.zoomToFit"
+
+# ---- viewers ----
+# Q toggles keyboard focus between the source and timeline viewers (Reference Manual p. 795).
+[[bind]]
+keys = "Q"
+command = "view.toggleViewer"

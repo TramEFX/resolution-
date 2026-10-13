@@ -70,6 +70,20 @@ impl FilmCraftEngine {
         }
         Ok(out)
     }
+
+    /// `source.inspect`: FilmCraft's, plus the clip's name and its exact frame rate (FilmCraft
+    /// gives a float `fps`, too coarse for frame arithmetic at 23.976).
+    fn inspect_source(&mut self) -> Result<Outcome> {
+        let mut out = self.run("source.inspect", "source.inspect", Value::Object(Default::default()))?;
+        let s = &self.session;
+        let item = s.state.source_item.and_then(|i| s.project.item(i));
+        if let (Value::Object(m), Some(item)) = (&mut out.result, item) {
+            let rate = item.frame_rate();
+            m.insert("name".into(), Value::String(item.name.clone()));
+            m.insert("frameRate".into(), serde_json::json!({ "num": rate.num, "den": rate.den }));
+        }
+        Ok(out)
+    }
 }
 
 fn convert(id: &str, e: FcError) -> EngineError {
@@ -112,6 +126,7 @@ impl Engine for FilmCraftEngine {
         match map::target(id) {
             Some(Target::Engine(fc) | Target::Approx(fc, _)) => self.run(id, fc, params),
             Some(Target::Adapter) if id == "timeline.inspect" => self.inspect_timeline(),
+            Some(Target::Adapter) if id == "source.inspect" => self.inspect_source(),
             Some(Target::Adapter) => {
                 // Undo and redo move through the history; they add no step of their own (LOG B-001).
                 let label = if id == "edit.undo" { self.undo() } else { self.redo() };
@@ -178,6 +193,10 @@ impl Engine for FilmCraftEngine {
 
     fn playback(&self) -> Option<Arc<dyn Playback>> {
         playback::Snapshot::of(&self.session).map(|s| Arc::new(s) as Arc<dyn Playback>)
+    }
+
+    fn source_playback(&self) -> Option<Arc<dyn Playback>> {
+        playback::SourceSnapshot::of(&self.session).map(|s| Arc::new(s) as Arc<dyn Playback>)
     }
 
     fn drain_events(&mut self) -> Vec<EngineEvent> {
@@ -327,6 +346,42 @@ mod tests {
         e.execute("timeline.bladeClip", json!({"clip": a, "time": mid})).expect("blade");
         let n = |t: &Value| t["video"][0]["items"].as_array().map_or(0, Vec::len);
         assert_eq!(n(&tl(&mut e)), n(&t0) + 1);
+    }
+
+    /// The source viewer: a clip opened from the Media Pool renders and sounds on its own, and
+    /// its playhead and In point move through the vocabulary.
+    #[test]
+    fn the_source_clip_plays_and_marks_on_its_own() {
+        let mut e = demo();
+        assert!(e.source_playback().is_none(), "nothing open yet");
+        let project = e.execute("project.inspect", json!({})).expect("project").result;
+        fn find(node: &Value, name: &str) -> Option<u64> {
+            node["children"]
+                .as_array()?
+                .iter()
+                .find_map(|c| if c["name"] == name { c["item"].as_u64() } else { find(c, name) })
+        }
+        let clip = find(&project["root"], "Ocean_Sunset.mp4").expect("demo clip");
+        e.execute("source.open", json!({"item": clip})).expect("open");
+        let s = e.execute("source.inspect", json!({})).expect("inspect").result;
+        assert_eq!(s["name"], "Ocean_Sunset.mp4");
+        let (num, den) = (s["frameRate"]["num"].as_i64().expect("num"), s["frameRate"]["den"].as_i64().expect("den"));
+        assert!(num > 0 && den > 0);
+
+        let p = e.source_playback().expect("source playback");
+        assert_eq!(p.rate(), resolution_engine_api::Rate::new(num, den));
+        assert!(p.frames() > 24);
+        let f = p.render(10, 64, &RenderHints::default()).expect("source frame");
+        assert!(f.width <= 64 && f.width > 0);
+        let mut mix = p.mixer(48_000);
+        let mut buf = vec![0f32; 2 * 4800];
+        mix(48_000, &mut buf, 2);
+
+        e.execute("source.seek", json!({"frame": 12})).expect("seek");
+        e.execute("mark.in", json!({"target": "source"})).expect("mark in");
+        let s = e.execute("source.inspect", json!({})).expect("inspect").result;
+        assert_eq!(s["playhead"], s["markIn"]);
+        assert!(s["markIn"].as_i64().is_some_and(|t| t > 0));
     }
 
     /// LOG B-001: undo and redo move through the history; they add no step of their own.

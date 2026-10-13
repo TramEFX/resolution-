@@ -190,10 +190,7 @@ impl Timeline {
 
     /// The timecode of `frame`, non-drop.
     pub fn frame_timecode(&self, frame: i64) -> String {
-        let fps = u64::from(self.nominal_fps());
-        let frames = frame.max(0) as u64;
-        let (f, s) = (frames % fps, frames / fps);
-        format!("{:02}:{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60, f)
+        timecode(frame, self.nominal_fps())
     }
 
     pub fn clips(&self) -> impl Iterator<Item = (&Track, &Clip)> {
@@ -250,6 +247,60 @@ pub fn label_rgb(name: &str) -> [u8; 3] {
     };
     // halfway to white
     rgb.map(|c| ((u16::from(c) + 255) / 2) as u8)
+}
+
+/// The clip open in the source viewer, from `source.inspect`. Frames count from the first of
+/// its range (a subclip's start), in its own frame rate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceClip {
+    pub item: u64,
+    pub name: String,
+    pub rate: Rate,
+    /// Frames in its range.
+    pub frames: i64,
+    pub playhead_frame: i64,
+    pub mark_in: Option<i64>,
+    /// The last frame in (inclusive), as Resolve's Out mark.
+    pub mark_out: Option<i64>,
+}
+
+impl SourceClip {
+    /// `None` when nothing is open (`{"item": null}`) or the JSON is something else.
+    pub fn from_json(v: &Value) -> Option<Self> {
+        let item = v["item"].as_u64()?;
+        let rate = match (v["frameRate"]["num"].as_i64(), v["frameRate"]["den"].as_i64()) {
+            (Some(n), Some(d)) if n > 0 && d > 0 => Rate::new(n, d),
+            _ => Rate::new(24, 1),
+        };
+        let start = v["start"].as_i64().unwrap_or(0);
+        let frame = |key: &str| v[key].as_i64().map(|t| rate.frame_at_ticks(t - start, TICKS));
+        let span = v["end"].as_i64().unwrap_or(start) - start;
+        let last = rate.frame_at_ticks(span, TICKS);
+        // frames that start before the end
+        let frames = if frame_ticks(rate, last) < span { last + 1 } else { last };
+        Some(Self {
+            item,
+            name: v["name"].as_str().unwrap_or_default().to_string(),
+            rate,
+            frames: frames.max(1),
+            playhead_frame: frame("playhead").unwrap_or(0),
+            mark_in: frame("markIn"),
+            mark_out: frame("markOut"),
+        })
+    }
+
+    /// `HH:MM:SS:FF` from the start of its range, non-drop.
+    pub fn timecode(&self, frame: i64) -> String {
+        timecode(frame, (self.rate.fps().round() as u32).max(1))
+    }
+}
+
+/// `HH:MM:SS:FF` for `frame` at `fps` whole frames a second, non-drop.
+pub fn timecode(frame: i64, fps: u32) -> String {
+    let fps = u64::from(fps.max(1));
+    let frames = frame.max(0) as u64;
+    let (f, s) = (frames % fps, frames / fps);
+    format!("{:02}:{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60, f)
 }
 
 /// The engine time (ticks) at which timeline frame `frame` starts, exactly.
@@ -330,6 +381,18 @@ mod tests {
         assert_eq!((tl.markers[0].start, tl.markers[0].name.as_str()), (3.0, "beat"));
         assert_eq!((tl.snapping, tl.linked_selection), (false, true));
         assert!(Timeline::from_json(&json!({"error": "no timeline"})).is_none());
+    }
+
+    #[test]
+    fn reads_the_source_clip() {
+        assert_eq!(SourceClip::from_json(&json!({"item": null})), None);
+        let s = SourceClip::from_json(&json!({
+            "item": 4, "name": "a.mp4", "start": 0, "end": 10 * T, "playhead": 2 * T, "markIn": T, "markOut": null,
+            "frameRate": {"num": 25, "den": 1}
+        }))
+        .expect("source clip");
+        assert_eq!((s.frames, s.playhead_frame, s.mark_in, s.mark_out), (250, 50, Some(25), None));
+        assert_eq!(s.timecode(51), "00:00:02:01");
     }
 
     #[test]

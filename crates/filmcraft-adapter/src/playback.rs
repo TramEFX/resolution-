@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use filmcraft_engine::media_pool::PoolProvider;
 use filmcraft_engine::previews::PreviewStore;
-use filmcraft_engine::project::{ItemId, Project};
-use filmcraft_engine::render::{RenderOptions, SourceProvider, render_sequence};
+use filmcraft_engine::project::{ItemId, ItemKind, Project};
+use filmcraft_engine::render::{RenderOptions, SourceProvider, render_item, render_sequence};
 use filmcraft_engine::time::{FrameRate, Tick};
 use filmcraft_engine::{MediaPool, Services, Session};
 use filmcraft_frame::{AudioBuffer, VideoFrame};
@@ -194,6 +194,111 @@ impl Playback for Snapshot {
                 return;
             };
             filmcraft_engine::settings::map_output(left, right, buf, ch, [0, 1]);
+        })
+    }
+}
+
+/// The clip open in the source viewer, played like the timeline: frames from FilmCraft's
+/// `render_item` (as its Source monitor shows media: SDR Rec. 709) and sound read straight from
+/// the media. Frame 0 is the first frame of the clip's range (a subclip's start).
+pub struct SourceSnapshot {
+    project: Arc<Project>,
+    pool: Arc<MediaPool>,
+    services: Arc<dyn Services>,
+    /// The item whose frames are shown: the clip, or a subclip's media.
+    media: ItemId,
+    start: Tick,
+    rate: FrameRate,
+    frames: i64,
+    size: (u32, u32),
+    revision: u64,
+}
+
+impl SourceSnapshot {
+    /// The clip open in the source viewer, if there is one.
+    pub fn of(session: &Session) -> Option<Self> {
+        let item = session.state.source_item?;
+        let view = filmcraft_engine::clip_ops::source_view(session, item)?;
+        let rate = view.rate;
+        let span = Tick(view.end.0 - view.start.0);
+        let last = rate.frame_at(span);
+        let frames = if rate.tick_of(last) < span { last + 1 } else { last };
+        let size = session
+            .project
+            .item(view.media)
+            .and_then(|pi| match &pi.kind {
+                ItemKind::Media(m) => m.info.video.as_ref().map(|v| (v.width, v.height)),
+                ItemKind::Sequence(q) => Some((q.settings.width, q.settings.height)),
+                _ => None,
+            })
+            .unwrap_or((0, 0));
+        Some(Self {
+            project: session.project.clone(),
+            pool: session.media.clone(),
+            services: session.services.clone(),
+            media: view.media,
+            start: view.start,
+            rate,
+            frames: frames.max(1),
+            size,
+            revision: session.revision,
+        })
+    }
+}
+
+impl Playback for SourceSnapshot {
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn rate(&self) -> Rate {
+        Rate::new(self.rate.num, self.rate.den)
+    }
+
+    fn frames(&self) -> i64 {
+        self.frames
+    }
+
+    fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    fn render(&self, frame: i64, max_side: u32, hints: &RenderHints) -> Result<Frame> {
+        let (w, h) = self.size;
+        let scale = (max_side.max(1) as f32 / w.max(h).max(1) as f32).min(1.0);
+        let t = Tick(self.start.0 + self.rate.tick_of(frame.clamp(0, self.frames - 1)).0);
+        let provider =
+            TimedProvider(self.pool.provider(self.project.clone(), self.services.clone()), hints.decode_ns.clone());
+        let catch_up = hints.catch_up.map(Tick::from_seconds_f64);
+        let render = || {
+            cancel::with_cancel(&hints.cancel, || {
+                cancel::with_catch_up(catch_up, || {
+                    cancel::with_draft(hints.draft, || render_item(&self.project, self.media, t, scale, &provider))
+                })
+            })
+        };
+        let img = in_frame_pool(render);
+        if hints.cancel.load(Ordering::Relaxed) {
+            return Err(EngineError::Engine("cancelled".into()));
+        }
+        let img = img.ok_or_else(|| EngineError::Engine("the source clip has no picture".into()))?;
+        Ok(Frame { width: img.w as u32, height: img.h as u32, rgba: img.over_black_rgba8() })
+    }
+
+    fn mixer(&self, sample_rate: u32) -> Mixer {
+        let source = self.pool.provider(self.project.clone(), self.services.clone()).source(self.media);
+        let offset = (self.start.0 as f64 * f64::from(sample_rate) / filmcraft_engine::time::TICKS_PER_SECOND as f64)
+            .round() as i64;
+        Box::new(move |start: i64, buf: &mut [f32], ch: usize| {
+            let n = buf.len() / ch.max(1);
+            let sound = source
+                .as_ref()
+                .filter(|s| s.info().has_audio())
+                .and_then(|s| s.audio(start + offset, n, sample_rate).ok());
+            match sound.as_ref().and_then(|a| a.channels.first().map(|l| (l, a.channels.get(1).unwrap_or(l)))) {
+                Some((left, right)) => filmcraft_engine::settings::map_output(left, right, buf, ch, [0, 1]),
+                None => buf.fill(0.0),
+            }
         })
     }
 }
