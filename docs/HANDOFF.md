@@ -1,6 +1,6 @@
 # Picking up locally
 
-Where things stand and how to continue on your own machine. Last updated 2026-10-13.
+Where things stand and how to continue on your own machine. Last updated 2026-10-13 (UI order agreed).
 
 ## 1. Set up (once)
 
@@ -77,7 +77,15 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 Gates before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
 Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 
-## 5. Next steps (pick any)
+## 5. Next steps
+
+**The UI comes first, in the order agreed on 2026-10-13** ([ROADMAP](ROADMAP.md) "Order of work", LOG
+D-016). Shared look and layout come first, starting with visual-direction mockups. Then the Edit page
+up to the one-minute-edit bar, then a minimal Deliver page, then agents in the editor, then the Color
+page. For what Resolve does, read the installed 21.1 Reference Manual (`scripts/resolve-manual.py`
+extracts it for searching; LOG D-017), then try it in the local install.
+
+Alongside, pick any:
 
 1. **Follow the upstream reports.** As of the 2026-10-13 sync (LOG D-015), upstream has fixed #1249 (APV
    oracle), #1251 (Japanese font), #1282 (B-011) and #1483 (B-013), all taken. The mirror's font install
@@ -94,14 +102,12 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
    downloads. Third pass, 2026-10-12: a Sony α7R II clip and a Samsung portrait clip decode, play and
    sound correctly; the rotated clip exposed a playback deadlock (B-015, fixed) and a software-decoding
    freeze (B-017, gone since the 2026-10-13 sync). This decides how soon we need a fallback decoder (research risk #6).
-3. **Verify the keymap** on a machine with Resolve: open Keyboard Customization, compare each line
-   of `keymaps/resolve.toml`, set `verified = true`, fix any wrong keys.
-4. **Draft timelines for agents** (agents edit a copy you accept), the next MCP milestone.
-5. **CI for this repo:** a GitHub Actions workflow with a fine-grained token (read access to
+3. **Verify the keymap** against the manual (D-017): compare each line of `keymaps/resolve.toml` with
+   the shortcuts the manual gives, set `verified = true`, and fix wrong keys. Check anything the
+   manual leaves out in the local install's Keyboard Customization.
+4. **CI for this repo:** a GitHub Actions workflow with a fine-grained token (read access to
    `resolution-filmcraft`) stored as a secret.
-6. **Grow the Edit page** (M2): a source viewer, track headers, trimming by drag. Then the app
-   hosts the MCP server so agents edit the timeline you are looking at.
-7. **Faster playback where it is slow** (LOG D-013 "Known limits"): composite frames on the GPU as
+5. **Faster playback where it is slow** (LOG D-013 "Known limits"): composite frames on the GPU as
    FilmCraft's GPU frame plans do, for effects-heavy timelines; proxies for footage too slow to
    decode. The 4K60 HEVC file plays at about 50 of 60 fps since B-013's fix. Measure with `play_bench` before and after.
 
