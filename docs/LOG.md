@@ -60,6 +60,8 @@ doc is updated *and* the entry says which section moved.
 | D-015 | 2026-10-13 | upstream | Sync to FilmCraft main (`cee1feb`), not the v0.7.2 tag, to take the fixes for our reports | active |
 | B-019 | 2026-10-13 | tooling | Deleting merged PR #5's branch closed the PR stacked on it (#6) instead of retargeting it | worked around |
 | B-020 | 2026-10-13 | ci | Upstream main fails three UI and desktop-app tests at the D-015 sync point (crates outside our graph) | open, upstream |
+| D-016 | 2026-10-13 | ui | Take the Edit page to a usable bar, then agents and Color, not every page in turn | active |
+| D-017 | 2026-10-13 | ui | What Resolve does comes from its Reference Manual, then from the local install | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -912,3 +914,59 @@ branch under it.
 **Impact on Resolution:** none found. `filmcraft-ui-egui` and the `filmcraft` app are not in our
 graph (invariant: we never depend on them), and every crate we use passed. These are main-branch
 breakages, the risk D-015 accepted by not syncing to a tag.
+
+### D-016 — Take the Edit page to a usable bar, then agents and Color, not every page in turn
+**Area:** ui · **Status:** active · **Doc:** ROADMAP "Order of work", M2–M5
+
+**Decision (agreed with Truman, 2026-10-13):** the UI work goes in this order:
+1. shared look and layout, starting with mockups of two or three visual directions that Truman
+   chooses between;
+2. the Edit page up to a bar: Truman cuts a one-minute piece from the Sony and Samsung clips with
+   Resolve habits;
+3. a minimal Deliver page, so the edit ends in a file;
+4. agents editing the open timeline, as drafts the user accepts;
+5. a first slice of the Color page.
+
+Cut and Media pages follow. **Pages lay out like Resolve's**: each has a fixed layout whose panels
+are shown or hidden from its toolbar. Panels do not dock freely, as they do in Premiere and in
+FilmCraft's UI.
+
+**Why:** Resolve's Edit page is too large to finish before anything else, so "finished" is replaced
+by a bar that can be tested. The engine already has the edits (ripple, roll, slip, slide) and the
+export commands (`file.exportMedia`, EDL, FCPXML, OTIO, AAF), so steps 2 and 3 are mostly UI work.
+Agents come next because they are half of the product's identity, and they change how the UI
+receives edits it did not make. Color comes before Cut and Media because it is the riskiest work,
+where FilmCraft is thinnest (no node graph, CPU colour). Cut and Media mostly re-arrange panels
+built in steps 1–3.
+
+**Why fixed layouts:** they match Resolve, and they are simpler to build and test. An agent can also
+name what is on screen ("the Edit page with the Inspector open"). **Cost:** someone who wants a
+custom arrangement cannot have one. Resolve's own answer is its per-page panel toggles, plus dual
+screen.
+
+### D-017 — What Resolve does comes from its Reference Manual, then from the local install
+**Area:** ui · **Status:** active · **Doc:** ROADMAP "Order of work"; `scripts/resolve-manual.py`
+
+**Decision (Truman's, 2026-10-13):** the spec for Resolve's behaviour, keys and features is the
+DaVinci Resolve Reference Manual for the installed version. Anything the manual does not cover is
+found by trying it in the local install. The manual ships with Resolve:
+`C:\Program Files\Blackmagic Design\DaVinci Resolve\Documents\DaVinci Resolve.pdf`, the
+**21.1 Reference Manual**, 4,351 pages, matching the installed 21.1.1. `scripts/resolve-manual.py`
+writes its text and bookmarks to `target/resolve-manual/` for searching.
+
+**What the manual has, and lacks:**
+- There is no single shortcut table. Shortcuts appear after menu commands ("Edit > Undo
+  (Command-Z)"), in per-chapter "Keyboard Shortcuts in This Chapter" lists (Edit part, pp. 864, 889,
+  942, 967), and in trimming (p. 1069) and multicam (p. 1043).
+- It writes keys the macOS way: Command is Ctrl and Option is Alt on Windows (p. 68).
+- Parts by page: Interface 12, Edit 791, Color 3032, Fairlight 3745, Deliver 4088, and Menu
+  Descriptions 4336.
+
+**Not available from the install:** the default keymap is built into the program. The user
+preferences hold only an empty preset list (`%APPDATA%\Blackmagic Design\DaVinci Resolve\Preferences\keyboard.preset.xml`).
+Keyboard Customization can export a preset, but only from the GUI. The free version also blocks
+external scripting, which an earlier attempt on this machine ran into.
+
+**Rules:** the manual is Blackmagic's. Read it, cite page numbers, and never copy its text,
+screenshots or illustrations into the repo (invariant 7). The extracted text stays in `target/`,
+which git ignores. The extractor uses pypdf (BSD), not PyMuPDF (AGPL).
