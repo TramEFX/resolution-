@@ -2,8 +2,8 @@
 //! the media pool that decodes it. FilmCraft's own UI renders playback frames and mixes sound
 //! the same way, from worker threads (`ui-egui/src/frames.rs`, `playback_mix` in its `lib.rs`).
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use filmcraft_engine::media_pool::PoolProvider;
@@ -47,17 +47,33 @@ impl MediaSource for TimedSource {
 
 struct TimedProvider(PoolProvider, Arc<AtomicU64>);
 
-/// The thread pool playback frames render in. FilmCraft spreads a frame's compositing over
-/// rayon's global pool, which its audio mixer uses too: frames rendering there made the sound's
-/// mixing wait behind them and drop out (LOG B-014). In a pool of their own, they compete with
-/// the sound only for CPU time.
-fn frame_pool() -> Option<&'static rayon::ThreadPool> {
-    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
-    POOL.get_or_init(|| {
-        let threads = std::thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(1).max(2));
-        rayon::ThreadPoolBuilder::new().num_threads(threads).thread_name(|i| format!("frame-render-{i}")).build().ok()
+/// Runs `render` in the calling thread's own frame pool. FilmCraft spreads a frame's compositing
+/// over rayon's global pool, which its audio mixer uses too: frames rendering there made the
+/// sound's mixing wait behind them and drop out (LOG B-014). In pools of their own, frames compete
+/// with the sound only for CPU time.
+///
+/// One pool per rendering thread (each frame worker), never one shared pool: FilmCraft's decoder
+/// turns sideways phone video upright with rayon while holding the decoder's lock. In a shared
+/// pool, a thread waiting for that work could pick up the other worker's frame, which then waited
+/// for the same lock on the same thread, forever (LOG B-015).
+fn in_frame_pool<R: Send>(render: impl FnOnce() -> R + Send) -> R {
+    static POOLS: AtomicU64 = AtomicU64::new(0);
+    thread_local! {
+        // half the cores, less one, each: the two frame workers together leave a core for the sound
+        static POOL: Option<rayon::ThreadPool> = {
+            let threads = std::thread::available_parallelism().map_or(2, |n| (n.get().saturating_sub(1) / 2).max(2));
+            let n = POOLS.fetch_add(1, Ordering::Relaxed);
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .thread_name(move |i| format!("frame-render-{n}-{i}"))
+                .build()
+                .ok()
+        };
+    }
+    POOL.with(|pool| match pool {
+        Some(pool) => pool.install(render),
+        None => render(),
     })
-    .as_ref()
 }
 
 impl SourceProvider for TimedProvider {
@@ -136,10 +152,7 @@ impl Playback for Snapshot {
                 })
             })
         };
-        let img = match frame_pool() {
-            Some(pool) => pool.install(render),
-            None => render(),
-        };
+        let img = in_frame_pool(render);
         // a cancelled render may be missing layers whose decoder gave up
         if hints.cancel.load(Ordering::Relaxed) {
             return Err(EngineError::Engine("cancelled".into()));

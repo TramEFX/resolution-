@@ -6,7 +6,10 @@
 //! ```text
 //! cargo run -p resolution-playback --example play_bench -- <media file | --demo>
 //!     [--from 0] [--seconds 10] [--side 1440] [--speed 1] [--workers n] [--hardware]
+//!     [--sequential] [--wav heard.wav]
 //! ```
+//!
+//! `--wav` writes the sound the simulated device received, to compare with another decoder's.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,7 +68,7 @@ fn main() {
     };
     let Some(file) = args.first().filter(|a| *a == "--demo" || !a.starts_with("--")) else {
         eprintln!(
-            "usage: play_bench <media file | --demo> [--from 0] [--seconds 10] [--side 1440] [--speed 1] [--workers n] [--hardware]"
+            "usage: play_bench <media file | --demo> [--from 0] [--seconds 10] [--side 1440] [--speed 1] [--workers n] [--hardware] [--sequential] [--wav heard.wav]"
         );
         std::process::exit(2);
     };
@@ -134,22 +137,28 @@ fn main() {
     // the sound, mixed ahead and taken by a simulated device on its own thread
     let stats = Arc::new(AudioStats::default());
     let done = Arc::new(AtomicBool::new(false));
+    let wav = args.iter().position(|a| a == "--wav").and_then(|i| args.get(i + 1)).cloned();
     let device = {
         let mut fill =
             ahead::spawn(p.mixer(DEVICE_RATE), rate.sample_of(from, DEVICE_RATE), DEVICE_RATE, 2, stats.clone());
-        let done = done.clone();
+        let (done, keep) = (done.clone(), wav.is_some());
         std::thread::spawn(move || {
             let period = Duration::from_secs_f64(DEVICE_PERIOD as f64 / f64::from(DEVICE_RATE));
             let start = Instant::now();
             let mut buf = vec![0.0; DEVICE_PERIOD * 2];
+            let mut heard = Vec::new();
             let mut k = 1;
             while !done.load(Ordering::Relaxed) {
                 fill(&mut buf, 2);
+                if keep {
+                    heard.extend_from_slice(&buf);
+                }
                 if let Some(wait) = (period * k).checked_sub(start.elapsed()) {
                     std::thread::sleep(wait);
                 }
                 k += 1;
             }
+            heard
         })
     };
 
@@ -187,8 +196,10 @@ fn main() {
         std::thread::sleep(refresh.saturating_sub(Duration::from_secs_f64(now() - t)));
     }
     let played = now() - preroll;
+    // a frame still on screen at the end has been held too, however long (LOG B-016)
+    worst_hold = worst_hold.max(now() - since);
     done.store(true, Ordering::Relaxed);
-    let _ = device.join();
+    let heard = device.join().unwrap_or_default();
     let st = server.stats();
     let due_frames = (played * rate.fps() * speed.abs()).round();
     println!("preroll {:.0} ms; played {played:.1} s{}", preroll * 1e3, if ended { " (reached the end)" } else { "" });
@@ -218,4 +229,36 @@ fn main() {
             format!("{:.0} ms", min_lead as f64 * 1e3 / f64::from(DEVICE_RATE))
         }
     );
+    if let Some(path) = wav {
+        match write_wav(&path, &heard, DEVICE_RATE, 2) {
+            Ok(()) => println!(
+                "sound written to {path}: {:.2} s from timeline sample {} at {DEVICE_RATE} Hz",
+                heard.len() as f64 / 2.0 / f64::from(DEVICE_RATE),
+                rate.sample_of(from, DEVICE_RATE)
+            ),
+            Err(e) => eprintln!("could not write {path}: {e}"),
+        }
+    }
+}
+
+/// What the simulated device received, as a 32-bit float WAV file.
+fn write_wav(path: &str, samples: &[f32], rate: u32, channels: u16) -> std::io::Result<()> {
+    let data = (samples.len() * 4) as u32;
+    let mut out = Vec::with_capacity(44 + samples.len() * 4);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
+    out.extend_from_slice(&channels.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * u32::from(channels) * 4).to_le_bytes());
+    out.extend_from_slice(&(channels * 4).to_le_bytes());
+    out.extend_from_slice(&32u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data.to_le_bytes());
+    for s in samples {
+        out.extend_from_slice(&s.to_le_bytes());
+    }
+    std::fs::write(path, out)
 }

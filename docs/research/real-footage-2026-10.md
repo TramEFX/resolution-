@@ -81,13 +81,54 @@ Frames that sit fractions of a millisecond after the grid therefore show one fra
 clip with every frame 1 ms late shows 0.000 / 2.466 / 4.966 where 0.033 / 2.500 / 5.000 belong. The
 first pass's Android 720p clip (−1.1 to −1.6 frames) fits the same pattern.
 
+## Camera originals (third pass, 2026-10-12)
+
+Two originals, kept outside the repo. The camera and phone were identified from the files' own
+metadata, which differed from what the files had been labelled as:
+
+- **Sony α7R II** (`ILCE-7RM2` in the file's XAVC metadata, brand `XAVC`): XAVC S, 3840×2160 H.264
+  High at level 5.1, **~100 Mbit/s**, 23.976 fps constant (every frame 1001/24000 s), B-frames,
+  8-bit with no colour tags, **big-endian 16-bit PCM** stereo 48 kHz, a Sony real-time metadata
+  track (`rtmd`), start timecode 02:01:12:00. 3 min 40 s, 2.8 GB.
+- **Samsung phone** (Android 15, `com.samsung.android` tags): 4K H.264 High 5.1 at ~48 Mbit/s,
+  stored sideways with a **−90° rotation tag** (portrait), ~30 fps (the first frame 45.8 ms, the
+  rest 1/30 s), BT.709, AAC stereo 48 kHz. 28 s.
+
+| Check | Sony α7R II | Samsung portrait |
+|---|---|---|
+| Import, metadata | correct, including PCM 16-bit and the start timecode 02:01:12:00 | correct: 2160×3840 after rotation, AAC; rate labelled 30.01 (first pass's estimated-rate label) |
+| Timeline from clip | 3840×2160 at 23.976, 1 video + 1 audio | 2160×3840 at 30.01, 1 video + 1 audio |
+| Frame on screen at 10/50/90 % | **exact, 3 of 3** (PSNR 34.6 to 35.1 dB against that frame) | the B-011 rule's frame at 3 of 3; **one frame late at 2 of them** (B-011) |
+| Playback, hardware decoding (`play_bench`, 1920 px) | **24.0 fps**, every display refresh the exact frame, at 20 s and 150 s | **24.6 to 26.1 fps** of 30 (after B-015's fix; before it, a deadlock) |
+| Playback, software decoding | 23.2 to 23.9 fps | **freezes** after the preroll (B-017) |
+| Real editor window, sound on the M-Track (`--play 8`) | **24.0 fps**, 0 underruns | 18.6 fps, 0 underruns |
+| Sound against ffmpeg's decode (`play_bench --wav`, 12 s) | **sample-exact**: 0 samples of offset, gain 1.0000, difference 149 dB down; the same at 20 s and 3 min 25 s, so no drift | **sample-exact** (AAC): 0 offset, gain 1.0000, 136 dB down |
+
+The Android clip from the second pass gives the same sound result (0 offset, 136 dB down). The
+sound comparison covers what the simulated device received through the play-ahead ring at 1x.
+Picture and sound are therefore each where the file puts them, except B-011's frame-late picture on
+phone footage. **Watched and listened to** in the editor by Truman on 2026-10-13 (both clips, sound
+on the M-Track): frame rates consistent with the source, sound good.
+
+**Findings:**
+
+- **B-015 (fixed):** two frame workers deadlocked on the rotated Samsung clip, a bug in Resolution's
+  own playback (the B-014 fix). Found only because this clip was rotated.
+- **B-017 (open):** with software decoding the Samsung clip freezes, although the decoder alone
+  manages 15.6 fps in order.
+- The Samsung clip shows 18.6 fps in the editor's window against 24.6 to 26.1 in `play_bench`. Not
+  investigated; the window may request a larger picture than the benchmark's 1920 px.
+- No new decoding defects: the 100 Mbit/s Sony stream, big-endian PCM and the extra metadata track
+  all decode correctly.
+
 ## Not covered yet
 
 - **Camera and phone originals:** iPhone HEVC (HDR / Dolby Vision, 10-bit), Android HEVC, GoPro,
-  mirrorless (10-bit 4:2:2, long-GOP and All-I), ProRes, MTS/AVCHD, Blackmagic RAW. This is the
-  pass that decides how soon a fallback decoder is needed.
-- **Audio:** only track detection was checked. Decoded samples, sync and channel layouts were not.
-- **Playback speed:** render times were logged per frame, but real-time playback was not measured.
+  10-bit 4:2:2 mirrorless (long-GOP and All-I), ProRes, MTS/AVCHD, Blackmagic RAW. The third pass
+  covered one 8-bit mirrorless camera and a second phone. This is the pass that decides how soon a
+  fallback decoder is needed.
+- **Audio:** decoded samples and sync are now checked for three files (PCM and AAC, stereo). Not yet:
+  other codecs, channel layouts beyond stereo, files whose audio starts later than the video.
 - **Other platforms:** Windows only.
 
 The harness (Python + WSL ffmpeg) lives outside the repo for now. It can become a repeatable

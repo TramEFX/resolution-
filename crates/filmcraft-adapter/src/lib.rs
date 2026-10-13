@@ -268,6 +268,33 @@ mod tests {
         assert!(timed.decode_ns.load(std::sync::atomic::Ordering::Relaxed) > 0, "getting source pictures is timed");
     }
 
+    /// Phone video is stored sideways with a rotation tag, and FilmCraft's decoder turns each
+    /// picture upright with rayon while holding its lock. Two frame workers rendering it at once
+    /// deadlocked when their renders shared one pool (LOG B-015).
+    #[test]
+    fn playback_renders_a_rotated_clip_from_two_threads() {
+        let mut e = FilmCraftEngine::new();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/rotated.mp4");
+        let imported = e.execute("media.import", json!({ "paths": [path] })).expect("import");
+        let item = imported.result["items"][0].clone();
+        e.execute("timeline.createFromClips", json!({ "items": [item] })).expect("a timeline");
+        let p = e.playback().expect("a timeline is open");
+        assert_eq!(p.size(), (360, 640), "the clip's rotation tag is applied");
+        let (done, finished) = std::sync::mpsc::channel();
+        for worker in 0..2 {
+            let (p, done) = (p.clone(), done.clone());
+            std::thread::spawn(move || {
+                for i in 0..120 {
+                    p.render((2 * i + worker) % p.frames(), 640, &RenderHints::default()).expect("frame");
+                }
+                let _ = done.send(());
+            });
+        }
+        for _ in 0..2 {
+            finished.recv_timeout(std::time::Duration::from_secs(60)).expect("both workers finish");
+        }
+    }
+
     #[test]
     fn playback_mixes_the_timeline_sound_at_any_rate() {
         let e = demo();

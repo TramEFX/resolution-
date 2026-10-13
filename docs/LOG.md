@@ -52,7 +52,10 @@ doc is updated *and* the entry says which section moved.
 | D-014 | 2026-10-12 | playback | The editor decodes video with the operating system's hardware decoders | active |
 | B-012 | 2026-10-12 | playback | Frames slower than real time were never shown: each was cancelled as the next fell due | fixed |
 | B-013 | 2026-10-12 | engine | Hardware HEVC decoding gives up when the in-band PPS has one trailing zero byte fewer | open, reported upstream |
-| B-014 | 2026-10-12 | playback | Sound dropped out while frames rendered: the mixer queued behind them in rayon's global pool | fixed |
+| B-014 | 2026-10-12 | playback | Sound dropped out while frames rendered: the mixer queued behind them in rayon's global pool | fixed; its shared pool caused B-015, reworked there |
+| B-015 | 2026-10-12 | playback | Two frame workers deadlocked on sideways phone video: their renders shared one rayon pool | fixed |
+| B-016 | 2026-10-12 | tooling | play_bench did not count a frame held until the end of the run | fixed |
+| B-017 | 2026-10-12 | playback | Footage decoded slower than real time can freeze instead of playing at a few frames a second | open |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -711,8 +714,8 @@ RBSPs). Not patched here (rule: no edits to FilmCraft in place).
 is not shared. The same code is on upstream `main` (71438c6).
 
 ### B-014 — Sound dropped out while frames rendered: the mixer queued behind them in rayon's global pool
-**Area:** playback · **Status:** fixed · **Caught by:** `play_bench`'s underrun counter · **Doc:**
-`crates/filmcraft-adapter/src/playback.rs` (`frame_pool`)
+**Area:** playback · **Status:** fixed; its shared pool caused B-015, reworked there · **Caught by:**
+`play_bench`'s underrun counter · **Doc:** `crates/filmcraft-adapter/src/playback.rs` (`frame_pool`)
 
 **Symptom:** on the demo's composited section, with 2 frame workers the simulated device hit 7 to 62
 underruns in 6 s, up to 0.57 s of silence; with 3 workers or more it was worse.
@@ -725,3 +728,80 @@ priority would not have helped.
 **Fix:** the adapter renders playback frames inside a rayon pool of their own (one thread fewer than
 the machine has). Same section: 0 underruns, at least 135 ms of sound still buffered, and the
 picture unchanged.
+
+### B-015 — Two frame workers deadlocked on sideways phone video: their renders shared one rayon pool
+**Area:** playback · **Status:** fixed · **Caught by:** running real footage (a Samsung portrait 4K
+clip) through `play_bench`; the process sat at 0 % CPU and never exited · **Doc:**
+`crates/filmcraft-adapter/src/playback.rs` (`in_frame_pool`)
+
+**Symptom:** a Samsung 4K clip stored sideways with a −90° rotation tag stopped producing frames
+after 35 to 75 of them (3.7 fps over 20 s), then hung at exit, with hardware or software decoding.
+One frame worker played it, and so did both workers on the unrotated Android and Sony clips.
+
+**Cause (confirmed from the hung process's thread stacks):** FilmCraft's decoder turns each picture
+upright as it stores it (`VideoFrame::rotated`, a rayon `par_chunks_mut`, `frame/src/lib.rs:668`)
+while holding that decoder's lock (`codecs/src/gop.rs:561`, `store` → `finish`). B-014's fix ran
+both workers' renders as jobs in one shared rayon pool. In the stacks, pool thread `frame-render-1`
+held the lock for frame A and waited for the rotation's pieces. `frame-render-14`, waiting inside
+one of those pieces, had picked up worker B's whole render (rayon lets a waiting thread run other
+jobs), and that render waited for the same lock. Frame A's rotation could not finish until
+`frame-render-14` returned. FilmCraft guards against a nested request on the thread that holds the
+lock (`DecodingGuard`, `gop.rs:544`), not on another one. FilmCraft's app renders on plain threads,
+which never pick up other jobs, so it is not exposed.
+
+The stacks were dumped with a Python script over Windows' `dbghelp.dll` (no debugger was
+installed). By mistake, the dumped run used the pre-fix adapter: a source file restored after an
+A/B build kept its older timestamp, so cargo did not rebuild it. Its pool threads carry the old
+names, so it is the original bug's deadlock that the stacks show.
+
+**Fix:** each rendering thread (each frame worker) gets a rayon pool of its own, each with half the
+cores less one, so the two workers together use what the shared pool did. A thread waiting on a
+frame's work can then only pick up work of the same frame. Sound still mixes outside them, so
+B-014 holds. Test `playback_renders_a_rotated_clip_from_two_threads` uses a 37 KB rotated clip made
+with ffmpeg (`crates/filmcraft-adapter/testdata/`). Before the fix it deadlocked on its first run
+(60 s timeout); after it, it passed 8 of 8 runs (0.3 s each). The Samsung clip with hardware decoding,
+from 4 start points: 24.6 to 26.1 fps, no stall, clean exit.
+
+Same runs before and after, 2 rounds each (`play_bench`, simulated 60 Hz display and 48 kHz device):
+
+| Case | Before | After | Sound |
+|---|---|---|---|
+| Demo, composited section, 1920 px | 7.8, 8.6 fps | 9.8, 10.0 fps | 0 underruns both |
+| Demo, simple section, 1440 px | 21.1, 21.2 fps | 21.8, 22.8 fps | 0 underruns both |
+| Android 4K30, software decoding | 7.5, 9.6 fps | 9.1, 12.3 fps | 0 underruns both |
+| Android 4K30, hardware decoding | 30.0, 30.0 fps | 30.0, 30.0 fps | 0 underruns both |
+| Sony 4K 23.976, software decoding | 23.6, 23.9 fps | 23.2, 23.9 fps | 0 underruns both |
+
+The composited section's longest hold grew, from 0.47 to 0.73 s before to 1.0 to 1.1 s after. Not
+investigated.
+
+**Lesson:** a lock held across a rayon call is safe only while no job that takes the same lock can
+run in the same pool.
+
+### B-016 — play_bench did not count a frame held until the end of the run
+**Area:** tooling · **Status:** fixed · **Caught by:** B-015's numbers not adding up: 75 frames shown
+in 20 s, yet a "longest hold" of 68 ms · **Doc:** `crates/playback/examples/play_bench.rs`
+
+**Cause:** the longest hold was measured only when a new frame replaced the one on screen. A picture
+frozen until the end of the run never counted, so B-015's deadlock read as smooth playback with
+too few frames.
+
+**Fix:** the hold still open at the end counts too. With it, B-017 shows as an 11 s hold.
+
+### B-017 — Footage decoded slower than real time can freeze instead of playing at a few frames a second
+**Area:** playback · **Status:** open · **Caught by:** `play_bench` on the Samsung portrait 4K clip
+with software decoding
+
+**Symptom:** with 2 workers, 1.6 fps, and one frame held for 11.3 s of a 12 s run: the picture stops
+after the preroll. 61 frame jobs finished, 42 of them cancelled, at about 380 ms each. With 1 worker,
+the same (1.5 fps, 11.4 s hold). Alone and in order on one thread, the decoder does 64 ms a frame at
+the same size (15.6 fps). The sound is unaffected (0 underruns). The Android clip of the same size,
+not rotated, plays at 9 to 12 fps in software.
+
+**Cause:** not found yet. Each job costs 3 to 6 times an in-order decode, and most finish after the
+playhead has passed their frame and are cancelled. Not yet measured: whether the requests send the
+decoder back to a keyframe, and whether the plan's lead is too short.
+
+**Matters for:** footage the GPU decoders decline (B-013's HEVC) or `--software-decode`. With
+hardware decoding this clip plays at 24.6 to 26.1 fps. D-013's "Known limits" says such footage plays
+at a few frames a second; this clip freezes instead.

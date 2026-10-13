@@ -92,8 +92,12 @@ project snapshot). Ported from FilmCraft (LOG D-013; NOTICE):
 | `output` | The default audio device (cpal); its played samples are the clock | `apps/filmcraft/src/audio.rs` |
 | `transport` | Preroll, play/stop/shuttle, audio or wall clock, device failure hand-over | `ui-egui/src/lib.rs` |
 
+The FilmCraft adapter renders each frame worker's frames in a rayon pool of that worker's own:
+apart from the sound's mixing, which shares rayon's global pool (LOG B-014), and apart from each
+other, because FilmCraft's decoder holds its lock across rayon work (LOG B-015).
+
 `examples/play_bench.rs` plays a clip in real time without a window and reports frames shown and
-sound underruns; LOG D-013 has the numbers.
+sound underruns; `--wav` saves the sound the device received. LOG D-013 has the numbers.
 
 ## MCP server (`crates/mcp`)
 
