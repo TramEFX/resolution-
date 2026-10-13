@@ -69,6 +69,7 @@ doc is updated *and* the entry says which section moved.
 | B-022 | 2026-10-13 | ui | Slipping a clip by dragging moved its media the wrong way | fixed |
 | B-023 | 2026-10-13 | engine | FilmCraft refuses a ripple that Resolve makes by cutting sync-locked clips across the edit | open; worked around with sync lock switches |
 | D-021 | 2026-10-13 | ui | A source viewer beside the timeline viewer: a second `Playback`, and keys act on the active viewer | active |
+| D-022 | 2026-10-13 | ui | Waveforms come from `Playback::peaks`, read on a background thread | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1149,3 +1150,27 @@ at a time. The other's cache stays warm.
   (02:01:12:00 for the Sony clip).
 - The other F-key edits (Replace, Place on Top, Ripple Overwrite, Fit to Fill, Append) are
   still `Missing`.
+
+### D-022 — Waveforms come from `Playback::peaks`, read on a background thread
+**Area:** ui · **Status:** active · **Doc:** `crates/engine-api/src/playback.rs`; `apps/resolution-app/src/waveforms.rs`
+
+**Decision:** `Playback` gains `peaks(item)`. It returns the lowest and highest sample of every
+256 samples at 48 kHz of a media item's first audio stream. On FilmCraft it is a port of its
+UI's `source_peaks`: the whole stream is decoded four seconds at a time.
+
+The editor asks for the peaks of every audio clip's media after each snapshot. One background
+thread reads them and keeps them in a cache. The timeline draws whatever has arrived: one column
+per pixel, mirrored under the clip's name. The scale is decibels from -48 dB, and quiet
+recordings are raised by up to 12 dB, as FilmCraft's timeline does. Audio tracks grew from 40 to
+48 px to give the waveform room.
+
+**Why on `Playback` and off the UI thread:** decoding a clip's sound takes a while for long
+clips, too long for the engine thread, which would hold up edits. The snapshot already holds the
+project and the media pool, and it is thread-safe, so any thread can read peaks from it.
+
+**Checked:** an adapter test reads the demo music's peaks (about 60 s, loudest within 0..1). A
+UI test waits for every demo audio clip's waveform. A unit test checks the dB scale. A screenshot
+of the Samsung clip was checked by eye: quiet start, louder later.
+
+**Not yet:** waveforms in the source viewer; per-channel display; the clip's gain and volume
+keyframes do not scale the drawing (FilmCraft's does).

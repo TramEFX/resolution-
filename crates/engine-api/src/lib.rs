@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use commands::{COMMANDS, CommandSpec, Page, Risk};
-pub use playback::{Mixer, Playback, Rate, RenderHints};
+pub use playback::{Mixer, PEAK_RATE, PEAK_SAMPLES, Playback, Rate, RenderHints};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {

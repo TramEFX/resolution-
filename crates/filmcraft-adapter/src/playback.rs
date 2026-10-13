@@ -14,7 +14,7 @@ use filmcraft_engine::time::{FrameRate, Tick};
 use filmcraft_engine::{MediaPool, Services, Session};
 use filmcraft_frame::{AudioBuffer, VideoFrame};
 use filmcraft_media::{FrameRequest, MediaInfo, MediaSource, SharedSource, cancel};
-use resolution_engine_api::{EngineError, Frame, Mixer, Playback, Rate, RenderHints, Result};
+use resolution_engine_api::{EngineError, Frame, Mixer, PEAK_RATE, PEAK_SAMPLES, Playback, Rate, RenderHints, Result};
 
 /// A media source that adds the time its `video_frame` calls take to a counter: the decoding
 /// part of a frame's render time ([`RenderHints::decode_ns`]). As FilmCraft's frame server does
@@ -196,6 +196,31 @@ impl Playback for Snapshot {
             filmcraft_engine::settings::map_output(left, right, buf, ch, [0, 1]);
         })
     }
+
+    fn peaks(&self, item: u64) -> Option<Vec<(f32, f32)>> {
+        let source = self.pool.provider(self.project.clone(), self.services.clone()).source(ItemId(item))?;
+        source.info().has_audio().then(|| media_peaks(&*source))
+    }
+}
+
+/// The waveform of a media source's first audio stream: (lowest, highest) sample of every
+/// [`PEAK_SAMPLES`] samples at [`PEAK_RATE`], decoded four seconds at a time. Ported from
+/// FilmCraft's `source_peaks` (`ui-egui/src/panels/timeline.rs`).
+fn media_peaks(source: &dyn MediaSource) -> Vec<(f32, f32)> {
+    let total = source.info().duration.to_units_floor(i64::from(PEAK_RATE)).max(0) as usize;
+    let mut out = Vec::with_capacity(total / PEAK_SAMPLES + 1);
+    let chunk = PEAK_RATE as usize * 4;
+    let mut at = 0usize;
+    while at < total {
+        let n = chunk.min(total - at);
+        let Ok(buf) = source.audio_stream(0, at as i64, n, PEAK_RATE) else { break };
+        let first = buf.channels.first().map(Vec::as_slice).unwrap_or_default();
+        out.extend(
+            first.chunks(PEAK_SAMPLES).map(|c| c.iter().fold((0f32, 0f32), |(lo, hi), v| (lo.min(*v), hi.max(*v)))),
+        );
+        at += n;
+    }
+    out
 }
 
 /// The clip open in the source viewer, played like the timeline: frames from FilmCraft's

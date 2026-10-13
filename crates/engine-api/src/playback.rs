@@ -73,6 +73,11 @@ pub struct RenderHints {
 /// `buffer`, beginning at timeline sample `start` at the mixer's sample rate.
 pub type Mixer = Box<dyn FnMut(i64, &mut [f32], usize) + Send>;
 
+/// Samples (at [`PEAK_RATE`]) summarised by one waveform peak.
+pub const PEAK_SAMPLES: usize = 256;
+/// The sample rate waveform peaks are measured at.
+pub const PEAK_RATE: u32 = 48_000;
+
 /// The open timeline, frozen at one project revision, for playback. Thread-safe: frames render
 /// in parallel on worker threads.
 pub trait Playback: Send + Sync {
@@ -88,6 +93,15 @@ pub trait Playback: Send + Sync {
     /// The program sound at `sample_rate`. Unlike pictures, sound follows the engine's newest
     /// project: edits made while playing are heard without restarting playback.
     fn mixer(&self, sample_rate: u32) -> Mixer;
+
+    /// The waveform of media item `item`'s sound (its first audio stream), for drawing clips:
+    /// the lowest and highest sample of every [`PEAK_SAMPLES`] samples at [`PEAK_RATE`], from
+    /// the start of the media. Slow, since it decodes the whole stream: call it off the UI
+    /// thread. `None` when the item has no sound or the engine cannot read it.
+    fn peaks(&self, item: u64) -> Option<Vec<(f32, f32)>> {
+        let _ = item;
+        None
+    }
 }
 
 #[cfg(test)]
