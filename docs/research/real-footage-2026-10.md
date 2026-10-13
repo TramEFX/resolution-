@@ -121,6 +121,14 @@ on the M-Track): frame rates consistent with the source, sound good.
 - No new decoding defects: the 100 Mbit/s Sony stream, big-endian PCM and the extra metadata track
   all decode correctly.
 
+**After the engine sync to FilmCraft `cee1feb` (2026-10-13, LOG D-015):**
+- The Samsung clip plays at 30.0 fps with hardware decoding, the exact frame on every refresh, up
+  from 24.6 to 26.1. Software decoding plays at 10.1 fps instead of freezing (B-017).
+- The Android clip shows the frame on screen at 10 of 10 test times (B-011 fixed upstream).
+- The 4K60 HEVC file from the first pass decodes on the GPU and plays at 49.9 fps, up from 1 (B-013
+  fixed upstream).
+- The sound is still sample-exact against ffmpeg on all three clips.
+
 ## Not covered yet
 
 - **Camera and phone originals:** iPhone HEVC (HDR / Dolby Vision, 10-bit), Android HEVC, GoPro,
