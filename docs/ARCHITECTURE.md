@@ -55,6 +55,23 @@
 Its tests are the upstream-drift gate: every vocabulary id must be mapped, and every FilmCraft id
 we map to must still exist at the pinned revision.
 
+## The editor (`apps/resolution-app`)
+
+An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP server:
+
+- **Engine thread.** The engine runs on its own thread (`worker.rs`). The UI sends commands and
+  frame requests and reads the replies each repaint, so a slow seek never freezes the window.
+  Frame requests are coalesced, and an engine panic fails one command, not the app.
+- **Keys are data.** A key press becomes a keymap chord (`keys.rs`), the keymap gives a vocabulary
+  id, and the id runs. Front-end ids (`Target::Ui`: pages, playback, zoom, edit modes) are handled
+  in the app; everything else goes to the engine. The menus run the same ids.
+- **One reader of engine JSON.** `model.rs` alone knows the shape of `timeline.inspect` and
+  `project.inspect` (FilmCraft's today). A typed, engine-neutral model in `engine-api` should
+  replace it.
+- **Looks are Resolution's own.** Dark theme and its own palette; Resolve's layout and keys only.
+- **Tests drive the real UI.** `egui_kittest` presses keys and clicks clips headlessly.
+  `resolution-app --screenshot out.png` saves the window once a frame is on screen.
+
 ## MCP server (`crates/mcp`)
 
 `resolution mcp [--project <path> | --demo]` serves MCP over stdio; `.mcp.json` wires it into

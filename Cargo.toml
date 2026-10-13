@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/engine-api", "crates/filmcraft-adapter", "crates/keymap", "crates/mcp", "apps/resolution-cli"]
+members = ["crates/engine-api", "crates/filmcraft-adapter", "crates/keymap", "crates/mcp", "apps/resolution-cli", "apps/resolution-app"]
 
 [workspace.package]
 version = "0.0.1"
@@ -20,6 +20,11 @@ resolution-mcp = { path = "crates/mcp" }
 # Move it with scripts/sync-mirror.sh (docs/UPSTREAM.md). Only crates/filmcraft-adapter may depend
 # on filmcraft-* crates.
 filmcraft-engine = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
+
+# UI (LOG D-012): the same egui stack as FilmCraft's own UI, so its code is a working reference.
+egui = "0.36"
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+rfd = "0.17"
 
 # foundation
 serde = { version = "1", features = ["derive"] }

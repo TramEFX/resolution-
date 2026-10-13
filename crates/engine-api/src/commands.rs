@@ -116,6 +116,9 @@ pub const COMMANDS: &[CommandSpec] = &[
         "query; returns the active timeline (tracks, clips, in/out, playhead) as JSON",
     ),
     c("media.import", "Import Media", Media, r#"{"paths": [string]}"#),
+    c("timeline.createFromClips", "Create New Timeline Using Selected Clips", Media, r#"{"items": [id]}"#),
+    c("source.open", "Open in Source Viewer", Edit, r#"{"item": id}"#),
+    c("timeline.open", "Open Timeline", Media, r#"{"item": id}"#),
     // history
     c("edit.undo", "Undo", Global, ""),
     c("edit.redo", "Redo", Global, ""),
@@ -165,6 +168,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("edit.fitToFill", "Fit to Fill", Edit, ""),
     c("edit.appendAtEnd", "Append at End of Timeline", Edit, ""),
     // timeline edits
+    c("timeline.select", "Select Clips", Edit, r#"{"clips": [id], "add"?: bool, "toggle"?: bool}"#),
     c("timeline.split", "Split Clip (at playhead)", Edit, ""),
     c("timeline.delete", "Delete Selected (leave gap)", Edit, r#"{"clips"?: [id]}"#),
     c("timeline.rippleDelete", "Ripple Delete", Edit, r#"{"clips"?: [id]}"#),

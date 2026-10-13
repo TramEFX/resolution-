@@ -33,6 +33,7 @@ An AI-native video editor in Rust that feels like home to DaVinci Resolve users.
 | `keymaps/resolve.toml` | DaVinci Resolve default keyboard (seed; being verified) |
 | `crates/mcp` | MCP server: agents find, run, preview, check and undo edits through the same commands as people |
 | `apps/resolution-cli` | Headless CLI: `resolution commands`, `resolution keys`, `resolution run …`, `resolution mcp` |
+| `apps/resolution-app` | The editor (egui): Resolve's page bar and Edit page over the same commands; `cargo run -p resolution-app` |
 
 ## Try it
 
@@ -42,6 +43,7 @@ cargo run -p resolution-cli -- commands
 cargo run -p resolution-cli -- keys
 cargo run -p resolution-cli -- run project.inspect
 cargo run -p resolution-cli -- mcp --demo     # MCP over stdio, on FilmCraft's demo project
+cargo run -p resolution-app                   # the editor (see docs/HANDOFF.md for keys)
 ```
 
 In Claude Code, this repo's `.mcp.json` starts the MCP server automatically (approve it once).

@@ -47,6 +47,7 @@ doc is updated *and* the entry says which section moved.
 | B-009 | 2026-10-12 | tooling | sync-mirror.sh --apply did nothing after a sync | fixed |
 | B-010 | 2026-10-12 | engine | MP4 with a leading empty edit plays one frame early | open, reported upstream |
 | B-011 | 2026-10-12 | engine | Frames timestamped just after the timeline grid show one frame late | open, reported upstream |
+| D-012 | 2026-10-12 | ui | The editor is an egui app, a client of the command API like MCP | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -556,3 +557,34 @@ tested.
 **Reported upstream** 2026-10-12: storytold/filmcraft#1282. It includes the one-line ffmpeg
 reproduction and the timer table, cross-references #73, and suggests picking the nearest source
 frame.
+
+### D-012 — The editor is an egui app, a client of the command API like MCP
+**Area:** ui · **Status:** active · **Doc:** ARCHITECTURE "The editor"; ROADMAP M2
+
+**Decision:** `apps/resolution-app` uses egui / eframe 0.36 with the wgpu renderer, and rfd for file
+dialogs. These are the same versions FilmCraft's own UI uses. The engine runs on a worker thread;
+every key, menu item and click becomes a vocabulary id run through it.
+
+**Why egui** (chosen by Truman, 2026-10-12, over Slint, Iced and a web UI under Tauri): one language;
+frames go straight to the GPU; wgpu leads to a GPU viewer and colour page. FilmCraft's 42.8k-line egui
+UI is a working reference on the same engine. Its timeline panel is ~3k lines, and its playback core
+(frame pool, read-ahead, control: ~1.8k lines) is what M2 ports, which its licence allows (invariant
+2 forbids depending on `ui-egui`, not learning from it). **Cost:** egui looks like a tool by default,
+so a Resolve-calibre finish is our own styling work; accessibility is weaker than native toolkits.
+
+**What came with it:**
+- **Vocabulary** grew by four ids the UI needs, each mapped and covered by the drift test:
+  `timeline.select`, `source.open`, `timeline.createFromClips` (Resolve's "Create New Timeline Using
+  Selected Clips"), `timeline.open`.
+- **One reader of engine JSON** (`model.rs`), since the inspect output is FilmCraft's shape; a typed
+  model in `engine-api` is the follow-up.
+- **Always dark, with our own palette.**
+- **Resolve on this machine** (21.1.1) is a reference for workflow, names and keys only (invariant 7).
+
+**First slice, verified:**
+- Window screenshots via `--screenshot` with the demo project and an Android 4K clip.
+- 10 app tests, 3 of them UI tests: Ctrl+B splits and Ctrl+Z undoes; Right steps one frame; Shift+2
+  and Shift+4 switch pages; clicking a clip selects it in the engine.
+- Two defects the screenshots caught were fixed: missing glyphs (shown as boxes), and ruler labels
+  stepping in seconds (00:00:01:23 at 23.976).
+- Not yet: playback with audio, a source viewer next to the record viewer, trimming by drag.
