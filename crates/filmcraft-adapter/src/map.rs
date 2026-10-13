@@ -50,6 +50,7 @@ pub const MAP: &[(&str, Target)] = &[
     ("media.import", Engine("file.import")),
     ("timeline.createFromClips", Engine("file.newSequenceFromClip")),
     ("source.open", Engine("source.open")),
+    ("timeline.new", Engine("file.newSequence")),
     ("timeline.open", Engine("sequence.open")),
     ("edit.undo", Adapter),
     ("edit.redo", Adapter),

@@ -424,6 +424,17 @@ impl ResolutionApp {
             "view.zoomOut" => self.nav.zoom_by(1.0 / 1.5),
             "view.zoomToFit" => self.nav.fit(),
             "media.import" => self.import_dialog(),
+            // a new, empty timeline in the open timeline's format (the engine's default otherwise)
+            "timeline.new" => {
+                let n = self.media.iter().filter(|m| m.kind == Kind::Timeline).count() + 1;
+                let mut params = json!({ "name": format!("Timeline {n}") });
+                if let Some(tl) = &self.timeline {
+                    params["width"] = json!(tl.width);
+                    params["height"] = json!(tl.height);
+                    params["fps"] = json!(tl.fps);
+                }
+                self.worker.run(id, params);
+            }
             "edit.insert" | "edit.overwrite" if self.source_clip.is_none() => {
                 self.say("Open a clip in the source viewer first: double-click it in the Media Pool.", true);
             }
@@ -544,6 +555,7 @@ impl ResolutionApp {
             ui.label(RichText::new("Resolution").font(look.medium()).color(look.theme.text));
             ui.add_space(10.0);
             ui.menu_button("File", |ui| {
+                self.menu_command(ui, "timeline.new");
                 self.menu_command(ui, "media.import");
                 if ui.button("Open Project…").clicked() {
                     ui.close();
@@ -1878,6 +1890,22 @@ mod tests {
         h.state_mut().command("view.zoomToFit");
         h.step();
         assert_eq!((h.state().nav.zoom, h.state().nav.first), (None, 0.0));
+    }
+
+    #[test]
+    fn ctrl_n_makes_an_empty_timeline_in_the_same_format() {
+        let mut h = demo();
+        let before = h.state().timeline.clone().expect("demo timeline");
+        let count = |a: &ResolutionApp| a.media.iter().filter(|m| m.kind == Kind::Timeline).count();
+        let timelines = count(h.state());
+        h.key_press_modifiers(Modifiers::COMMAND, Key::N);
+        pump(&mut h, "a new timeline open", |a| count(a) == timelines + 1);
+        pump(&mut h, "the new timeline in the timeline panel", |a| {
+            a.timeline.as_ref().is_some_and(|t| t.name != before.name)
+        });
+        let t = h.state().timeline.clone().expect("new timeline");
+        assert_eq!((t.width, t.height, t.rate), (before.width, before.height, before.rate));
+        assert!(t.video.iter().chain(&t.audio).all(|tr| tr.clips.is_empty()), "it starts empty");
     }
 
     #[test]

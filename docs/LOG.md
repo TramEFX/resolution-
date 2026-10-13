@@ -71,6 +71,7 @@ doc is updated *and* the entry says which section moved.
 | D-021 | 2026-10-13 | ui | A source viewer beside the timeline viewer: a second `Playback`, and keys act on the active viewer | active |
 | D-022 | 2026-10-13 | ui | Waveforms come from `Playback::peaks`, read on a background thread | active |
 | D-023 | 2026-10-13 | ui | Timeline navigation follows Resolve's wheel and scroll-bar controls; the view pages to the playhead | active |
+| D-024 | 2026-10-13 | ui | New Timeline (Ctrl+N) starts empty in the open timeline's format; the source viewer shows the media's own timecode | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1207,3 +1208,29 @@ scrubbing take only the primary button, so a middle-drag pans and does not seek.
 **Checked:** UI tests roll the wheel (the demo's six tracks scroll; Alt zooms) and zoom in, then
 press End: the view follows the playhead, and Zoom to Fit restores the whole timeline. A
 screenshot shows the scroll bars and A3 reachable by scrolling.
+
+### D-024 — New Timeline (Ctrl+N) starts empty in the open timeline's format; the source viewer shows the media's own timecode
+**Area:** ui · **Status:** active · **Doc:** `apps/resolution-app/src/app.rs` (`timeline.new`)
+
+**Decision:**
+- **New Timeline.** File > New Timeline, Ctrl+N (manual p. 839), adds `timeline.new`, which is
+  FilmCraft's `file.newSequence`.
+  - The new timeline is named "Timeline n" and starts empty.
+  - It copies the open timeline's size and frame rate. With none open, it takes FilmCraft's
+    default, 1920 × 1080 at 23.976.
+  - It does not use FilmCraft's `fromItem`, which would also place the clip: that is the Media
+    Pool's "New timeline from clip".
+- **Source timecode.** The source viewer counts in the media's own timecode. The adapter adds
+  `startTimecodeFrames` to `source.inspect`, from FilmCraft's `MediaInfo.start_timecode`.
+
+**Why:** the one-minute-edit bar (D-016) needs a way to start an empty timeline and fill it from
+the source viewer, which is Resolve's usual source-to-timeline workflow. Resolve's own dialog asks
+for a name and format. Until a dialog exists, the open timeline is the format most likely wanted.
+Camera timecode (the Sony clip's 02:01:12:00) is what an editor logs and reads, so the source
+viewer shows it.
+
+**Cost:** no format choice yet; Resolve's New Timeline dialog is not built.
+
+**Checked:** a UI test presses Ctrl+N: one more timeline, open, empty, the same format. A model
+test reads the start timecode. A screenshot of the Sony clip in the source viewer reads
+02:01:12:00.

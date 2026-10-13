@@ -233,3 +233,8 @@ command = "view.zoomToFit"
 [[bind]]
 keys = "Q"
 command = "view.toggleViewer"
+
+# File > New Timeline (Command-N in the Reference Manual, p. 839).
+[[bind]]
+keys = "Mod+N"
+command = "timeline.new"

@@ -81,6 +81,9 @@ impl FilmCraftEngine {
             let rate = item.frame_rate();
             m.insert("name".into(), Value::String(item.name.clone()));
             m.insert("frameRate".into(), serde_json::json!({ "num": rate.num, "den": rate.den }));
+            // the media's own timecode at its first frame, in its frames (the Sony clip's 02:01:12:00)
+            let tc = item.as_media().and_then(|media| media.info.start_timecode);
+            m.insert("startTimecodeFrames".into(), serde_json::json!(tc));
         }
         Ok(out)
     }
