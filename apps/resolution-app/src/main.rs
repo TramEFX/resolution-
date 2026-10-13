@@ -2,23 +2,27 @@
 //!
 //! ```text
 //! resolution-app [--demo | --project <path.fcproj>] [--import <file>]… [--seek <seconds>]
-//!                [--mute] [--software-decode] [--play <s>] [--screenshot <out.png>]
+//!                [--mute] [--software-decode] [--theme <name>] [--play <s>] [--screenshot <out.png>]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
-//! (LOG D-014). Self-tests: `--play` plays for that long once a frame is on screen, prints what
+//! (LOG D-014). `--theme` switches to a colour theme (midnight, ember, mint, rose, charcoal;
+//! LOG D-018), which is then kept, as if chosen in Workspace > Theme. Self-tests: `--play` plays for that long once a frame is on screen, prints what
 //! was shown and heard, and quits; `--screenshot` saves the window as a PNG once a frame is on
 //! screen (after the play test, with both) and quits.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod chrome;
+mod icons;
 mod keys;
 mod model;
+mod theme;
 mod timeline_ui;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--play <s>] [--screenshot <out.png>]";
+                     [--software-decode] [--theme <name>] [--play <s>] [--screenshot <out.png>]";
 
 fn options() -> Result<(app::Options, bool), String> {
     let mut o = app::Options::default();
@@ -34,6 +38,7 @@ fn options() -> Result<(app::Options, bool), String> {
             "--mute" => o.mute = true,
             "--play" => o.play_for = Some(value("--play")?.parse().map_err(|e| format!("--play: {e}"))?),
             "--software-decode" => software_decode = true,
+            "--theme" => o.theme = Some(value("--theme")?),
             "--screenshot" => o.screenshot = Some(value("--screenshot")?.into()),
             other => return Err(format!("unknown argument `{other}`")),
         }

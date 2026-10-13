@@ -159,6 +159,11 @@ pub struct MediaItem {
     pub active: bool,
 }
 
+/// The project's name, for the interface toolbar.
+pub fn project_name(project: &Value) -> Option<String> {
+    project["name"].as_str().filter(|n| !n.is_empty()).map(str::to_string)
+}
+
 /// The Media Pool, flattened depth-first from the project's bin tree.
 pub fn media_items(project: &Value) -> Vec<MediaItem> {
     fn walk(node: &Value, depth: usize, active: Option<u64>, out: &mut Vec<MediaItem>) {

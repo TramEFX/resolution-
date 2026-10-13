@@ -9,10 +9,10 @@ The Edit page is not finished before other pages start. It goes to a bar instead
 with Resolve habits, that ends in a file. Then agents, then colour; Cut and Media come later because
 they mostly re-arrange panels built along the way.
 
-1. **Shared look and layout** (M2). Mock up two or three visual directions for the Edit page, and
-   Truman picks one. Then build colour and type tokens, panel chrome, and our own icons, plus the
-   page layout model: each page has a fixed layout with panels shown or hidden from its toolbar,
-   as in Resolve, not free docking.
+1. **Shared look and layout** (M2). Truman chose **Black Box** from three mockups (D-018). Build
+   it with a few colour themes, its own icons and panel chrome, and the page layout model: each
+   page has a fixed layout with panels shown or hidden from its toolbar, as in Resolve, not free
+   docking. Skins (alternative chrome) come later.
 2. **The Edit page to the bar** (M2): a source viewer with In/Out and the F9–F12 edits, track headers,
    trimming by drag in Selection and Trim modes, snapping, zoom, waveforms, markers. The bar is met
    when Truman cuts a one-minute piece from the Sony and Samsung clips without reaching for
@@ -60,8 +60,10 @@ read, never copied into the repo.
       without audio
 - [x] Real-time playback with sound (`crates/playback`, a port of FilmCraft's, LOG D-013), with
       the operating system's GPU video decoders (D-014)
-- [ ] **Step 1:** visual direction mockups, chosen by Truman; tokens, panel chrome, own icons;
-      fixed page layouts with panel toggles
+- [x] **Step 1 mockups:** three directions; Truman chose Black Box (D-018)
+- [x] **Step 1:** Black Box in the editor: skin and theme tokens, five colour themes, panel chrome,
+      own icons; fixed page layouts with panel toggles (Edit page; Effects, Sound Library, Metadata
+      and Mixer are empty slots)
 - [ ] **Step 2:** source viewer next to the record viewer with In/Out and F9–F12 (insert, overwrite,
       replace, place on top); track headers (lock, mute, enable, targeting); trimming by drag in
       Selection and Trim modes; snapping; zoom; audio waveforms; markers lane
@@ -88,3 +90,5 @@ read, never copied into the repo.
 ## Later
 
 Fairlight-style bus model, full Deliver page presets, Fusion page (watch EffectCraft), OpenFX hosting.
+Skins (D-018): alternative chrome over the same layouts; the step-1 Graphite and Soft Light
+directions are the first candidates.

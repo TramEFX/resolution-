@@ -38,7 +38,7 @@ filmcraft-platform = { git = "https://github.com/TramEFX/resolution-filmcraft", 
 
 # UI (LOG D-012): the same egui stack as FilmCraft's own UI, so its code is a working reference.
 egui = "0.36"
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "persistence"] }
 rfd = "0.17"
 
 # Playback (LOG D-013): audio output, which is also the playback clock.

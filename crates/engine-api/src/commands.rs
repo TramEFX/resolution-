@@ -104,6 +104,15 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("page.color", "Color Page", Global, ""),
     c("page.fairlight", "Fairlight Page", Global, ""),
     c("page.deliver", "Deliver Page", Global, ""),
+    // Workspace > Show Panel in Workspace: the Edit page's interface toolbar (LOG D-016)
+    c("workspace.mediaPool", "Media Pool", Global, ""),
+    c("workspace.effects", "Effects Library", Global, ""),
+    c("workspace.index", "Index", Global, ""),
+    c("workspace.soundLibrary", "Sound Library", Global, ""),
+    c("workspace.mixer", "Mixer", Global, ""),
+    c("workspace.metadata", "Metadata", Global, ""),
+    c("workspace.inspector", "Inspector", Global, ""),
+    c("workspace.resetLayout", "Reset UI Layout", Global, ""),
     // project
     c("project.open", "Open Project", Global, r#"{"path": string}"#),
     c("project.save", "Save Project", Global, ""),

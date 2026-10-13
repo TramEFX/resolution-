@@ -62,6 +62,8 @@ doc is updated *and* the entry says which section moved.
 | B-020 | 2026-10-13 | ci | Upstream main fails three UI and desktop-app tests at the D-015 sync point (crates outside our graph) | open, upstream |
 | D-016 | 2026-10-13 | ui | Take the Edit page to a usable bar, then agents and Color, not every page in turn | active |
 | D-017 | 2026-10-13 | ui | What Resolve does comes from its Reference Manual, then from the local install | active |
+| D-018 | 2026-10-13 | ui | The editor's look is "Black Box", with a few colour themes now and skins later | active |
+| B-021 | 2026-10-13 | docs | HANDOFF counted 71 vocabulary commands and 46 headless; there were 75 and 50 | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -970,3 +972,48 @@ external scripting, which an earlier attempt on this machine ran into.
 **Rules:** the manual is Blackmagic's. Read it, cite page numbers, and never copy its text,
 screenshots or illustrations into the repo (invariant 7). The extracted text stays in `target/`,
 which git ignores. The extractor uses pypdf (BSD), not PyMuPDF (AGPL).
+
+### D-018 — The editor's look is "Black Box", with a few colour themes now and skins later
+**Area:** ui · **Status:** active · **Doc:** ROADMAP "Order of work" step 1
+
+**Decision (Truman's, 2026-10-13):** of the three step-1 directions, Truman chose **Black Box**: a
+near-black ground, panels divided by hairlines rather than raised fills, icon-only toolbars, Geist
+and Geist Mono, and thin-stroke icons. It ships with **a few colour themes**. **Skins** are pinned
+for later. The other two directions (Graphite, Soft Light) are candidate skins.
+
+**Terms, as the code will use them:**
+- A **colour theme** changes colours only: accent, ground levels, clip and waveform colours.
+- A **skin** changes the chrome: fonts and sizes, corner radius, gaps, icon stroke weight, toolbar
+  labels on or off, and panel separation (hairline or raised).
+
+The two are separate layers from the start (a `Skin` and a `Theme` in `theme.rs`). One skin,
+Black Box, exists now, so adding skins later means adding data, not refactoring.
+
+**Constraint on every theme:** grounds and panel greys stay colourless (R = G = B). A tinted UI
+around the viewer biases colour judgement, which matters most on the Color page. Themes vary the
+accent and how deep the ground is, never its hue.
+
+**Mockups:** a private Artifact canvas, "Resolution Edit page directions" (2026-10-13).
+
+**Built (same day):** `theme.rs` (the Black Box skin; themes Midnight, Ember, Mint, Rose and
+Charcoal, chosen in Workspace > Theme or with `--theme`, saved between runs through eframe's
+persistence), `icons.rs` (33 icons), `chrome.rs` (shared widgets), Geist and Geist Mono bundled
+under the OFL. Tests check that every theme's greys are colourless and its text meets 4.5:1
+contrast, and that every icon parses and stays in its box. **What came with it:** eight
+vocabulary ids, `workspace.*` (Resolve's Workspace > Show Panel in Workspace, and Reset UI
+Layout), so the panel buttons are commands like everything else (ARCHITECTURE invariant 3).
+They are front-end ids (`Target::Ui`) and do not stop playback. The edit-mode buttons set the
+mode; trimming and blade clicks are step 2. Checked by eye in screenshots of the Sony and
+Samsung clips in Midnight, Ember and Charcoal.
+
+### B-021 — HANDOFF counted 71 vocabulary commands and 46 headless; there were 75 and 50
+**Area:** docs · **Status:** fixed · **Caught by:** reading: counting the vocabulary while adding
+D-018's `workspace.*` ids
+
+**Symptom:** HANDOFF's "Engine boundary" row said 71 commands, 46 of them headless. Before D-018,
+`COMMANDS` held 75 and `map.rs` sent 50 of them to the engine or the adapter: ids added since
+had not been counted. (This entry's first draft repeated the 46 without checking it.)
+
+**Fix:** counted from the source (ids in `COMMANDS`, targets in `map.rs`). After D-018 there are
+83 commands: 50 run headless (47 engine, 1 approximate, 2 in the adapter), 27 are front-end and
+6 are missing. HANDOFF says so.
