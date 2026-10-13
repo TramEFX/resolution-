@@ -64,9 +64,10 @@ read, never copied into the repo.
 - [x] **Step 1:** Black Box in the editor: skin and theme tokens, five colour themes, panel chrome,
       own icons; fixed page layouts with panel toggles (Edit page; Effects, Sound Library, Metadata
       and Mixer are empty slots)
-- [ ] **Step 2:** source viewer next to the record viewer with In/Out and F9–F12 (insert, overwrite,
-      replace, place on top); track headers (lock, mute, enable, targeting); trimming by drag in
-      Selection and Trim modes; snapping; zoom; audio waveforms; markers lane
+- [x] **Step 2:** source viewer next to the record viewer with In/Out and F9/F10 (D-021); track
+      headers (D-019); trimming by drag in Selection and Trim modes (D-020); snapping; zoom and
+      scrolling (D-023); audio waveforms (D-022); markers on the ruler; New Timeline (D-024).
+      F11 (replace) and F12 (place on top) remain, under the edit types below.
 - [ ] **Step 2's bar:** Truman cuts a one-minute piece from the Sony and Samsung clips
 - [ ] **Step 3:** minimal Deliver page: an H.264 preset and a render queue (`file.exportMedia`)
 - [ ] Resolve edit types the engine lacks: place on top, ripple overwrite, fit to fill,
