@@ -27,7 +27,8 @@ echo
 echo "== engine-relevant churn (files changed) =="
 git -C "$dir" diff --stat "$base" "$ref" -- crates/engine crates/project crates/format crates/edit crates/platform | tail -n 15
 
-ids() { git -C "$dir" show "$1:crates/engine/src/commands.rs" | grep -oE '(cmd|query)!\(\s*"[A-Za-z0-9_.]+"' | grep -oE '"[^"]+"' | tr -d '"' | sort -u; }
+# Joined into one line first: rustfmt puts a long `cmd!(` and its id on separate lines (LOG B-018).
+ids() { git -C "$dir" show "$1:crates/engine/src/commands.rs" | tr '\n' ' ' | grep -oE '(cmd|query)!\(\s*"[A-Za-z0-9_.]+"' | grep -oE '"[^"]+"' | tr -d '"' | sort -u; }
 echo
 echo "== command ids in commands.rs removed (-) / added (+) =="
 # Captured first: under pipefail, diff's "differences found" exit status would also print "(none)".

@@ -56,6 +56,7 @@ doc is updated *and* the entry says which section moved.
 | B-015 | 2026-10-12 | playback | Two frame workers deadlocked on sideways phone video: their renders shared one rayon pool | fixed |
 | B-016 | 2026-10-12 | tooling | play_bench did not count a frame held until the end of the run | fixed |
 | B-017 | 2026-10-12 | playback | Footage decoded slower than real time can freeze instead of playing at a few frames a second | open |
+| B-018 | 2026-10-13 | tooling | upstream-status.sh reported two live command ids as removed: rustfmt had split their `cmd!(` calls over lines | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -805,3 +806,19 @@ decoder back to a keyframe, and whether the plan's lead is too short.
 **Matters for:** footage the GPU decoders decline (B-013's HEVC) or `--software-decode`. With
 hardware decoding this clip plays at 24.6 to 26.1 fps. D-013's "Known limits" says such footage plays
 at a few frames a second; this clip freezes instead.
+
+### B-018 — upstream-status.sh reported two live command ids as removed
+**Area:** tooling · **Status:** fixed · **Caught by:** checking the report's claim in upstream's
+`commands.rs` before acting on it · **Doc:** `scripts/upstream-status.sh`
+
+**Symptom:** against v0.7.2 and against `main`, the report listed `markers.markIn` and
+`markers.markOut` as removed. Resolution's I and O keys map to them (`map.rs:63-64`).
+
+**Cause:** both still exist. Upstream PR #1043 gave them `frame`, `seconds` and `timecode`
+parameters, and rustfmt then put `cmd!(` and the id on separate lines. The script read one line at
+a time. It had also missed `effects.moveKeyframes`, added in v0.7.2 in the same layout. The adapter's
+drift test (`every_mapped_id_exists_upstream`) asks the engine itself, so it would not have been
+fooled; only the report was.
+
+**Fix:** the script joins the file into one line before matching. Against v0.7.2: nothing removed,
+`effects.moveKeyframes` added. Against `main` (`cee1feb`): also `edit.rippleDeleteHead`.
