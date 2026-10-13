@@ -69,12 +69,24 @@ An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP s
   Stopping sends `playhead.set` with the frame on screen, so the engine's playhead is where you
   stopped.
 - **Keys are data.** A key press becomes a keymap chord (`keys.rs`), the keymap gives a vocabulary
-  id, and the id runs. Front-end ids (`Target::Ui`: pages, playback, zoom, edit modes) are handled
-  in the app; everything else goes to the engine. The menus run the same ids.
+  id, and the id runs. Front-end ids (`Target::Ui`: pages, panels, playback, zoom, edit modes) are
+  handled in the app; everything else goes to the engine. The menus and toolbar buttons run the
+  same ids, and their tooltips show the keymap's keys.
+- **Fixed page layouts** (LOG D-016). The Edit page has Resolve's regions: a browser on the left
+  (Media Pool, Effects Library, Index or Sound Library, one at a time), the viewer, the Inspector or
+  Metadata on the right, the timeline below with the Mixer beside it. The interface toolbar shows
+  and hides them with `workspace.*` ids (Resolve's Workspace > Show Panel in Workspace); panels
+  never dock elsewhere. Effects, Sound Library, Metadata and Mixer are empty slots so far.
 - **One reader of engine JSON.** `model.rs` alone knows the shape of `timeline.inspect` and
   `project.inspect` (FilmCraft's today). A typed, engine-neutral model in `engine-api` should
   replace it.
-- **Looks are Resolution's own.** Dark theme and its own palette; Resolve's layout and keys only.
+- **Looks are Resolution's own** (LOG D-018). `theme.rs` has two layers: a `Skin` (the chrome:
+  sizes, corners, gaps, icon weight, toolbar labels) and a `Theme` (colours only). One skin exists,
+  Black Box, with five themes (Workspace > Theme, saved between runs). Every theme's greys are
+  colourless, and a test checks that and the text contrast. Type is Geist and Geist Mono (OFL,
+  bundled). Icons (`icons.rs`) are our own 16×16 line drawings in SVG path syntax, stroked in the
+  theme's colours; `chrome.rs` has the shared buttons and panel strips. Resolve's layout and keys
+  only, never its artwork.
 - **Tests drive the real UI.** `egui_kittest` presses keys and clicks clips headlessly.
   `resolution-app --screenshot out.png` saves the window once a frame is on screen; `--play <s>`
   plays and prints what was shown and heard.

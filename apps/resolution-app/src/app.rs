@@ -1,13 +1,19 @@
-//! The editor window: Resolve's page bar and Edit page layout (Media Pool, viewer, inspector,
-//! timeline) over the engine's command API. Every edit is a vocabulary command run by the
-//! engine thread, the same commands agents use over MCP (ARCHITECTURE invariant 3).
+//! The editor window: Resolve's page bar and Edit page layout over the engine's command API.
+//! Every edit is a vocabulary command run by the engine thread, the same commands agents use over
+//! MCP (ARCHITECTURE invariant 3).
+//!
+//! The Edit page has a fixed layout, as in Resolve (LOG D-016): the interface toolbar shows and
+//! hides panels in fixed places (a browser on the left, the Inspector or Metadata on the right,
+//! the Mixer beside the timeline) rather than letting them dock anywhere. The look is the Black
+//! Box skin in a choice of colour themes (LOG D-018, `theme.rs`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use egui::{
-    Align2, Color32, ColorImage, CornerRadius, FontId, RichText, TextureHandle, TextureOptions, Ui, ViewportCommand,
+    Align, Align2, Color32, ColorImage, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Stroke,
+    TextureHandle, TextureOptions, Ui, UiBuilder, ViewportCommand, pos2, vec2,
 };
 use resolution_engine_api::{Page, Playback};
 use resolution_filmcraft_adapter::FilmCraftEngine;
@@ -15,7 +21,10 @@ use resolution_keymap::Keymap;
 use resolution_playback::{AudioLost, AudioOut, AudioStats, FrameKey, FrameServer, Step, Transport, ahead};
 use serde_json::json;
 
+use crate::chrome::{self, State};
+use crate::icons::Icon;
 use crate::model::{self, Kind, MediaItem, Timeline};
+use crate::theme::{self, Look, Theme};
 use crate::timeline_ui::{self, Action};
 use crate::worker::{Reply, Worker};
 
@@ -23,6 +32,9 @@ const MEDIA_EXTENSIONS: &[&str] = &[
     "mp4", "mov", "m4v", "mkv", "mxf", "avi", "webm", "mts", "m2ts", "wav", "mp3", "aac", "png", "jpg", "jpeg", "tif",
     "tiff",
 ];
+
+/// Where the chosen colour theme is saved between runs.
+const THEME_KEY: &str = "theme";
 
 #[derive(Default)]
 pub struct Options {
@@ -39,10 +51,58 @@ pub struct Options {
     /// Self-test: once a frame is on screen, play this many seconds, print what was shown and
     /// heard, and quit (after the screenshot, if one is asked for).
     pub play_for: Option<f64>,
+    /// A colour theme to start with, overriding the saved one (`--theme`).
+    pub theme: Option<String>,
 }
 
 /// Commands that run at the frame on screen without stopping playback.
 const WHILE_PLAYING: &[&str] = &["mark.in", "mark.out", "mark.clip", "marker.add"];
+
+/// The panels that share the left of the Edit page, one at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeftPanel {
+    MediaPool,
+    Effects,
+    Index,
+    SoundLibrary,
+}
+
+/// The panels that share the right of the Edit page, one at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RightPanel {
+    Inspector,
+    Metadata,
+}
+
+/// Which panels are showing (Workspace > Show Panel in Workspace).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Workspace {
+    pub left: Option<LeftPanel>,
+    pub right: Option<RightPanel>,
+    pub mixer: bool,
+}
+
+impl Default for Workspace {
+    fn default() -> Self {
+        Self { left: Some(LeftPanel::MediaPool), right: Some(RightPanel::Inspector), mixer: false }
+    }
+}
+
+/// The interface toolbar's left group: panel, icon, command.
+const LEFT_PANELS: [(LeftPanel, Icon, &str); 4] = [
+    (LeftPanel::MediaPool, Icon::MediaPool, "workspace.mediaPool"),
+    (LeftPanel::Effects, Icon::Effects, "workspace.effects"),
+    (LeftPanel::Index, Icon::Index, "workspace.index"),
+    (LeftPanel::SoundLibrary, Icon::SoundLibrary, "workspace.soundLibrary"),
+];
+
+/// The timeline's tool, as Resolve's Selection / Trim / Blade modes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditMode {
+    Selection,
+    Trim,
+    Blade,
+}
 
 /// Frames shown while playing: the viewer's frame-rate readout and the `--play` report.
 #[derive(Clone, Copy, Debug, Default)]
@@ -80,7 +140,11 @@ struct PlayTest {
 pub struct ResolutionApp {
     worker: Worker,
     keymap: Keymap,
+    look: Look,
     page: Page,
+    workspace: Workspace,
+    mode: EditMode,
+    project_name: Option<String>,
     timeline: Option<Timeline>,
     media: Vec<MediaItem>,
     revision: u64,
@@ -118,8 +182,14 @@ pub struct ResolutionApp {
 
 impl ResolutionApp {
     pub fn new(cc: &eframe::CreationContext<'_>, options: Options) -> Self {
-        // An editor is judged in the dark: Resolution's theme is always dark, whatever the OS uses.
-        cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
+        // An editor is judged in the dark: Resolution is always dark, whatever the OS uses.
+        Look::install_fonts(&cc.egui_ctx);
+        let saved = cc.storage.and_then(|s| s.get_string(THEME_KEY));
+        let look = Look {
+            theme: theme::theme(options.theme.as_deref().or(saved.as_deref()).unwrap_or("")),
+            ..Look::default()
+        };
+        look.apply(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let worker = Worker::spawn(Box::new(FilmCraftEngine::new()), move || ctx.request_repaint());
         let frames = FrameServer::new(FrameServer::default_workers());
@@ -137,7 +207,11 @@ impl ResolutionApp {
         Self {
             worker,
             keymap: Keymap::resolve(),
+            look,
             page: Page::Edit,
+            workspace: Workspace::default(),
+            mode: EditMode::Selection,
+            project_name: None,
             timeline: None,
             media: Vec::new(),
             revision: 0,
@@ -178,6 +252,22 @@ impl ResolutionApp {
 
     fn say(&mut self, text: impl Into<String>, error: bool) {
         self.status = (text.into(), error);
+    }
+
+    fn set_theme(&mut self, ctx: &egui::Context, theme: &'static Theme) {
+        self.look.theme = theme;
+        self.look.apply(ctx);
+    }
+
+    /// A command's name in the vocabulary (Resolve's), for buttons and tooltips.
+    fn label(id: &str) -> &'static str {
+        resolution_engine_api::commands::find(id).map_or("", |c| c.label)
+    }
+
+    /// The keys bound to a command, as this platform writes them ("Ctrl+B").
+    fn keys(&self, id: &str) -> Option<String> {
+        let keys: Vec<String> = self.keymap.keys_for(id).map(chrome::key_text).collect();
+        (!keys.is_empty()).then(|| keys.join(", "))
     }
 
     /// The playhead's frame: playback's while playing, a seek on its way to the engine, or the
@@ -223,6 +313,7 @@ impl ResolutionApp {
                     self.stop_audio();
                 }
                 self.media = project.as_ref().map(model::media_items).unwrap_or_default();
+                self.project_name = project.as_ref().and_then(model::project_name);
                 if self.auto_timeline
                     && self.timeline.is_none()
                     && let Some(first) = self.media.iter().find(|m| m.kind == Kind::Clip)
@@ -240,10 +331,12 @@ impl ResolutionApp {
         }
     }
 
-    /// A vocabulary command from a key or a menu. Front-end commands (pages, playback, zoom,
-    /// edit modes) are handled here; everything else goes to the engine.
+    /// A vocabulary command from a key, a button or a menu. Front-end commands (pages, panels,
+    /// playback, zoom, edit modes) are handled here; everything else goes to the engine.
     fn command(&mut self, id: &str) {
-        if !id.starts_with("playback.") && self.transport.is_playing() {
+        // panels, zoom and modes leave playback alone; edits stop it, except marking
+        let front_end = id.starts_with("workspace.") || id.starts_with("view.") || id.starts_with("mode.");
+        if !id.starts_with("playback.") && !front_end && self.transport.is_playing() {
             if WHILE_PLAYING.contains(&id) {
                 if let Some(frame) = self.transport.frame() {
                     self.worker.run("playhead.set", json!({ "frame": frame }));
@@ -253,11 +346,34 @@ impl ResolutionApp {
             }
         }
         let speed = self.transport.speed();
+        let w = &mut self.workspace;
+        let toggle_left = |w: &mut Workspace, p| w.left = if w.left == Some(p) { None } else { Some(p) };
+        let toggle_right = |w: &mut Workspace, p| w.right = if w.right == Some(p) { None } else { Some(p) };
         match id {
             _ if id.starts_with("page.") => {
                 if let Some(p) = Page::ALL.into_iter().find(|p| format!("page.{}", p.name()) == id) {
                     self.page = p;
                 }
+            }
+            "workspace.mediaPool" => toggle_left(w, LeftPanel::MediaPool),
+            "workspace.effects" => toggle_left(w, LeftPanel::Effects),
+            "workspace.index" => toggle_left(w, LeftPanel::Index),
+            "workspace.soundLibrary" => toggle_left(w, LeftPanel::SoundLibrary),
+            "workspace.inspector" => toggle_right(w, RightPanel::Inspector),
+            "workspace.metadata" => toggle_right(w, RightPanel::Metadata),
+            "workspace.mixer" => w.mixer = !w.mixer,
+            "workspace.resetLayout" => *w = Workspace::default(),
+            "mode.selection" => self.mode = EditMode::Selection,
+            "mode.trim" => {
+                self.mode = EditMode::Trim;
+                self.say("Trim Edit Mode. Trimming by dragging is not built yet.", false);
+            }
+            "mode.blade" => {
+                self.mode = EditMode::Blade;
+                self.say(
+                    "Blade Edit Mode. Cutting by clicking is not built yet; Ctrl+B splits at the playhead.",
+                    false,
+                );
             }
             "playback.playStop" => {
                 if self.transport.is_playing() {
@@ -420,7 +536,7 @@ impl ResolutionApp {
         }
     }
 
-    fn keys(&mut self, ctx: &egui::Context) {
+    fn read_keys(&mut self, ctx: &egui::Context) {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
@@ -446,13 +562,25 @@ impl ResolutionApp {
         }
     }
 
+    /// A menu item that runs a command, with its keys.
+    fn menu_command(&mut self, ui: &mut Ui, id: &str) {
+        let text = match self.keys(id) {
+            Some(k) => format!("{}   {k}", Self::label(id)),
+            None => Self::label(id).to_string(),
+        };
+        if ui.button(text).clicked() {
+            ui.close();
+            self.command(id);
+        }
+    }
+
     fn menu(&mut self, ui: &mut Ui) {
+        let look = self.look;
         egui::MenuBar::new().ui(ui, |ui| {
+            ui.label(RichText::new("Resolution").font(look.medium()).color(look.theme.text));
+            ui.add_space(10.0);
             ui.menu_button("File", |ui| {
-                if ui.button("Import Media…   Ctrl+I").clicked() {
-                    ui.close();
-                    self.command("media.import");
-                }
+                self.menu_command(ui, "media.import");
                 if ui.button("Open Project…").clicked() {
                     ui.close();
                     self.open_dialog();
@@ -463,95 +591,221 @@ impl ResolutionApp {
                 }
             });
             ui.menu_button("Edit", |ui| {
-                if ui.button("Undo   Ctrl+Z").clicked() {
-                    ui.close();
-                    self.command("edit.undo");
-                }
-                if ui.button("Redo   Ctrl+Shift+Z").clicked() {
-                    ui.close();
-                    self.command("edit.redo");
-                }
+                self.menu_command(ui, "edit.undo");
+                self.menu_command(ui, "edit.redo");
             });
             ui.menu_button("Timeline", |ui| {
-                for (label, id) in [
-                    ("Split Clip   Ctrl+B", "timeline.split"),
-                    ("Ripple Delete   Delete", "timeline.rippleDelete"),
-                    ("Zoom to Fit   Shift+Z", "view.zoomToFit"),
+                for id in ["timeline.split", "timeline.rippleDelete", "view.zoomToFit"] {
+                    self.menu_command(ui, id);
+                }
+            });
+            ui.menu_button("Workspace", |ui| {
+                ui.menu_button("Show Panel in Workspace", |ui| {
+                    let w = self.workspace;
+                    for (id, on) in [
+                        ("workspace.mediaPool", w.left == Some(LeftPanel::MediaPool)),
+                        ("workspace.effects", w.left == Some(LeftPanel::Effects)),
+                        ("workspace.index", w.left == Some(LeftPanel::Index)),
+                        ("workspace.soundLibrary", w.left == Some(LeftPanel::SoundLibrary)),
+                        ("workspace.mixer", w.mixer),
+                        ("workspace.metadata", w.right == Some(RightPanel::Metadata)),
+                        ("workspace.inspector", w.right == Some(RightPanel::Inspector)),
+                    ] {
+                        if ui.add(egui::Button::selectable(on, Self::label(id))).clicked() {
+                            ui.close();
+                            self.command(id);
+                        }
+                    }
+                });
+                ui.menu_button("Theme", |ui| {
+                    for t in theme::THEMES {
+                        if ui.add(egui::Button::selectable(self.look.theme.id == t.id, t.name)).clicked() {
+                            ui.close();
+                            self.set_theme(ui.ctx(), t);
+                        }
+                    }
+                });
+                ui.separator();
+                self.menu_command(ui, "workspace.resetLayout");
+            });
+        });
+    }
+
+    /// The interface toolbar: panel toggles on either side, the project's name in the middle.
+    fn interface_toolbar(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let rect = ui.max_rect();
+        let name = self.project_name.as_deref().unwrap_or("Untitled Project");
+        ui.painter().text(rect.center(), Align2::CENTER_CENTER, name, look.medium(), look.theme.text);
+        let w = self.workspace;
+        let mut run: Option<&'static str> = None;
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for (panel, icon, id) in LEFT_PANELS {
+                let keys = self.keys(id);
+                if chrome::icon_button(
+                    ui,
+                    &look,
+                    icon,
+                    Self::label(id),
+                    keys.as_deref(),
+                    State::on(w.left == Some(panel)),
+                )
+                .clicked()
+                {
+                    run = Some(id);
+                }
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                for (icon, id, on) in [
+                    (Icon::Inspector, "workspace.inspector", w.right == Some(RightPanel::Inspector)),
+                    (Icon::Metadata, "workspace.metadata", w.right == Some(RightPanel::Metadata)),
+                    (Icon::Mixer, "workspace.mixer", w.mixer),
                 ] {
-                    if ui.button(label).clicked() {
-                        ui.close();
-                        self.command(id);
+                    let keys = self.keys(id);
+                    if chrome::icon_button(ui, &look, icon, Self::label(id), keys.as_deref(), State::on(on)).clicked() {
+                        run = Some(id);
                     }
                 }
             });
         });
+        if let Some(id) = run {
+            self.command(id);
+        }
     }
 
     fn page_bar(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let pages = [
+            (Page::Media, Icon::PageMedia),
+            (Page::Cut, Icon::PageCut),
+            (Page::Edit, Icon::PageEdit),
+            (Page::Fusion, Icon::PageFusion),
+            (Page::Color, Icon::PageColor),
+            (Page::Fairlight, Icon::PageFairlight),
+            (Page::Deliver, Icon::PageDeliver),
+        ];
+        let label = |p: Page| {
+            let name = p.name();
+            format!("{}{}", name[..1].to_uppercase(), &name[1..])
+        };
+        let gap = 6.0;
+        let width: f32 = pages
+            .iter()
+            .map(|(p, _)| ui.painter().layout_no_wrap(label(*p), look.body(), Color32::WHITE).size().x + 53.0 + gap)
+            .sum();
+        let mut run = None;
         ui.horizontal_centered(|ui| {
-            ui.add_space((ui.available_width() - 7.0 * 92.0).max(0.0) / 2.0);
-            for p in Page::ALL.into_iter().filter(|p| *p != Page::Global) {
-                let name = p.name();
-                let label = format!("{}{}", name[..1].to_uppercase(), &name[1..]);
-                if ui.add_sized([86.0, 22.0], egui::Button::selectable(self.page == p, label)).clicked() {
-                    self.command(&format!("page.{name}"));
+            ui.spacing_mut().item_spacing.x = gap;
+            ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+            for (p, icon) in pages {
+                if chrome::page_button(ui, &look, icon, &label(p), self.page == p).clicked() {
+                    run = Some(format!("page.{}", p.name()));
                 }
             }
         });
+        if let Some(id) = run {
+            self.command(&id);
+        }
     }
 
     fn media_pool(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.heading("Media Pool");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Import…").clicked() {
-                    self.command("media.import");
+        let look = self.look;
+        let t = look.theme;
+        let header = chrome::panel_header(ui, &look, "Media Pool", None);
+        if chrome::header_button(ui, &look, header, Icon::Import, "Import Media") {
+            self.command("media.import");
+        }
+        let footer = look.skin.button + 16.0 + if self.source.is_some() { 18.0 } else { 0.0 };
+        let list_h = (ui.available_height() - footer).max(40.0);
+        let mut clicked: Option<MediaItem> = None;
+        let mut opened: Option<MediaItem> = None;
+        ui.allocate_ui(vec2(ui.available_width(), list_h), |ui| {
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if self.media.is_empty() {
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(12.0);
+                        ui.label(RichText::new("No media yet.\nImport with Ctrl+I or drop files here.").color(t.dim));
+                    });
+                }
+                for m in &self.media {
+                    let selected = self.selected_media == Some((m.kind, m.id));
+                    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+                    r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &m.name));
+                    let painter = ui.painter();
+                    if selected {
+                        painter.rect_filled(rect, CornerRadius::ZERO, t.active_bg);
+                    } else if r.hovered() {
+                        painter.rect_filled(rect, CornerRadius::ZERO, t.hover);
+                    }
+                    let x = rect.left() + 10.0 + m.depth as f32 * 14.0;
+                    let icon = match m.kind {
+                        Kind::Bin => Icon::Bin,
+                        Kind::Clip => Icon::Clip,
+                        Kind::Timeline => Icon::Timeline,
+                    };
+                    let tint = if m.active { t.accent } else { t.dim };
+                    crate::icons::paint(
+                        painter,
+                        Rect::from_center_size(pos2(x + 8.0, rect.center().y), vec2(16.0, 16.0)),
+                        icon,
+                        Stroke::new(look.skin.icon_stroke, tint),
+                    );
+                    let duration = match (m.duration, &self.timeline) {
+                        (Some(d), Some(tl)) => tl.timecode(d),
+                        (Some(d), None) => format!("{d:.1} s"),
+                        _ => String::new(),
+                    };
+                    let right = rect.right() - 10.0;
+                    let dur = painter.text(
+                        pos2(right, rect.center().y),
+                        Align2::RIGHT_CENTER,
+                        &duration,
+                        look.mono(look.skin.small),
+                        t.dim,
+                    );
+                    let name_clip =
+                        Rect::from_min_max(pos2(x + 22.0, rect.top()), pos2(dur.left() - 8.0, rect.bottom()));
+                    painter.with_clip_rect(name_clip).text(
+                        pos2(x + 24.0, rect.center().y),
+                        Align2::LEFT_CENTER,
+                        &m.name,
+                        if m.kind == Kind::Bin { look.medium() } else { look.body() },
+                        if selected || m.active { t.text } else { t.dim.lerp_to_gamma(t.text, 0.5) },
+                    );
+                    if r.clicked() {
+                        clicked = Some(m.clone());
+                    }
+                    if r.double_clicked() {
+                        opened = Some(m.clone());
+                    }
                 }
             });
         });
-        ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            if self.media.is_empty() {
-                ui.label(RichText::new("No media yet.\nImport with Ctrl+I or drop files here.").weak());
-            }
-            for m in self.media.clone() {
-                let length = match (m.duration, &self.timeline) {
-                    (Some(d), Some(tl)) => format!("   {}", tl.timecode(d)),
-                    (Some(d), None) => format!("   {d:.1} s"),
-                    _ => String::new(),
-                };
-                let text = match m.kind {
-                    Kind::Bin => RichText::new(m.name.clone()).strong(),
-                    Kind::Timeline => {
-                        let open = if m.active { "   (open)" } else { "" };
-                        RichText::new(format!("{}   timeline{length}{open}", m.name))
-                            .color(Color32::from_rgb(232, 190, 110))
-                    }
-                    Kind::Clip => RichText::new(format!("{}{length}", m.name)),
-                };
-                ui.horizontal(|ui| {
-                    ui.add_space(m.depth as f32 * 14.0);
-                    let r = ui.selectable_label(self.selected_media == Some((m.kind, m.id)), text);
-                    if r.clicked() {
-                        self.selected_media = Some((m.kind, m.id));
-                    }
-                    if r.double_clicked() {
-                        self.open_media(&m);
-                    }
-                });
-            }
-        });
-        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+        if let Some(m) = clicked {
+            self.selected_media = Some((m.kind, m.id));
+        }
+        if let Some(m) = opened {
+            self.open_media(&m);
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_space(10.0);
             let clip = self.selected_media.filter(|(k, _)| *k == Kind::Clip).map(|(_, id)| id);
-            if ui.add_enabled(clip.is_some(), egui::Button::new("New timeline from clip")).clicked()
+            if chrome::text_button(ui, &look, "New timeline from clip", clip.is_some()).clicked()
                 && let Some(id) = clip
             {
                 self.worker.run("timeline.createFromClips", json!({ "items": [id] }));
             }
-            if let Some((_, name)) = &self.source {
-                ui.label(RichText::new(format!("Source: {name}")).small());
-            }
         });
+        if let Some((_, name)) = &self.source {
+            ui.horizontal(|ui| {
+                ui.add_space(10.0);
+                ui.label(RichText::new(format!("Source: {name}")).font(look.small()).color(t.dim));
+            });
+        }
     }
 
     /// Double-click in the Media Pool, as in Resolve: a timeline opens in the timeline panel; a
@@ -571,84 +825,198 @@ impl ResolutionApp {
         }
     }
 
-    fn inspector(&mut self, ui: &mut Ui) {
-        ui.heading("Inspector");
-        ui.separator();
+    /// The Index panel's edit list: every clip in record order. Clicking one selects it and
+    /// moves the playhead to its start.
+    fn index_panel(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let t = look.theme;
         let Some(tl) = &self.timeline else {
-            ui.label(RichText::new("No timeline.").weak());
+            chrome::panel_header(ui, &look, "Index", None);
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(RichText::new("No timeline.").color(t.dim));
+            });
             return;
         };
-        let grid = |ui: &mut Ui, rows: Vec<(&str, String)>| {
-            egui::Grid::new(ui.next_auto_id()).num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
-                for (k, v) in rows {
-                    ui.label(RichText::new(k).weak());
-                    ui.label(v);
-                    ui.end_row();
-                }
-            });
+        let mut edits: Vec<(String, &model::Clip)> = tl
+            .video
+            .iter()
+            .enumerate()
+            .flat_map(|(i, tr)| tr.clips.iter().map(move |c| (format!("V{}", i + 1), c)))
+            .chain(
+                tl.audio
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, tr)| tr.clips.iter().map(move |c| (format!("A{}", i + 1), c))),
+            )
+            .collect();
+        edits.sort_by(|a, b| a.1.start.total_cmp(&b.1.start).then_with(|| a.0.cmp(&b.0)));
+        let detail = format!("{} events", edits.len());
+        chrome::panel_header(ui, &look, "Index", Some(&detail));
+        let columns = |ui: &mut Ui, rect: Rect, cells: [&str; 5], colour: Color32| {
+            let painter = ui.painter();
+            let font = look.mono(10.5);
+            let xs = [10.0, 34.0, rect.width() - 168.0, rect.width() - 84.0];
+            painter.text(
+                pos2(rect.left() + xs[0], rect.center().y),
+                Align2::LEFT_CENTER,
+                cells[0],
+                font.clone(),
+                colour,
+            );
+            painter.text(
+                pos2(rect.left() + xs[1], rect.center().y),
+                Align2::LEFT_CENTER,
+                cells[1],
+                font.clone(),
+                colour,
+            );
+            let clip = Rect::from_min_max(
+                pos2(rect.left() + 64.0, rect.top()),
+                pos2(rect.left() + xs[2] - 6.0, rect.bottom()),
+            );
+            painter.with_clip_rect(clip).text(
+                pos2(clip.left(), rect.center().y),
+                Align2::LEFT_CENTER,
+                cells[2],
+                look.small(),
+                colour,
+            );
+            painter.text(
+                pos2(rect.left() + xs[2], rect.center().y),
+                Align2::LEFT_CENTER,
+                cells[3],
+                font.clone(),
+                colour,
+            );
+            painter.text(pos2(rect.left() + xs[3], rect.center().y), Align2::LEFT_CENTER, cells[4], font, colour);
         };
-        if let Some((track, clip)) = tl.selected() {
-            ui.strong(&clip.name);
-            grid(
-                ui,
+        let (head, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+        columns(ui, head, ["#", "Track", "Clip", "Record In", "Record Out"], t.dim);
+        ui.painter().line_segment([head.left_bottom(), head.right_bottom()], look.sep_stroke());
+        let mut pick: Option<(u64, f64)> = None;
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (n, (track, c)) in edits.iter().enumerate() {
+                let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::click());
+                r.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{} {}", track, c.name))
+                });
+                if c.selected {
+                    ui.painter().rect_filled(rect, CornerRadius::ZERO, t.active_bg);
+                } else if r.hovered() {
+                    ui.painter().rect_filled(rect, CornerRadius::ZERO, t.hover);
+                }
+                let (num, rin, rout) = ((n + 1).to_string(), tl.timecode(c.start), tl.timecode(c.end));
+                columns(ui, rect, [&num, track, &c.name, &rin, &rout], if c.selected { t.text } else { t.dim });
+                if r.clicked() {
+                    pick = Some((c.id, c.start));
+                }
+            }
+        });
+        if let Some((clip, start)) = pick {
+            self.worker.run("timeline.select", json!({ "clips": [clip] }));
+            if let Some(rate) = self.timeline.as_ref().map(|t| t.rate) {
+                self.seek(rate.frame_at(start));
+            }
+        }
+    }
+
+    fn inspector(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let t = look.theme;
+        let Some(tl) = &self.timeline else {
+            chrome::panel_header(ui, &look, "Inspector", None);
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(RichText::new("No timeline.").color(t.dim));
+            });
+            return;
+        };
+        let (title, rows): (&str, Vec<(&str, String)>) = if let Some((track, clip)) = tl.selected() {
+            (
+                &clip.name,
                 vec![
                     ("Track", track.name.clone()),
                     ("Start", tl.timecode(clip.start)),
                     ("End", tl.timecode(clip.end)),
                     ("Duration", tl.timecode(clip.end - clip.start)),
-                    ("Enabled", if clip.enabled { "yes" } else { "no" }.into()),
+                    ("Enabled", if clip.enabled { "Yes" } else { "No" }.into()),
                 ],
-            );
+            )
         } else {
-            ui.strong(&tl.name);
-            grid(
-                ui,
+            (
+                &tl.name,
                 vec![
-                    ("Format", format!("{}×{}", tl.width, tl.height)),
+                    ("Format", format!("{} × {}", tl.width, tl.height)),
                     ("Frame rate", format!("{:.3}", tl.fps)),
                     ("Duration", tl.timecode(tl.duration)),
                     ("Tracks", format!("{} video, {} audio", tl.video.len(), tl.audio.len())),
                 ],
+            )
+        };
+        chrome::panel_header(ui, &look, "Inspector", Some(title));
+        ui.add_space(8.0);
+        for (k, v) in rows {
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+            let painter = ui.painter();
+            painter.text(rect.left_center() + vec2(12.0, 0.0), Align2::LEFT_CENTER, k, look.body(), t.dim);
+            let field = Rect::from_min_max(
+                pos2(rect.left() + 110.0, rect.top() + 2.0),
+                pos2(rect.right() - 12.0, rect.bottom() - 2.0),
+            );
+            painter.rect_filled(field, look.radius(), t.field);
+            painter.with_clip_rect(field).text(
+                field.left_center() + vec2(8.0, 0.0),
+                Align2::LEFT_CENTER,
+                v,
+                look.mono(look.skin.small),
+                t.text,
             );
         }
     }
 
+    /// The timeline viewer: name and timecode above the picture, a scrub bar and the transport
+    /// controls below it.
     fn viewer(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let (t, skin) = (look.theme, look.skin);
         let rect = ui.available_rect_before_wrap();
+        let header = Rect::from_min_size(rect.min, vec2(rect.width(), skin.header));
+        let transport = Rect::from_min_max(pos2(rect.left(), rect.bottom() - skin.bar), rect.max);
+        let scrub = Rect::from_min_max(
+            pos2(rect.left() + 12.0, transport.top() - 22.0),
+            pos2(rect.right() - 12.0, transport.top()),
+        );
+        let picture = Rect::from_min_max(pos2(rect.left(), header.bottom()), pos2(rect.right(), scrub.top() - 2.0));
         // Frames at the viewer's size on screen, in 240 px steps so resizing does not re-render
         // on every repaint.
-        let px = rect.width().max(rect.height()) * ui.ctx().pixels_per_point();
+        let px = picture.width().max(picture.height()) * ui.ctx().pixels_per_point();
         self.view_side = ((px / 240.0).ceil() as u32 * 240).clamp(480, 3840);
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, CornerRadius::ZERO, Color32::from_rgb(12, 13, 16));
+        painter.rect_filled(rect, CornerRadius::ZERO, t.panel);
+        painter.rect_filled(header, CornerRadius::ZERO, t.head);
+        painter.line_segment([header.left_bottom(), header.right_bottom()], look.sep_stroke());
+        painter.rect_filled(picture, CornerRadius::ZERO, Color32::BLACK);
         let playhead = self.playhead_frame();
-        match (&self.frame, &self.timeline) {
-            (Some(tex), Some(tl)) => {
-                // the picture between a strip for the name and frame rate above and one for the
-                // timecode below, so no text sits on it
-                let area = egui::Rect::from_min_max(rect.min + egui::vec2(8.0, 28.0), rect.max - egui::vec2(8.0, 34.0));
-                let size = tex.size_vec2();
-                let scale = (area.width() / size.x).min(area.height() / size.y).max(0.01);
-                let img = egui::Rect::from_center_size(area.center(), size * scale);
-                painter.image(
-                    tex.id(),
-                    img,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+        let mut seek_to = None;
+        match &self.timeline {
+            Some(tl) => {
                 painter.text(
-                    rect.left_top() + egui::vec2(10.0, 8.0),
-                    Align2::LEFT_TOP,
+                    header.left_center() + vec2(10.0, 0.0),
+                    Align2::LEFT_CENTER,
                     &tl.name,
-                    FontId::proportional(13.0),
-                    Color32::LIGHT_GRAY,
+                    look.medium(),
+                    t.text,
                 );
-                painter.text(
-                    rect.center_bottom() - egui::vec2(0.0, 8.0),
-                    Align2::CENTER_BOTTOM,
+                let tc = painter.text(
+                    header.right_center() - vec2(10.0, 0.0),
+                    Align2::RIGHT_CENTER,
                     tl.frame_timecode(playhead),
-                    FontId::monospace(18.0),
-                    Color32::WHITE,
+                    look.mono(13.0),
+                    t.text,
                 );
                 // while playing: the speed, and the frames per second actually reaching the screen
                 if let Some(speed) = self.transport.speed() {
@@ -659,25 +1027,169 @@ impl ResolutionApp {
                         (false, None) => String::new(),
                     };
                     painter.text(
-                        rect.right_top() + egui::vec2(-10.0, 8.0),
-                        Align2::RIGHT_TOP,
+                        tc.left_center() - vec2(14.0, 0.0),
+                        Align2::RIGHT_CENTER,
                         format!("{speed}{fps}"),
-                        FontId::monospace(13.0),
-                        Color32::GRAY,
+                        look.mono(11.0),
+                        t.dim,
                     );
                 }
+                if let Some(tex) = &self.frame {
+                    let size = tex.size_vec2();
+                    let scale = (picture.width() / size.x).min(picture.height() / size.y).max(0.01);
+                    let img = Rect::from_center_size(picture.center(), size * scale);
+                    painter.image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                }
+                // the scrub bar: the whole timeline, its marks and the playhead
+                let line = Rect::from_center_size(scrub.center(), vec2(scrub.width(), 2.0));
+                painter.rect_filled(line, CornerRadius::ZERO, t.line);
+                let x_of = |s: f64| scrub.left() + (s / tl.duration.max(1e-9)).clamp(0.0, 1.0) as f32 * scrub.width();
+                if let (Some(a), Some(b)) = (tl.mark_in, tl.mark_out) {
+                    painter.rect_filled(
+                        Rect::from_x_y_ranges(x_of(a)..=x_of(b), (scrub.center().y - 3.0)..=(scrub.center().y + 3.0)),
+                        CornerRadius::ZERO,
+                        t.accent.gamma_multiply(0.35),
+                    );
+                }
+                let x = x_of(tl.rate.seconds_of(playhead));
+                painter.line_segment(
+                    [pos2(x, scrub.center().y - 7.0), pos2(x, scrub.center().y + 7.0)],
+                    Stroke::new(2.0, t.accent),
+                );
+                let r = ui.interact(scrub, ui.id().with("scrub"), Sense::click_and_drag());
+                if (r.clicked() || r.dragged())
+                    && let Some(p) = r.interact_pointer_pos()
+                {
+                    let s = f64::from((p.x - scrub.left()) / scrub.width()).clamp(0.0, 1.0) * tl.duration;
+                    seek_to = Some(tl.rate.frame_at(s));
+                }
             }
-            _ => {
+            None => {
                 painter.text(
-                    rect.center(),
+                    picture.center(),
                     Align2::CENTER_CENTER,
                     "Import media, then double-click a clip in the Media Pool to make a timeline.",
-                    FontId::proportional(15.0),
-                    Color32::GRAY,
+                    look.body(),
+                    t.dim,
                 );
             }
         }
-        ui.allocate_rect(rect, egui::Sense::hover());
+        if let Some(frame) = seek_to {
+            self.seek(frame);
+        }
+        // the transport, centred under the picture
+        let playing = self.transport.speed();
+        let buttons = [
+            (Icon::ToStart, "playhead.timelineStart", State::Off),
+            (Icon::Reverse, "playback.reverse", State::on(playing.is_some_and(|s| s < 0.0))),
+            (Icon::Stop, "playback.stop", State::Off),
+            (Icon::Play, "playback.playStop", State::on(playing.is_some_and(|s| s > 0.0))),
+            (Icon::ToEnd, "playhead.timelineEnd", State::Off),
+        ];
+        let width = buttons.len() as f32 * (skin.button + 4.0);
+        let row = Rect::from_center_size(transport.center(), vec2(width, skin.button));
+        let mut run = None;
+        ui.scope_builder(UiBuilder::new().max_rect(row).layout(Layout::left_to_right(Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for (icon, id, state) in buttons {
+                let keys = self.keys(id);
+                let state = if self.timeline.is_none() { State::Disabled } else { state };
+                if chrome::icon_button(ui, &look, icon, Self::label(id), keys.as_deref(), state).clicked() {
+                    run = Some(id);
+                }
+            }
+        });
+        if let Some(id) = run {
+            self.command(id);
+        }
+    }
+
+    /// Above the timeline: its name and the playhead's timecode, then the tools.
+    fn timeline_toolbar(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let (t, skin) = (look.theme, look.skin);
+        let rect = ui.max_rect();
+        let name = self.timeline.as_ref().map_or("No timeline", |tl| tl.name.as_str());
+        let tc =
+            self.timeline.as_ref().map_or("--:--:--:--".to_string(), |tl| tl.frame_timecode(self.playhead_frame()));
+        let painter = ui.painter();
+        let name_rect =
+            painter.text(rect.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, name, look.medium(), t.text);
+        painter.text(name_rect.right_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, tc, look.mono(17.0), t.text);
+        let has = self.timeline.is_some();
+        let on = |b: bool| if !has { State::Disabled } else { State::on(b) };
+        let groups: [&[(Icon, &str, State)]; 4] = [
+            &[
+                (Icon::Selection, "mode.selection", on(self.mode == EditMode::Selection)),
+                (Icon::Trim, "mode.trim", on(self.mode == EditMode::Trim)),
+                (Icon::Blade, "mode.blade", on(self.mode == EditMode::Blade)),
+            ],
+            &[(Icon::Insert, "edit.insert", on(false)), (Icon::Overwrite, "edit.overwrite", on(false))],
+            &[(Icon::Marker, "marker.add", on(false))],
+            &[
+                (Icon::ZoomFit, "view.zoomToFit", on(false)),
+                (Icon::ZoomOut, "view.zoomOut", on(false)),
+                (Icon::ZoomIn, "view.zoomIn", on(false)),
+            ],
+        ];
+        let buttons: usize = groups.iter().map(|g| g.len()).sum();
+        let width = buttons as f32 * (skin.button + 2.0) + (groups.len() - 1) as f32 * 15.0;
+        let row = Rect::from_center_size(rect.center(), vec2(width, skin.button));
+        let mut run = None;
+        ui.scope_builder(UiBuilder::new().max_rect(row).layout(Layout::left_to_right(Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for (n, group) in groups.iter().enumerate() {
+                if n > 0 {
+                    chrome::divider(ui, &look);
+                }
+                for (icon, id, state) in group.iter() {
+                    let keys = self.keys(id);
+                    if chrome::icon_button(ui, &look, *icon, Self::label(id), keys.as_deref(), *state).clicked() {
+                        run = Some(*id);
+                    }
+                }
+            }
+        });
+        if let Some(id) = run {
+            self.command(id);
+        }
+    }
+
+    fn timeline_panel(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let t = look.theme;
+        egui::Panel::top("timeline-toolbar")
+            .exact_size(look.skin.bar)
+            .frame(Frame::new().fill(t.panel).inner_margin(Margin::symmetric(8, 0)))
+            .show(ui, |ui| self.timeline_toolbar(ui));
+        if self.workspace.mixer {
+            egui::Panel::right("mixer").exact_size(220.0).frame(Frame::new().fill(t.panel)).show(ui, |ui| {
+                chrome::panel_header(ui, &look, "Mixer", None);
+                chrome::not_built(ui, &look, "The Mixer");
+            });
+        }
+        egui::CentralPanel::default().frame(Frame::new().fill(t.panel)).show(ui, |ui| {
+            let playhead = self.playhead();
+            match &self.timeline {
+                Some(tl) => {
+                    let rate = tl.rate;
+                    let (actions, rects) =
+                        timeline_ui::show(ui, &look, tl, playhead, &timeline_ui::View { zoom: self.zoom });
+                    self.clip_rects = rects;
+                    for a in actions {
+                        match a {
+                            Action::Seek(s) => self.seek(rate.frame_at(s.max(0.0))),
+                            Action::Select { clip, add } => {
+                                self.worker.run("timeline.select", json!({ "clips": [clip], "add": add }))
+                            }
+                        }
+                    }
+                }
+                None => {
+                    ui.centered_and_justified(|ui| ui.label(RichText::new("No timeline").color(t.dim)));
+                }
+            }
+        });
     }
 
     /// Put the frame at the playhead on screen: the exact frame when it is rendered; until then
@@ -815,22 +1327,37 @@ impl eframe::App for ResolutionApp {
         for reply in self.worker.poll() {
             self.apply(reply);
         }
-        self.keys(&ctx);
+        self.read_keys(&ctx);
         self.advance_playback(&ctx);
         self.update_viewer(&ctx);
 
-        egui::Panel::top("menu").show(ui, |ui| self.menu(ui));
-        egui::Panel::bottom("pages").exact_size(34.0).show(ui, |ui| self.page_bar(ui));
-        egui::Panel::bottom("status").exact_size(22.0).show(ui, |ui| {
-            let (text, error) = &self.status;
-            ui.label(
-                RichText::new(text)
-                    .color(if *error { Color32::from_rgb(240, 110, 100) } else { Color32::GRAY })
-                    .small(),
-            );
-        });
+        let look = self.look;
+        let t = look.theme;
+        let fill = |c: Color32| Frame::new().fill(c);
+        egui::Panel::top("menu")
+            .frame(fill(t.ground).inner_margin(Margin::symmetric(8, 3)))
+            .show(ui, |ui| self.menu(ui));
+        egui::Panel::top("interface")
+            .exact_size(look.skin.bar)
+            .frame(fill(t.panel).inner_margin(Margin::symmetric(8, 0)))
+            .show(ui, |ui| self.interface_toolbar(ui));
+        egui::Panel::bottom("pages")
+            .exact_size(44.0)
+            .frame(fill(t.panel).inner_margin(Margin::symmetric(8, 0)))
+            .show(ui, |ui| self.page_bar(ui));
+        egui::Panel::bottom("status")
+            .exact_size(22.0)
+            .frame(fill(t.ground).inner_margin(Margin::symmetric(10, 0)))
+            .show(ui, |ui| {
+                let (text, error) = &self.status;
+                ui.centered_and_justified(|ui| {
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        ui.label(RichText::new(text).font(look.small()).color(if *error { t.error } else { t.dim }));
+                    });
+                });
+            });
         if self.page != Page::Edit {
-            egui::CentralPanel::default().show(ui, |ui| {
+            egui::CentralPanel::default().frame(fill(t.panel)).show(ui, |ui| {
                 ui.centered_and_justified(|ui| {
                     ui.label(
                         RichText::new(format!(
@@ -838,38 +1365,54 @@ impl eframe::App for ResolutionApp {
                             self.page.name()
                         ))
                         .size(16.0)
-                        .weak(),
+                        .color(t.dim),
                     );
                 });
             });
             self.self_test(&ctx);
             return;
         }
-        egui::Panel::bottom("timeline").resizable(true).default_size(280.0).min_size(140.0).show(ui, |ui| {
-            let playhead = self.playhead();
-            match &self.timeline {
-                Some(tl) => {
-                    let rate = tl.rate;
-                    let (actions, rects) = timeline_ui::show(ui, tl, playhead, &timeline_ui::View { zoom: self.zoom });
-                    self.clip_rects = rects;
-                    for a in actions {
-                        match a {
-                            Action::Seek(t) => self.seek(rate.frame_at(t.max(0.0))),
-                            Action::Select { clip, add } => {
-                                self.worker.run("timeline.select", json!({ "clips": [clip], "add": add }))
-                            }
-                        }
+        egui::Panel::bottom("timeline")
+            .resizable(true)
+            .default_size(330.0)
+            .min_size(180.0)
+            .frame(fill(t.panel))
+            .show(ui, |ui| self.timeline_panel(ui));
+        if let Some(left) = self.workspace.left {
+            egui::Panel::left("left").resizable(true).default_size(300.0).min_size(220.0).frame(fill(t.panel)).show(
+                ui,
+                |ui| match left {
+                    LeftPanel::MediaPool => self.media_pool(ui),
+                    LeftPanel::Index => self.index_panel(ui),
+                    LeftPanel::Effects => {
+                        chrome::panel_header(ui, &look, "Effects Library", None);
+                        chrome::not_built(ui, &look, "The Effects Library");
                     }
-                }
-                None => {
-                    ui.centered_and_justified(|ui| ui.label(RichText::new("No timeline").weak()));
-                }
-            }
-        });
-        egui::Panel::left("media").resizable(true).default_size(260.0).show(ui, |ui| self.media_pool(ui));
-        egui::Panel::right("inspector").resizable(true).default_size(250.0).show(ui, |ui| self.inspector(ui));
-        egui::CentralPanel::default().show(ui, |ui| self.viewer(ui));
+                    LeftPanel::SoundLibrary => {
+                        chrome::panel_header(ui, &look, "Sound Library", None);
+                        chrome::not_built(ui, &look, "The Sound Library");
+                    }
+                },
+            );
+        }
+        if let Some(right) = self.workspace.right {
+            egui::Panel::right("right").resizable(true).default_size(300.0).min_size(220.0).frame(fill(t.panel)).show(
+                ui,
+                |ui| match right {
+                    RightPanel::Inspector => self.inspector(ui),
+                    RightPanel::Metadata => {
+                        chrome::panel_header(ui, &look, "Metadata", None);
+                        chrome::not_built(ui, &look, "The Metadata panel");
+                    }
+                },
+            );
+        }
+        egui::CentralPanel::default().frame(fill(t.panel)).show(ui, |ui| self.viewer(ui));
         self.self_test(&ctx);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(THEME_KEY, self.look.theme.id.to_string());
     }
 }
 
@@ -878,6 +1421,7 @@ mod tests {
     use super::*;
     use egui::{Key, Modifiers, PointerButton, Pos2};
     use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
     use std::time::{Duration, Instant};
 
     fn demo() -> Harness<'static, ResolutionApp> {
@@ -997,5 +1541,64 @@ mod tests {
         pump(&mut h, "the clicked clip to be selected", |a| {
             a.timeline.as_ref().and_then(|t| t.selected()).is_some_and(|(_, c)| c.id == clip)
         });
+    }
+
+    /// Click the widget named `label` (the demo keeps repainting, so step rather than `run`).
+    fn click(h: &mut Harness<'_, ResolutionApp>, label: &str) {
+        h.get_by_label(label).click();
+        h.step();
+        h.step();
+    }
+
+    #[test]
+    fn the_interface_toolbar_swaps_and_hides_panels() {
+        let mut h = demo();
+        assert_eq!(h.state().workspace, Workspace::default());
+        // the left slot holds one browser at a time
+        click(&mut h, "Index");
+        assert_eq!(h.state().workspace.left, Some(LeftPanel::Index));
+        click(&mut h, "Index");
+        assert_eq!(h.state().workspace.left, None, "a second click hides it");
+        click(&mut h, "Inspector");
+        assert_eq!(h.state().workspace.right, None);
+        click(&mut h, "Mixer");
+        assert!(h.state().workspace.mixer);
+        h.state_mut().command("workspace.resetLayout");
+        assert_eq!(h.state().workspace, Workspace::default());
+    }
+
+    #[test]
+    fn showing_a_panel_does_not_stop_playback() {
+        let mut h = demo();
+        pump(&mut h, "the program to play", |a| a.program.is_some() && a.shown.is_some());
+        h.key_press(Key::Space);
+        pump(&mut h, "the clock to start", |a| a.transport.is_playing() && !a.transport.in_preroll());
+        h.state_mut().command("workspace.index");
+        h.state_mut().command("view.zoomIn");
+        assert!(h.state().transport.is_playing());
+    }
+
+    #[test]
+    fn edit_mode_keys_change_the_tool() {
+        let mut h = demo();
+        h.key_press(Key::T);
+        h.step();
+        assert_eq!(h.state().mode, EditMode::Trim);
+        h.key_press(Key::B);
+        h.step();
+        assert_eq!(h.state().mode, EditMode::Blade);
+        h.key_press(Key::A);
+        h.step();
+        assert_eq!(h.state().mode, EditMode::Selection);
+    }
+
+    #[test]
+    fn the_theme_menu_recolours_the_ui() {
+        let mut h = demo();
+        let ctx = h.ctx.clone();
+        h.state_mut().set_theme(&ctx, &theme::EMBER);
+        h.step();
+        assert_eq!(h.state().look.theme.id, "ember");
+        assert_eq!(ctx.style_of(egui::Theme::Dark).visuals.widgets.active.fg_stroke.color, theme::EMBER.accent);
     }
 }

@@ -29,6 +29,10 @@ crates/filmcraft-adapter/src/playback.rs. For that code:
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+The editor bundles the Geist and Geist Mono typefaces (apps/resolution-app/assets/fonts),
+Copyright 2024 The Geist Project Authors (https://github.com/vercel/geist-font), licensed under
+the SIL Open Font License 1.1; the licence is in apps/resolution-app/assets/fonts/OFL.txt.
+
 The ArtCraft and FilmCraft names and logos are trademarks of their owners and are not licensed
 under MIT or Apache-2.0. Distributed builds of Resolution must not carry them
 (FilmCraft docs/brand/LICENSE-brand.txt).

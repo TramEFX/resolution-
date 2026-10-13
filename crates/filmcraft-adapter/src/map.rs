@@ -12,7 +12,7 @@ pub enum Target {
     Approx(&'static str, &'static str),
     /// Handled by the adapter itself (undo, redo).
     Adapter,
-    /// Owned by the front end: page switching, timeline zoom, edit modes and playback. FilmCraft
+    /// Owned by the front end: page switching, panels, timeline zoom, edit modes and playback. FilmCraft
     /// keeps these in its egui crate, which we replace; Resolution's UI implements them.
     Ui,
     /// No FilmCraft equivalent yet; the note says what is missing.
@@ -29,6 +29,14 @@ pub const MAP: &[(&str, Target)] = &[
     ("page.color", Ui),
     ("page.fairlight", Ui),
     ("page.deliver", Ui),
+    ("workspace.mediaPool", Ui),
+    ("workspace.effects", Ui),
+    ("workspace.index", Ui),
+    ("workspace.soundLibrary", Ui),
+    ("workspace.mixer", Ui),
+    ("workspace.metadata", Ui),
+    ("workspace.inspector", Ui),
+    ("workspace.resetLayout", Ui),
     ("project.open", Engine("file.open")),
     ("project.save", Engine("file.save")),
     ("project.saveAs", Engine("file.saveAs")),
