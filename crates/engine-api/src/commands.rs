@@ -191,12 +191,29 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("timeline.snapping", "Snapping", Edit, ""),
     c("timeline.linkedSelection", "Linked Selection", Edit, ""),
     c("timeline.closeGap", "Close Gap", Edit, ""),
+    // editing with the mouse: one command per drag (times in the ticks timeline.inspect uses)
+    c(
+        "timeline.moveClips",
+        "Move Clips",
+        Edit,
+        r#"{"moves": [{"clip": id, "track": id|"V2", "time": ticks}], "insert": bool, "linked"?: bool}"#,
+    ),
+    c(
+        "timeline.trimEdge",
+        "Resize or Ripple an Edge",
+        Edit,
+        r#"{"clip": id, "edge": "in"|"out", "mode": "regular"|"ripple", "deltaFrames": int}"#,
+    ),
+    c("timeline.rollEdit", "Roll Edit", Edit, r#"{"left": id, "right": id, "deltaFrames": int}"#),
+    c("timeline.slipClip", "Slip Clip", Edit, r#"{"clip": id, "deltaFrames": int}"#),
+    c("timeline.slideClip", "Slide Clip", Edit, r#"{"clip": id, "deltaFrames": int}"#),
+    c("timeline.bladeClip", "Blade (cut one clip)", Edit, r#"{"clip": id, "time": ticks}"#),
     // track headers
     c(
         "track.set",
-        "Track Settings (Lock, Enable, Mute, Solo)",
+        "Track Settings (Lock, Enable, Mute, Solo, Sync Lock)",
         Edit,
-        r#"{"track": "V1"|"A1"|id, "locked"?: bool, "enabled"?: bool, "muted"?: bool, "solo"?: bool}"#,
+        r#"{"track": "V1"|"A1"|id, "locked"?: bool, "enabled"?: bool, "muted"?: bool, "solo"?: bool, "syncLock"?: bool}"#,
     ),
     c(
         "track.target",

@@ -65,6 +65,9 @@ doc is updated *and* the entry says which section moved.
 | D-018 | 2026-10-13 | ui | The editor's look is "Black Box", with a few colour themes now and skins later | active |
 | B-021 | 2026-10-13 | docs | HANDOFF counted 71 vocabulary commands and 46 headless; there were 75 and 50 | fixed |
 | D-019 | 2026-10-13 | engine | The adapter answers `timeline.inspect`, adding the editor state FilmCraft keeps outside the sequence | active |
+| D-020 | 2026-10-13 | ui | Mouse editing follows Resolve's tools; each drag is one command and one undo step | active |
+| B-022 | 2026-10-13 | ui | Slipping a clip by dragging moved its media the wrong way | fixed |
+| B-023 | 2026-10-13 | engine | FilmCraft refuses a ripple that Resolve makes by cutting sync-locked clips across the edit | open; worked around with sync lock switches |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1043,3 +1046,58 @@ read the same JSON, so agents see the same state.
 **Caught by / checked:** an adapter test round-trips lock, mute, targeting and destination
 through `timeline.inspect`; UI tests click "Lock V1", "Auto Select V1", "Show V1" and the
 Snapping button.
+
+### D-020 — Mouse editing follows Resolve's tools; each drag is one command and one undo step
+**Area:** ui · **Status:** active · **Doc:** ARCHITECTURE "The editor"; `apps/resolution-app/src/timeline_ui.rs`
+
+**Decision:** the timeline tool and where a drag starts choose the edit, as the Reference Manual
+describes (pp. 1061-1066):
+- **Selection:** drag a clip's body to move it, up or down onto another track of its kind. Drag
+  an edge with nothing against it to resize it; drag the cut between two clips to roll it.
+- **Trim:** drag an edge to ripple it, and within 3 px of a cut to roll it. Drag a clip's upper
+  half to slip it and its lower half to slide it.
+- **Blade:** click a clip to cut that clip, and that clip only.
+
+While dragging, the timeline draws where the clip or cut will land and the change in timecode.
+On release, one vocabulary command goes to the engine. The six new ids pass straight to
+FilmCraft: `timeline.moveClips`, `trimEdge`, `rollEdit`, `slipClip`, `slideClip` and `bladeClip`
+(FilmCraft's `timeline.move`, `trim`, `roll`, `slip`, `slide`, `razor`). With snapping on, moving
+edges snap within 8 px to the playhead, marks, markers and other clips' edges.
+
+**Why one command per drag:** an edit sent on every mouse move would put dozens of steps in the
+undo history, and would re-render the viewer and remix the sound on every pixel. The engine
+clamps each edit (media limits, neighbouring clips, linked partners), so the preview can be
+optimistic. **Cost:** the preview does not show the engine's clamping. A drag past the media's
+end lands where the engine stops it, not where the outline was.
+
+**Checked:** an adapter test runs each command on the demo project and checks the result.
+UI tests drag with a simulated mouse: resize and move in Selection, slip and ripple in Trim, and
+a Blade click.
+
+### B-022 — Slipping a clip by dragging moved its media the wrong way
+**Area:** ui · **Status:** fixed · **Caught by:** a UI test (the slip drag changed nothing at the
+start of the clip's media)
+
+**Symptom:** a slip dragged to the left asked the engine for a negative delta. That moves the
+clip's media earlier, but the media should follow the pointer. The manual's overlay "moves left
+and right as you drag" (p. 1063), and FilmCraft's own UI negates the drag the same way
+(`ui-egui/src/panels/timeline.rs`).
+
+**Fix:** a slip sends minus the drag's frames: dragging right shows earlier frames.
+
+### B-023 — FilmCraft refuses a ripple that Resolve makes by cutting sync-locked clips across the edit
+**Area:** engine · **Status:** open; worked around with sync lock switches · **Caught by:** the
+adapter test, rippling in the demo project
+
+**Symptom:** rippling the demo's first cut fails with "this edit would break sync: A2 is
+sync-locked and has a clip in the way". The music on A2 spans every cut. Resolve keeps sync
+instead: "clips on other tracks may be cut to allow you to perform insert trims" (pp.
+1074-1076), so the music is cut at the edit and trimmed.
+
+**Workaround:** each track header now has Resolve's Sync Lock switch (`track.set` `syncLock`).
+Turning it off on the music track lets the ripple through without moving the music. A UI test
+checks exactly that.
+
+**Not done:** Resolve's own behaviour. One way, not tried: before rippling, the adapter cuts
+clips on other sync-locked tracks at the edit (`timeline.razor`). Whether FilmCraft's ripple then
+trims them the way Resolve does is unverified. It may need an upstream change.

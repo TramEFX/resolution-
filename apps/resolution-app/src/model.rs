@@ -22,6 +22,8 @@ pub struct Clip {
     /// Timeline seconds.
     pub start: f64,
     pub end: f64,
+    /// Where in its media the clip starts (seconds).
+    pub source_in: f64,
     pub enabled: bool,
     pub selected: bool,
 }
@@ -35,6 +37,8 @@ pub struct Track {
     pub name: String,
     pub clips: Vec<Clip>,
     pub locked: bool,
+    /// Ripples with edits on other tracks (Resolve's sync lock).
+    pub sync_lock: bool,
     /// Video tracks: shown. Audio tracks use `muted`.
     pub enabled: bool,
     pub muted: bool,
@@ -108,6 +112,7 @@ impl Timeline {
                             id: t["id"].as_u64().unwrap_or_default(),
                             label: format!("{prefix}{}", n + 1),
                             locked: t["locked"].as_bool().unwrap_or(false),
+                            sync_lock: t["syncLock"].as_bool().unwrap_or(true),
                             enabled: t["enabled"].as_bool().unwrap_or(true),
                             muted: t["muted"].as_bool().unwrap_or(false),
                             solo: t["solo"].as_bool().unwrap_or(false),
@@ -126,6 +131,7 @@ impl Timeline {
                                                 name: c["name"].as_str().unwrap_or_default().to_string(),
                                                 start: seconds(&c["start"])?,
                                                 end: seconds(&c["end"])?,
+                                                source_in: seconds(&c["sourceIn"]).unwrap_or(0.0),
                                                 enabled: c["enabled"].as_bool().unwrap_or(true),
                                                 selected: selection.contains(&id),
                                             })
@@ -246,6 +252,11 @@ pub fn label_rgb(name: &str) -> [u8; 3] {
     rgb.map(|c| ((u16::from(c) + 255) / 2) as u8)
 }
 
+/// The engine time (ticks) at which timeline frame `frame` starts, exactly.
+pub fn frame_ticks(rate: Rate, frame: i64) -> i64 {
+    (i128::from(frame) * i128::from(TICKS) * i128::from(rate.den) / i128::from(rate.num.max(1))) as i64
+}
+
 /// The project's name, for the interface toolbar.
 pub fn project_name(project: &Value) -> Option<String> {
     project["name"].as_str().filter(|n| !n.is_empty()).map(str::to_string)
@@ -319,6 +330,13 @@ mod tests {
         assert_eq!((tl.markers[0].start, tl.markers[0].name.as_str()), (3.0, "beat"));
         assert_eq!((tl.snapping, tl.linked_selection), (false, true));
         assert!(Timeline::from_json(&json!({"error": "no timeline"})).is_none());
+    }
+
+    #[test]
+    fn frames_convert_to_ticks_exactly() {
+        // frame 48 at 23.976 starts at 2.002 s
+        assert_eq!(frame_ticks(Rate::new(24_000, 1001), 48), 2_002 * T / 1000);
+        assert_eq!(frame_ticks(Rate::new(25, 1), 50), 2 * T);
     }
 
     #[test]

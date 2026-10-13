@@ -51,10 +51,11 @@ pub enum Icon {
     AutoSelect,
     Snapping,
     Linked,
+    SyncLock,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 38] = [
+    pub const ALL: [Icon; 39] = [
         Icon::MediaPool,
         Icon::Effects,
         Icon::Index,
@@ -93,6 +94,7 @@ impl Icon {
         Icon::AutoSelect,
         Icon::Snapping,
         Icon::Linked,
+        Icon::SyncLock,
     ];
 
     /// The drawing, in a 16×16 box.
@@ -142,6 +144,7 @@ impl Icon {
                 "M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM8 10a2 2 0 1 1 0-4a2 2 0 1 1 0 4z"
             }
             Icon::AutoSelect => "M2.5 2.5h11v11h-11zM5.5 8l2 2 3.5-4",
+            Icon::SyncLock => "M2.5 4.5h4v7h-4zM9.5 4.5h4v7h-4zM6.5 8h3",
             Icon::Snapping => "M3.5 2.5h3v5a1.5 1.5 0 0 0 3 0v-5h3v5a4.5 4.5 0 0 1-9 0zM3.5 5.5h3M9.5 5.5h3",
             Icon::Linked => {
                 "M7 9a2.5 2.5 0 0 0 3.5 0l2-2a2.5 2.5 0 0 0-3.5-3.5l-.75.75M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.75-.75"

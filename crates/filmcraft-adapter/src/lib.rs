@@ -267,6 +267,68 @@ mod tests {
         assert!(tl(&mut e)["linkedSelection"].is_boolean());
     }
 
+    /// The mouse-editing commands, each one undo step: ripple, roll, slip, slide, move, blade.
+    #[test]
+    fn mouse_edits_trim_roll_slip_slide_move_and_blade() {
+        let mut e = demo();
+        let tl = |e: &mut FilmCraftEngine| e.execute("timeline.inspect", json!({})).expect("inspect").result;
+        let v1 = |t: &Value, i: usize, key: &str| t["video"][0]["items"][i][key].as_i64().expect(key);
+        let t0 = tl(&mut e);
+        let (a, b) = (v1(&t0, 0, "clip"), v1(&t0, 1, "clip"));
+        let fps_ticks = v1(&t0, 0, "duration") / v1(&t0, 0, "durationFrames");
+        assert_eq!(v1(&t0, 0, "end"), v1(&t0, 1, "start"), "the demo's first two clips are adjacent");
+
+        // the demo's music on A2 spans the cuts and A2 is sync-locked, which blocks rippling
+        e.execute("track.set", json!({"track": "A2", "syncLock": false})).expect("sync lock off");
+        // ripple the first clip's out point 10 frames earlier: everything after moves left
+        let out = e
+            .execute("timeline.trimEdge", json!({"clip": a, "edge": "out", "mode": "ripple", "deltaFrames": -10}))
+            .expect("ripple");
+        assert!(out.undo_label.is_some());
+        let t = tl(&mut e);
+        assert_eq!(v1(&t, 1, "start"), v1(&t0, 1, "start") - 10 * fps_ticks);
+        e.undo();
+
+        // roll the cut 5 frames later: the timeline's length stays
+        e.execute("timeline.rollEdit", json!({"left": a, "right": b, "deltaFrames": 5})).expect("roll");
+        let t = tl(&mut e);
+        assert_eq!(v1(&t, 0, "end"), v1(&t0, 0, "end") + 5 * fps_ticks);
+        assert_eq!(t["duration"], t0["duration"]);
+        e.undo();
+
+        // slip the second clip: same place, different media
+        e.execute("timeline.slipClip", json!({"clip": b, "deltaFrames": 4})).expect("slip");
+        let t = tl(&mut e);
+        assert_eq!(
+            (v1(&t, 1, "start"), v1(&t, 1, "sourceIn")),
+            (v1(&t0, 1, "start"), v1(&t0, 1, "sourceIn") + 4 * fps_ticks)
+        );
+        e.undo();
+
+        // slide the second clip 3 frames later: its neighbours give and take
+        e.execute("timeline.slideClip", json!({"clip": b, "deltaFrames": 3})).expect("slide");
+        let t = tl(&mut e);
+        assert_eq!(
+            (v1(&t, 1, "start"), v1(&t, 0, "end")),
+            (v1(&t0, 1, "start") + 3 * fps_ticks, v1(&t0, 0, "end") + 3 * fps_ticks)
+        );
+        e.undo();
+
+        // move the second clip up to V2
+        let start = v1(&t0, 1, "start");
+        e.execute("timeline.moveClips", json!({"moves": [{"clip": b, "track": "V2", "time": start}], "insert": false}))
+            .expect("move");
+        let t = tl(&mut e);
+        assert!(t["video"][1]["items"].as_array().expect("V2").iter().any(|i| i["clip"].as_i64() == Some(b)));
+        e.undo();
+
+        // blade the first clip in the middle: one more clip on V1
+        let mid = (v1(&t0, 0, "start") + v1(&t0, 0, "end")) / 2;
+        e.execute("timeline.bladeClip", json!({"clip": a, "time": mid})).expect("blade");
+        let n = |t: &Value| t["video"][0]["items"].as_array().map_or(0, Vec::len);
+        assert_eq!(n(&tl(&mut e)), n(&t0) + 1);
+    }
+
     /// LOG B-001: undo and redo move through the history; they add no step of their own.
     #[test]
     fn undo_and_redo_commands_add_no_undo_step() {

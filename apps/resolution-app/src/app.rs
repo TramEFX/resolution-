@@ -403,6 +403,12 @@ impl ResolutionApp {
         }
     }
 
+    /// An edit made with the mouse: stops playback first, as an edit from a key does.
+    fn edit(&mut self, id: &str, params: serde_json::Value) {
+        self.stop();
+        self.worker.run(id, params);
+    }
+
     /// Play from the playhead at `speed` (from the start when it is on the last frame). Starts
     /// with the preroll; [`ResolutionApp::advance_playback`] starts the clock and the sound.
     fn play(&mut self, speed: f64) {
@@ -1174,9 +1180,14 @@ impl ResolutionApp {
             let playhead = self.playhead();
             match &self.timeline {
                 Some(tl) => {
-                    let rate = tl.rate;
+                    let (rate, linked) = (tl.rate, tl.linked_selection);
+                    let tool = match self.mode {
+                        EditMode::Selection => timeline_ui::Tool::Selection,
+                        EditMode::Trim => timeline_ui::Tool::Trim,
+                        EditMode::Blade => timeline_ui::Tool::Blade,
+                    };
                     let (actions, rects) =
-                        timeline_ui::show(ui, &look, tl, playhead, &timeline_ui::View { zoom: self.zoom });
+                        timeline_ui::show(ui, &look, tl, playhead, &timeline_ui::View { zoom: self.zoom, tool });
                     self.clip_rects = rects;
                     for a in actions {
                         match a {
@@ -1188,6 +1199,35 @@ impl ResolutionApp {
                             Action::Track { track, command, field, value } => {
                                 self.worker.run(command, json!({ "track": track, field: value }))
                             }
+                            Action::Move { clip, track, start_frame } => self.edit(
+                                "timeline.moveClips",
+                                json!({
+                                    "moves": [{ "clip": clip, "track": track, "time": model::frame_ticks(rate, start_frame) }],
+                                    "insert": false,
+                                    "linked": linked,
+                                }),
+                            ),
+                            Action::Trim { clip, edge, ripple, frames } => self.edit(
+                                "timeline.trimEdge",
+                                json!({
+                                    "clip": clip,
+                                    "edge": edge.name(),
+                                    "mode": if ripple { "ripple" } else { "regular" },
+                                    "deltaFrames": frames,
+                                }),
+                            ),
+                            Action::Roll { left, right, frames } => self
+                                .edit("timeline.rollEdit", json!({ "left": left, "right": right, "deltaFrames": frames })),
+                            Action::Slip { clip, frames } => {
+                                self.edit("timeline.slipClip", json!({ "clip": clip, "deltaFrames": frames }))
+                            }
+                            Action::Slide { clip, frames } => {
+                                self.edit("timeline.slideClip", json!({ "clip": clip, "deltaFrames": frames }))
+                            }
+                            Action::Blade { clip, frame } => self.edit(
+                                "timeline.bladeClip",
+                                json!({ "clip": clip, "time": model::frame_ticks(rate, frame) }),
+                            ),
                         }
                     }
                 }
@@ -1587,6 +1627,110 @@ mod tests {
         pump(&mut h, "V1's auto track selector to flip", |a| v1(a).targeted != targeted);
         click(&mut h, "Show V1");
         pump(&mut h, "V1 to hide", |a| !v1(a).enabled);
+    }
+
+    /// Press at `from`, move to `to` in steps, release: a mouse drag.
+    fn drag(h: &mut Harness<'_, ResolutionApp>, from: Pos2, to: Pos2) {
+        h.event(egui::Event::PointerMoved(from));
+        h.step();
+        h.event(egui::Event::PointerButton {
+            pos: from,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+        for k in 1..=6 {
+            h.event(egui::Event::PointerMoved(from + (to - from) * (k as f32 / 6.0)));
+            h.step();
+        }
+        h.event(egui::Event::PointerButton {
+            pos: to,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        h.step();
+        h.step();
+    }
+
+    /// The demo's clip on V2, and where it is drawn.
+    fn v2_clip(a: &ResolutionApp) -> (model::Clip, egui::Rect) {
+        let c =
+            a.timeline.as_ref().and_then(|t| t.video.get(1)).and_then(|v| v.clips.first().cloned()).expect("V2 clip");
+        let rect = a.clip_rects.iter().find(|(_, id)| *id == c.id).map(|(r, _)| *r).expect("V2 clip on screen");
+        (c, rect)
+    }
+
+    #[test]
+    fn dragging_with_the_selection_tool_resizes_and_moves() {
+        let mut h = demo();
+        pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
+        // turn snapping off so the drags land where the pointer does
+        if h.state().timeline.as_ref().is_some_and(|t| t.snapping) {
+            h.state_mut().command("timeline.snapping");
+            pump(&mut h, "snapping off", |a| a.timeline.as_ref().is_some_and(|t| !t.snapping));
+        }
+        let (c, r) = v2_clip(h.state());
+        // the out edge, 60 px left: a shorter clip
+        drag(&mut h, pos2(r.right() - 2.0, r.center().y), pos2(r.right() - 62.0, r.center().y));
+        pump(&mut h, "the V2 clip to end earlier", |a| v2_clip(a).0.end < c.end - 0.1);
+        let (c, r) = v2_clip(h.state());
+        assert!((v2_clip(h.state()).0.start - c.start).abs() < 1e-9, "a resize keeps the in point");
+        // the middle, 80 px right: the clip moves later, same length
+        drag(&mut h, r.center(), r.center() + egui::vec2(80.0, 0.0));
+        pump(&mut h, "the V2 clip to move later", |a| v2_clip(a).0.start > c.start + 0.1);
+        let moved = v2_clip(h.state()).0;
+        assert!(((moved.end - moved.start) - (c.end - c.start)).abs() < 0.05, "a move keeps the length");
+    }
+
+    #[test]
+    fn the_trim_tool_slips_and_the_blade_tool_cuts() {
+        let mut h = demo();
+        pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
+        let (c, r) = v2_clip(h.state());
+        h.key_press(Key::T);
+        h.step();
+        // the upper half of a clip slips it: same place, other media
+        drag(&mut h, r.center() - egui::vec2(0.0, r.height() / 4.0), r.center() + egui::vec2(-50.0, -r.height() / 4.0));
+        pump(&mut h, "the V2 clip to slip", |a| (v2_clip(a).0.source_in - c.source_in).abs() > 0.05);
+        assert!((v2_clip(h.state()).0.start - c.start).abs() < 1e-9, "a slip keeps the clip in place");
+        // the blade cuts the clip it is clicked on
+        h.key_press(Key::B);
+        h.step();
+        let (_, r) = v2_clip(h.state());
+        let at = r.center();
+        h.event(egui::Event::PointerMoved(at));
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+            h.step();
+        }
+        pump(&mut h, "V2 to hold two clips", |a| a.timeline.as_ref().is_some_and(|t| t.video[1].clips.len() == 2));
+    }
+
+    #[test]
+    fn the_trim_tool_ripples_once_the_music_track_is_not_sync_locked() {
+        let mut h = demo();
+        pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
+        // the demo's music on A2 spans every cut, and FilmCraft refuses a ripple that would
+        // break a sync-locked track's sync (LOG B-023)
+        click(&mut h, "Sync Lock A2");
+        pump(&mut h, "A2's sync lock off", |a| a.timeline.as_ref().is_some_and(|t| !t.audio[1].sync_lock));
+        h.key_press(Key::T);
+        h.step();
+        let v1 =
+            |a: &ResolutionApp, i: usize| a.timeline.as_ref().map(|t| t.video[0].clips[i].clone()).expect("V1 clip");
+        let (first, second) = (v1(h.state(), 0), v1(h.state(), 1));
+        let r = h.state().clip_rects.iter().find(|(_, id)| *id == first.id).map(|(r, _)| *r).expect("first clip drawn");
+        // just inside the out edge, beside the cut rather than on it: a ripple, not a roll
+        drag(&mut h, pos2(r.right() - 5.0, r.center().y), pos2(r.right() - 65.0, r.center().y));
+        pump(&mut h, "the next clip to ripple earlier", |a| v1(a, 1).start < second.start - 0.1);
     }
 
     #[test]

@@ -77,6 +77,12 @@ An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP s
   Metadata on the right, the timeline below with the Mixer beside it. The interface toolbar shows
   and hides them with `workspace.*` ids (Resolve's Workspace > Show Panel in Workspace); panels
   never dock elsewhere. Effects, Sound Library, Metadata and Mixer are empty slots so far.
+- **Editing with the mouse** (LOG D-020, `timeline_ui.rs`). The tool and where a drag starts pick
+  the edit, as in Resolve: Selection moves, resizes and rolls; Trim ripples, rolls, slips and
+  slides; Blade cuts the clicked clip. The drag previews where the edit lands, snapping if it is
+  on, and becomes one vocabulary command when released (`timeline.moveClips`, `trimEdge`,
+  `rollEdit`, `slipClip`, `slideClip`, `bladeClip`), so each drag is one undo step and agents
+  can make the same edits.
 - **One reader of engine JSON.** `model.rs` alone knows the shape of `timeline.inspect` and
   `project.inspect` (FilmCraft's today). A typed, engine-neutral model in `engine-api` should
   replace it.
