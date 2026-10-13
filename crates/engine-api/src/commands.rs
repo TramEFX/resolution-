@@ -64,7 +64,7 @@ pub enum Risk {
 }
 
 /// Vocabulary commands that only read.
-const READ: &[&str] = &["project.inspect", "timeline.inspect"];
+const READ: &[&str] = &["project.inspect", "timeline.inspect", "source.inspect"];
 /// Vocabulary commands that write files or replace the open project.
 const DESTRUCTIVE: &[&str] = &["project.open", "project.save", "project.saveAs"];
 
@@ -127,6 +127,14 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("media.import", "Import Media", Media, r#"{"paths": [string]}"#),
     c("timeline.createFromClips", "Create New Timeline Using Selected Clips", Media, r#"{"items": [id]}"#),
     c("source.open", "Open in Source Viewer", Edit, r#"{"item": id}"#),
+    c(
+        "source.inspect",
+        "Inspect Source Viewer",
+        Edit,
+        "query; returns the source clip (range, frame rate, playhead, In and Out) as JSON",
+    ),
+    c("source.seek", "Move the Source Playhead", Edit, r#"{"frame": int}"#),
+    c("view.toggleViewer", "Toggle Between Source and Timeline Viewers", Edit, ""),
     c("timeline.open", "Open Timeline", Media, r#"{"item": id}"#),
     // history
     c("edit.undo", "Undo", Global, ""),

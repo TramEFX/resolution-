@@ -43,6 +43,10 @@ pub const MAP: &[(&str, Target)] = &[
     ("project.inspect", Engine("project.inspect")),
     // FilmCraft's sequence.inspect, plus targeting, snapping and linked selection
     ("timeline.inspect", Adapter),
+    // FilmCraft's source.inspect, plus the clip's name and exact frame rate
+    ("source.inspect", Adapter),
+    ("source.seek", Engine("source.setPlayhead")),
+    ("view.toggleViewer", Ui),
     ("media.import", Engine("file.import")),
     ("timeline.createFromClips", Engine("file.newSequenceFromClip")),
     ("source.open", Engine("source.open")),

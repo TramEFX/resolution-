@@ -22,12 +22,14 @@ pub enum Reply {
         result: Result<Outcome, String>,
     },
     /// The project after a batch of commands. `timeline` and `playback` are `None` when no
-    /// timeline is open.
+    /// timeline is open; `source_playback` when no clip is open in the source viewer.
     Snapshot {
         revision: u64,
         timeline: Option<Value>,
         project: Option<Value>,
+        source: Option<Value>,
         playback: Option<Arc<dyn Playback>>,
+        source_playback: Option<Arc<dyn Playback>>,
     },
     Notice {
         message: String,
@@ -109,7 +111,15 @@ fn snapshot(engine: &mut dyn Engine) -> Reply {
     let mut query = |id: &str| engine.execute(id, json!({})).ok().map(|o| o.result);
     let timeline = query("timeline.inspect");
     let project = query("project.inspect");
-    Reply::Snapshot { revision: engine.revision(), timeline, project, playback: engine.playback() }
+    let source = query("source.inspect");
+    Reply::Snapshot {
+        revision: engine.revision(),
+        timeline,
+        project,
+        source,
+        playback: engine.playback(),
+        source_playback: engine.source_playback(),
+    }
 }
 
 #[cfg(test)]

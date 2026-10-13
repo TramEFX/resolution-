@@ -104,6 +104,12 @@ pub trait Engine {
         None
     }
 
+    /// The clip open in the source viewer, played the same way: its frames from the first of
+    /// its range, its sound from the same point. `None` when no clip is open.
+    fn source_playback(&self) -> Option<Arc<dyn Playback>> {
+        None
+    }
+
     /// Events since the last call.
     fn drain_events(&mut self) -> Vec<EngineEvent>;
 }

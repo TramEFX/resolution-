@@ -68,6 +68,7 @@ doc is updated *and* the entry says which section moved.
 | D-020 | 2026-10-13 | ui | Mouse editing follows Resolve's tools; each drag is one command and one undo step | active |
 | B-022 | 2026-10-13 | ui | Slipping a clip by dragging moved its media the wrong way | fixed |
 | B-023 | 2026-10-13 | engine | FilmCraft refuses a ripple that Resolve makes by cutting sync-locked clips across the edit | open; worked around with sync lock switches |
+| D-021 | 2026-10-13 | ui | A source viewer beside the timeline viewer: a second `Playback`, and keys act on the active viewer | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1101,3 +1102,50 @@ checks exactly that.
 **Not done:** Resolve's own behaviour. One way, not tried: before rippling, the adapter cuts
 clips on other sync-locked tracks at the edit (`timeline.razor`). Whether FilmCraft's ripple then
 trims them the way Resolve does is unverified. It may need an upstream change.
+
+### D-021 — A source viewer beside the timeline viewer: a second `Playback`, and keys act on the active viewer
+**Area:** ui · **Status:** active · **Doc:** ARCHITECTURE "The editor"; `monitor.rs`; ROADMAP step 2
+
+**Decision:** the Edit page shows two viewers side by side, as Resolve does: source on the left,
+timeline on the right.
+- **Engine:** `Engine` gains `source_playback()`, a second `Playback` for the clip open in the
+  source viewer.
+  - On FilmCraft, `SourceSnapshot` renders frames with `render_item`, as FilmCraft's Source
+    monitor does: media as SDR Rec. 709. It reads sound straight from the media at any sample
+    rate.
+  - Frame 0 is the first frame of the clip's range.
+- **App:** each viewer is a `Monitor` (`monitor.rs`), holding what the app used to hold for its
+  one viewer: frame server, frame on screen, transport, pending seeks and meter. The two share
+  the audio device (`Sound`), and starting one stops the other.
+- **Active viewer:** playback keys (Space, J/K/L), frame steps, Home/End, I/O and markers act on
+  the active viewer. Clicking a viewer makes it active, and so does Q (`view.toggleViewer`,
+  manual p. 795). Opening a clip from the Media Pool makes the source viewer active.
+- **Marks:** source marks are the vocabulary's own mark commands with `"target": "source"`, which
+  FilmCraft routes to the clip.
+- **New vocabulary:**
+  - `source.inspect`: the adapter adds the clip's name and exact frame rate, since FilmCraft
+    gives a float.
+  - `source.seek`: FilmCraft's `source.setPlayhead`.
+  - `view.toggleViewer`.
+
+F9 and F10 already used FilmCraft's three-point source edits (`source.insert`/`overwrite`).
+With a source viewer they now take the clip's In and Out from it.
+
+**Why a second `Playback` rather than a source mode of one:** the two viewers hold different
+frames at once, and Resolve plays either. One snapshot per viewer keeps the frame cache, the
+transport and the playhead of each separate. Mixing them would make "which frame is this?"
+depend on a mode. **Cost:** four frame workers instead of two, with only one viewer's playing
+at a time. The other's cache stays warm.
+
+**Checked:**
+- An adapter test opens a demo clip, renders and mixes it, and moves its playhead and In.
+- UI tests step the source with the arrow keys and mark In and Out, then insert with F9 and
+  switch viewers with Q.
+- Another UI test plays the source while the timeline stays still.
+- A screenshot with `--source`, a new start-up option that opens a clip by name.
+
+**Not yet:**
+- The source viewer counts timecode from 0, not from the clip's own start timecode
+  (02:01:12:00 for the Sony clip).
+- The other F-key edits (Replace, Place on Top, Ripple Overwrite, Fit to Fill, Append) are
+  still `Missing`.

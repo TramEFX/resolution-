@@ -63,11 +63,15 @@ An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP s
   reads the replies each repaint, so a slow command never freezes the window, and an engine
   panic fails one command, not the app. After each batch the engine sends a snapshot: the
   timeline and project to draw, and a `Playback` the viewer renders and plays from.
-- **Viewer and playback** (`crates/playback`, LOG D-013). Frames render on two worker threads into
-  a cache, ahead of the playhead while playing; the viewer shows the exact frame or holds the
-  newest one it has. Sound is mixed ahead on its own thread, and the audio device is the clock.
-  Stopping sends `playhead.set` with the frame on screen, so the engine's playhead is where you
-  stopped.
+- **Viewers and playback** (`crates/playback`, LOG D-013; `monitor.rs`, D-021). Two viewers, as in
+  Resolve: the source viewer plays the clip open in it (the engine's `source_playback`, frames
+  from FilmCraft's `render_item` and sound from the media), the timeline viewer the timeline
+  (`playback`). Each has a `Monitor`: its frame server, frame on screen and transport. They share
+  the audio device, and only one plays at a time. Frames render on worker threads into a cache,
+  ahead of the playhead while playing; a viewer shows the exact frame or holds the newest one it
+  has. Sound is mixed ahead on its own thread, and the audio device is the clock. Stopping sends
+  `playhead.set` (or `source.seek`) with the frame on screen, so the engine's playhead is where
+  you stopped. Playback keys, marks and frame steps act on the active viewer.
 - **Keys are data.** A key press becomes a keymap chord (`keys.rs`), the keymap gives a vocabulary
   id, and the id runs. Front-end ids (`Target::Ui`: pages, panels, playback, zoom, edit modes) are
   handled in the app; everything else goes to the engine. The menus and toolbar buttons run the
