@@ -1,6 +1,6 @@
 # Picking up locally
 
-Where things stand and how to continue on your own machine. Last updated 2026-10-12.
+Where things stand and how to continue on your own machine. Last updated 2026-10-13.
 
 ## 1. Set up (once)
 
@@ -64,14 +64,14 @@ client. Destructive commands (save/open/delete) ask the agent to confirm with yo
 
 | Area | State |
 |---|---|
-| Engine | FilmCraft **v0.6.0** (`2ff3f5e`) via the private mirror, pinned at `sync/fc-20261012` (`9acf816`), synced 2026-10-12 (LOG D-011) |
-| Mirror CI | **Green** for the pin: run [38216382326](https://github.com/TramEFX/resolution-filmcraft/actions/runs/38216382326) (2026-10-12, Linux, ~46 min) on the sync point: 2,808 tests passed, 0 failed, 0 skipped; layers, assets, wasm ok. The mixer speed test stays outside the gate (LOG B-007) |
+| Engine | FilmCraft **main at `cee1feb`** (2026-10-13, after v0.7.2; not a release tag) via the private mirror, pinned at `sync/fc-20261013` (`29d01cf`), synced 2026-10-13 (LOG D-015) |
+| Mirror CI | **Red outside our graph** for the pin: run [38413841087](https://github.com/TramEFX/resolution-filmcraft/actions/runs/38413841087) (2026-10-13, Linux, ~53 min) on the sync point: 3,473 tests passed, 3 failed, 44 ignored; fmt, clippy, layers, assets, wasm ok. The three failures are in FilmCraft's UI crate and desktop app, which Resolution doesn't use (LOG B-020); the pin was taken anyway (D-015). The mixer speed test stays outside the gate (LOG B-007) |
 | Engine boundary | `engine-api` trait + vocabulary (71 Resolve-named commands; 46 run headless on FilmCraft today, the rest are front-end or not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
-| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 30 tests across the workspace (passing on Windows), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
+| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 70 tests across the workspace (passing on Windows), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
 | GPU parity, real hardware | Local, 2026-10-12, at the previous pin (`2ba0629`): FilmCraft's 33 golden tests pass, the 4 GPU-vs-CPU ones on an AMD Radeon RX 9070 XT through Vulkan (the adapter wgpu's default request picks, checked with a probe). CI covers the same tests on software Vulkan (LOG B-005) |
 | UI | **First slice of the Edit page** (`apps/resolution-app`, LOG D-012): page bar, Media Pool, viewer, timeline, inspector, Resolve keys. 13 tests, including UI tests that press keys and click clips |
-| Playback | **Real time, with sound** (`crates/playback`, LOG D-013): frames rendered ahead, sound mixed ahead, the audio device as the clock, GPU video decoding (D-014). Measured on this PC: phone 4K30, Sony α7R II 4K 23.976 (100 Mbit/s) and 1080p60 H.264 play at full rate with no dropouts, the sound sample-exact against ffmpeg and checked by ear (2026-10-13); a sideways (portrait) phone 4K clip at 25 to 26 of 30 fps; CPU-heavy composites at about 10 fps. Footage decoded in software can freeze (B-017, open). 4K60 HEVC from ffmpeg-muxed files falls back to software (B-013, reported upstream as storytold/filmcraft#1483) |
+| Playback | **Real time, with sound** (`crates/playback`, LOG D-013): frames rendered ahead, sound mixed ahead, the audio device as the clock, GPU video decoding (D-014). Measured on this PC: phone 4K30, Sony α7R II 4K 23.976 (100 Mbit/s) and 1080p60 H.264 play at full rate with no dropouts, the sound sample-exact against ffmpeg and checked by ear (2026-10-13); a sideways (portrait) phone 4K clip at full rate too since the 2026-10-13 engine sync; 4K60 HEVC at about 50 fps on the GPU (B-013, fixed upstream); CPU-heavy composites at about 13 fps; footage decoded in software at a few to 10 fps (B-017 no longer freezes it) |
 | CI for this repo | None yet: needs a token that can read the private mirror |
 
 Gates before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
@@ -79,20 +79,21 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 
 ## 5. Next steps (pick any)
 
-1. **Follow the upstream reports** from mirror CI (filed 2026-10-12): storytold/filmcraft#1249 (APV
-   oracle needs ffmpeg 8.0+), #1250 (GPU tests vs adapters that cannot render `Rgba32Float`),
-   #1251 (Japanese-UI test needs a font). When one is fixed and synced, the matching CI
-   workaround can go (LOG B-004 to B-006). B-007 was already fixed upstream.
+1. **Follow the upstream reports.** As of the 2026-10-13 sync (LOG D-015), upstream has fixed #1249 (APV
+   oracle), #1251 (Japanese font), #1282 (B-011) and #1483 (B-013), all taken. The mirror's font install
+   (B-006) can now go. Still open: #1276 (B-010; upstream PR #1289 in review) and #1250, where a
+   maintainer says it is fixed since `4ccc1a84` and asks us to retry; our CI's software Vulkan (B-005)
+   hides the original failure, so a retry needs a run without it.
    The fixes are small (skip or fail clearly when the tool lacks a capability), and they shrink
    what our CI has to work around. A failure in FilmCraft's own tests is upstream's bug, not ours.
 2. **Real footage:** first pass done on 2026-10-12 ([report](research/real-footage-2026-10.md)). 33 profiles
    from 127 local files all import and render, including HEVC 4K60, 5-track audio, rotation and
    variable frame rate. A phone 4K clip decodes correctly. Two timing defects were found (LOG B-010,
-   reported as storytold/filmcraft#1276; B-011). Still needed: **camera and phone
+   reported as storytold/filmcraft#1276; B-011, fixed upstream and taken). Still needed: **camera and phone
    originals** (iPhone HEVC/HDR, 10-bit, GoPro, mirrorless, ProRes, MTS). The local files are mostly
    downloads. Third pass, 2026-10-12: a Sony α7R II clip and a Samsung portrait clip decode, play and
    sound correctly; the rotated clip exposed a playback deadlock (B-015, fixed) and a software-decoding
-   freeze (B-017). This decides how soon we need a fallback decoder (research risk #6).
+   freeze (B-017, gone since the 2026-10-13 sync). This decides how soon we need a fallback decoder (research risk #6).
 3. **Verify the keymap** on a machine with Resolve: open Keyboard Customization, compare each line
    of `keymaps/resolve.toml`, set `verified = true`, fix any wrong keys.
 4. **Draft timelines for agents** (agents edit a copy you accept), the next MCP milestone.
@@ -102,8 +103,7 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
    hosts the MCP server so agents edit the timeline you are looking at.
 7. **Faster playback where it is slow** (LOG D-013 "Known limits"): composite frames on the GPU as
    FilmCraft's GPU frame plans do, for effects-heavy timelines; proxies for footage too slow to
-   decode; B-013 upstream for ffmpeg-muxed HEVC; B-017, footage decoded in software freezing instead of
-   playing slowly. Measure with `play_bench` before and after.
+   decode. The 4K60 HEVC file plays at about 50 of 60 fps since B-013's fix. Measure with `play_bench` before and after.
 
 Weekly: `scripts/upstream-status.sh` to see what FilmCraft changed; `scripts/sync-mirror.sh` to
 take it (docs/UPSTREAM.md).

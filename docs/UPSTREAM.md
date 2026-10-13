@@ -28,9 +28,11 @@ Mirror branches:
   pinned ffmpeg 9 (D-008), software Vulkan (B-005), and a Japanese font (B-006). To try a
   workflow change without a new sync point, run `mirror-ci` by hand on `resolution`.
 
-**Current pin:** `sync/fc-20261012` = `9acf816` = storytold/filmcraft@`2ff3f5e` (v0.6.0, 2026-10-11)
-+ mirror plumbing (LOG D-011). Confirmed by mirror CI run 38216382326 on the sync point itself.
-Previous: `sync/fc-20261009` = `2ba0629` (`7b6c134`).
+**Current pin:** `sync/fc-20261013` = `29d01cf` = storytold/filmcraft@`cee1feb` (main, 2026-10-13;
+not a release tag) + mirror plumbing (LOG D-015). Mirror CI run 38413841087 on the sync point
+failed three tests in FilmCraft's UI crate and desktop app, outside our graph (B-020); the pin was
+taken anyway by decision (D-015).
+Previous: `sync/fc-20261012` = `9acf816` (`2ff3f5e`, v0.6.0).
 
 **Private-repo access:** `.cargo/config.toml` sets `net.git-fetch-with-cli`, so Cargo fetches the
 mirror with your normal git credentials. CI for this repo will need a token that can read the

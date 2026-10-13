@@ -39,24 +39,27 @@ doc is updated *and* the entry says which section moved.
 | D-008 | 2026-10-09 | ci | Mirror CI uses a pinned static ffmpeg and requires the oracle tests | active |
 | B-005 | 2026-10-10 | ci | Upstream's GPU parity tests fail on a GPU-less runner's software OpenGL | fixed |
 | D-009 | 2026-10-10 | ci | Mirror CI runs every test binary before the gate | folded into D-010 |
-| B-006 | 2026-10-10 | ci | Upstream's Japanese-UI test needs a system CJK font the runner lacks | open |
+| B-006 | 2026-10-10 | ci | Upstream's Japanese-UI test needs a system CJK font the runner lacks | fixed upstream (#1259), taken in D-015; the mirror's font install can go |
 | B-007 | 2026-10-10 | ci | Upstream's mixer speed test needs 4× realtime; the GitHub runner manages 2.1× | worked around by D-010; cause corrected; fixed upstream after the pin |
 | D-010 | 2026-10-10 | ci | Mirror CI runs upstream's gate phase by phase, leaving out one speed test | active |
 | D-011 | 2026-10-12 | upstream | Sync to FilmCraft v0.6.0, a release tag, not main | active |
 | B-008 | 2026-10-12 | tooling | upstream-status.sh printed "(none)" after listing command-id changes | fixed |
 | B-009 | 2026-10-12 | tooling | sync-mirror.sh --apply did nothing after a sync | fixed |
 | B-010 | 2026-10-12 | engine | MP4 with a leading empty edit plays one frame early | open, reported upstream |
-| B-011 | 2026-10-12 | engine | Frames timestamped just after the timeline grid show one frame late | open, reported upstream |
+| B-011 | 2026-10-12 | engine | Frames timestamped just after the timeline grid show one frame late | fixed upstream (#1328), taken in D-015; checked on the Android clip |
 | D-012 | 2026-10-12 | ui | The editor is an egui app, a client of the command API like MCP | active |
 | D-013 | 2026-10-12 | playback | Playback is ported from FilmCraft into an engine-neutral crate, fed by a `Playback` snapshot | active |
 | D-014 | 2026-10-12 | playback | The editor decodes video with the operating system's hardware decoders | active |
 | B-012 | 2026-10-12 | playback | Frames slower than real time were never shown: each was cancelled as the next fell due | fixed |
-| B-013 | 2026-10-12 | engine | Hardware HEVC decoding gives up when the in-band PPS has one trailing zero byte fewer | open, reported upstream |
+| B-013 | 2026-10-12 | engine | Hardware HEVC decoding gives up when the in-band PPS has one trailing zero byte fewer | fixed upstream (#1492), taken in D-015; checked on the 4K60 file |
 | B-014 | 2026-10-12 | playback | Sound dropped out while frames rendered: the mixer queued behind them in rayon's global pool | fixed; its shared pool caused B-015, reworked there |
 | B-015 | 2026-10-12 | playback | Two frame workers deadlocked on sideways phone video: their renders shared one rayon pool | fixed |
 | B-016 | 2026-10-12 | tooling | play_bench did not count a frame held until the end of the run | fixed |
-| B-017 | 2026-10-12 | playback | Footage decoded slower than real time can freeze instead of playing at a few frames a second | open |
+| B-017 | 2026-10-12 | playback | Footage decoded slower than real time can freeze instead of playing at a few frames a second | not reproduced since D-015's sync; cause not found |
 | B-018 | 2026-10-13 | tooling | upstream-status.sh reported two live command ids as removed: rustfmt had split their `cmd!(` calls over lines | fixed |
+| D-015 | 2026-10-13 | upstream | Sync to FilmCraft main (`cee1feb`), not the v0.7.2 tag, to take the fixes for our reports | active |
+| B-019 | 2026-10-13 | tooling | Deleting merged PR #5's branch closed the PR stacked on it (#6) instead of retargeting it | worked around |
+| B-020 | 2026-10-13 | ci | Upstream main fails three UI and desktop-app tests at the D-015 sync point (crates outside our graph) | open, upstream |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -344,7 +347,7 @@ showed one failure (B-004, then B-005). The first run with this pass listed the 
 builds (same profile and flags), so it adds only the second test execution, about 4 minutes.
 
 ### B-006 — Upstream's Japanese-UI test needs a system CJK font the runner lacks
-**Area:** ci · **Status:** open · **Caught by:** running it (mirror run 38016792934, the D-009 pass)
+**Area:** ci · **Status:** fixed upstream (#1259), taken in D-015 · **Caught by:** running it (mirror run 38016792934, the D-009 pass)
 
 **Symptom:** `filmcraft-ui-egui`'s `i18n::tests::language_commands_switch_and_persist_without_a_document`
 failed with `no Japanese font is installed on this system (for example Noto Sans CJK JP); the
@@ -537,7 +540,7 @@ picture and sound would be one or two frames apart. Audio was not measured.
 reproduction, and cross-references the closed #714 and #715.
 
 ### B-011 — Frames timestamped just after the timeline grid show one frame late
-**Area:** engine (FilmCraft) · **Status:** open · **Caught by:** running real footage (an Android 4K clip), then confirmed with a synthetic clip · **Doc:** [research/real-footage-2026-10.md](research/real-footage-2026-10.md)
+**Area:** engine (FilmCraft) · **Status:** fixed upstream (#1328), taken in D-015 · **Caught by:** running real footage (an Android 4K clip), then confirmed with a synthetic clip · **Doc:** [research/real-footage-2026-10.md](research/real-footage-2026-10.md)
 
 **Symptom:** the clip was Android 15, 3840×2160 H.264 High, 30 fps, with no B-frames, no edit list
 and starting at 0. Its first frame lasts 34.14 ms, so later frames sit up to ~0.7 ms after the
@@ -692,7 +695,7 @@ rendering finish unless the playhead has passed them. The demo's section went fr
 (1 worker), with the longest hold 0.4 s. Software 4K went to 8 to 9 fps.
 
 ### B-013 — Hardware HEVC decoding gives up when the in-band PPS has one trailing zero byte fewer
-**Area:** engine (FilmCraft) · **Status:** open · **Caught by:**
+**Area:** engine (FilmCraft) · **Status:** fixed upstream (#1492), taken in D-015 · **Caught by:**
 `play_bench` on a local 4K60 HEVC file, with the engine's log printed
 
 **Symptom:** a 3840×2160 60 fps HEVC Main file played at 1 fps although Media Foundation opened on the
@@ -790,7 +793,7 @@ too few frames.
 **Fix:** the hold still open at the end counts too. With it, B-017 shows as an 11 s hold.
 
 ### B-017 — Footage decoded slower than real time can freeze instead of playing at a few frames a second
-**Area:** playback · **Status:** open · **Caught by:** `play_bench` on the Samsung portrait 4K clip
+**Area:** playback · **Status:** not reproduced since D-015 · **Caught by:** `play_bench` on the Samsung portrait 4K clip
 with software decoding
 
 **Symptom:** with 2 workers, 1.6 fps, and one frame held for 11.3 s of a 12 s run: the picture stops
@@ -822,3 +825,90 @@ fooled; only the report was.
 
 **Fix:** the script joins the file into one line before matching. Against v0.7.2: nothing removed,
 `effects.moveKeyframes` added. Against `main` (`cee1feb`): also `edit.rippleDeleteHead`.
+
+### D-015 — Sync to FilmCraft main (`cee1feb`), not the v0.7.2 tag, to take the fixes for our reports
+**Area:** upstream · **Status:** active · **Doc:** UPSTREAM.md "Current pin"
+
+**Decision (Truman's, 2026-10-13):** the sync point is `sync/fc-20261013` = `29d01cf` =
+storytold/filmcraft@`cee1feb` (main, 2026-10-13 07:00 UTC) plus mirror plumbing. That is 568
+commits past v0.6.0 and 186 past the v0.7.2 tag (2026-10-12). This is an exception to D-011's
+preference for release tags.
+
+**Why:** upstream fixed four of our six reports on 2026-10-13, all after v0.7.2: B-013 (#1483, by
+#1492), B-011 (#1282, by #1328), B-004's APV oracle (#1249, by #1257) and B-006's font (#1251, by
+#1259). B-013 decides whether the HEVC footage Truman is getting decodes on the GPU. Mirror CI runs
+upstream's own test gate on the sync point either way, which is most of what a tag would add.
+**Cost:** the base is not a release. If mirror CI fails, the next tag is the fallback.
+
+**Also in the range:** upstream's fix for the deadlock behind B-015 (#846, in v0.7.2). The decoding
+it does under a cache's lock now runs on a rayon pool of its own. Resolution's one pool per frame
+worker stays: B-014 needs it.
+
+**What the sync found:**
+- No command id we map was removed; the drift test passes. Added upstream: `effects.moveKeyframes`
+  and `edit.rippleDeleteHead`. Neither fills a `Missing` Resolve edit (`rippleDeleteHead` overlaps
+  `timeline.rippleStartToPlayhead`). `markers.markIn`/`markOut` gained `frame`, `seconds` and
+  `timecode` parameters (#1043); our calls still work.
+- The adapter needed no change. All 70 Resolution tests pass (3.6 min build); fmt and clippy are
+  clean.
+- Five FilmCraft crates are new in our graph: `avi`, `dng`, `flac`, `mpa`, `vp8`. Upstream builds
+  `dng`, `flac` and `vp8` at `opt-level = 3` in dev; `Cargo.toml` now does too, so the overrides
+  match upstream's again.
+- The rebase kept upstream's workflows removed (they were reworked upstream, #1051). Only
+  `mirror-ci.yml` is in the mirror.
+
+**On Truman's footage, this PC, before → after** (`play_bench`, hardware decoding unless noted):
+
+| Check | Old pin (v0.6.0) | New pin |
+|---|---|---|
+| 4K60 HEVC muxed by ffmpeg (B-013's file) | 1 fps, software fallback | **49.9 fps**, decoded on the GPU (`HEVCVideoExtension`) |
+| Samsung portrait 4K | 24.6 to 26.1 fps | **30.0 fps**, the exact frame on every refresh |
+| Samsung portrait 4K, software decoding | froze (B-017) | 10.1 fps, longest hold 0.64 s |
+| Demo, composited section | 9.8, 10.0 fps | 13.5 fps |
+| Sony α7R II 4K 23.976, Android 4K30 | 24.0 and 30.0 fps, exact | the same |
+| Sound against ffmpeg (Sony, Samsung, Android) | sample-exact | sample-exact |
+| Android clip, frame shown at 10 times (B-011) | the frame on screen at 2 of 10 | **10 of 10** |
+| Samsung clip, the same 10 times | | the frame on screen at each timeline frame's start, 10 of 10 |
+
+The Samsung clip's frames sit a steady 12.4 ms after the 1/30 s grid (its first frame lasts 45.8 ms).
+At 4 of the 10 times, a source frame starts inside the timeline frame. The engine shows the
+source frame on screen at the timeline frame's start, which is the usual rule, not B-011.
+
+**Mirror CI was red, and the pin was taken anyway (Truman's call, 2026-10-13).** Run 38413841087
+on the sync point failed three tests, all in FilmCraft's UI crate and desktop app, which Resolution
+never depends on (B-020). Every crate in our graph passed. UPSTREAM.md's procedure moves the pin
+only on a green run, so this is a recorded exception, not a change to the procedure. Waiting for
+upstream to fix its own UI tests would have held back the HEVC and phone-footage fixes above.
+
+### B-019 — Deleting merged PR #5's branch closed the PR stacked on it (#6) instead of retargeting it
+**Area:** tooling · **Status:** worked around · **Caught by:** running it: `gh pr view 6` showed it
+closed, with a `base_ref_deleted` event
+
+**Symptom:** `gh pr merge 5 --merge --delete-branch` merged #5 and deleted `ui-walking-skeleton`.
+GitHub then closed #6, whose base it was, instead of moving #6 to `main`. #6's description had said
+GitHub would retarget it; that was stated without checking.
+
+**Workaround:** pushed the branch back at the same commit, reopened #6, changed its base to `main`,
+then deleted the branch again.
+
+**Next time:** retarget a stacked PR to `main` (`gh pr edit N --base main`) before deleting the
+branch under it.
+
+### B-020 — Upstream main fails three UI and desktop-app tests at the D-015 sync point
+**Area:** ci · **Status:** open, upstream · **Caught by:** mirror CI run 38413841087 on
+`sync/fc-20261013` · **Doc:** D-015
+
+**Symptom:** 3,473 tests passed, 3 failed and 44 were ignored, in 304 test binaries. fmt, clippy,
+`layers`, `assets` and `wasm` passed. The failures:
+- `filmcraft-ui-egui --test graphics_notice_ui`, `the_notice_follows_the_interface_language`: the
+  test expects the old Spanish wording ("renderizado por software"). Upstream's Spanish review
+  (#1233) changed the catalog to "procesamiento por software". Open upstream PR #1664 fixes the test.
+- `filmcraft --bin filmcraft`, `dev_icon::tests::desktop_file_matches_the_packaged_fields`: the
+  packaged Linux desktop file gained a `MimeType=` line that the generated one lacks. Upstream PRs
+  #1640 and #1671 call it a pre-existing failure on main.
+- `filmcraft-ui-egui --test timeline_marquee_ui`, `alt_box_selects_only_video_and_delete_keeps_linked_audio`
+  ("release preserves the individual selection"): no upstream mention found; not investigated.
+
+**Impact on Resolution:** none found. `filmcraft-ui-egui` and the `filmcraft` app are not in our
+graph (invariant: we never depend on them), and every crate we use passed. These are main-branch
+breakages, the risk D-015 accepted by not syncing to a tag.

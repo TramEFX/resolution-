@@ -25,16 +25,16 @@ resolution-mcp = { path = "crates/mcp" }
 resolution-playback = { path = "crates/playback" }
 
 # The engine: FilmCraft via Resolution's private mirror (TramEFX/resolution-filmcraft), pinned to
-# a sync point's commit (branch sync/fc-20261012 = storytold/filmcraft@2ff3f5e + mirror plumbing).
+# a sync point's commit (branch sync/fc-20261013 = storytold/filmcraft@cee1feb + mirror plumbing).
 # Move it with scripts/sync-mirror.sh (docs/UPSTREAM.md). Only crates/filmcraft-adapter may depend
 # on filmcraft-* crates. Every filmcraft-* line pins the same rev.
-filmcraft-engine = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
+filmcraft-engine = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
 # Beyond the session, for playback (LOG D-013, D-014): decoder hints and timing (media, frame), the
 # resampler to the device's rate (audio-dsp), the OS hardware decoders (platform).
-filmcraft-media = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
-filmcraft-frame = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
-filmcraft-audio-dsp = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
-filmcraft-platform = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "9acf816c17856622fba9d01767c0df597bd30052" }
+filmcraft-media = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
+filmcraft-frame = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
+filmcraft-audio-dsp = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
+filmcraft-platform = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
 
 # UI (LOG D-012): the same egui stack as FilmCraft's own UI, so its code is a working reference.
 egui = "0.36"
@@ -83,10 +83,16 @@ opt-level = 3
 [profile.dev.package.filmcraft-apv]
 opt-level = 3
 
+[profile.dev.package.filmcraft-dng]
+opt-level = 3
+
 [profile.dev.package.filmcraft-av1]
 opt-level = 3
 
 [profile.dev.package.filmcraft-aac]
+opt-level = 3
+
+[profile.dev.package.filmcraft-flac]
 opt-level = 3
 
 [profile.dev.package.filmcraft-audio-dsp]
@@ -96,6 +102,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.filmcraft-opus]
+opt-level = 3
+
+[profile.dev.package.filmcraft-vp8]
 opt-level = 3
 
 [profile.dev.package.filmcraft-vp9]
