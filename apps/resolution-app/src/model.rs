@@ -456,6 +456,8 @@ pub struct GradeView {
     pub grade: resolution_grade::Grade,
     /// The clip has Lumetri effects made outside the Color page; a grade edit replaces them.
     pub foreign: bool,
+    /// The clip's picture size, which windows are measured on.
+    pub size: (u32, u32),
 }
 
 impl GradeView {
@@ -477,6 +479,7 @@ impl GradeView {
             clip: v["clip"].as_u64()?,
             grade: resolution_grade::Grade { nodes },
             foreign: v["foreign"].as_bool().unwrap_or(false),
+            size: (v["width"].as_u64().unwrap_or(1920) as u32, v["height"].as_u64().unwrap_or(1080) as u32),
         })
     }
 }

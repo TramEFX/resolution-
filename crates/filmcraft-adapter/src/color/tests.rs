@@ -41,7 +41,7 @@ fn lumetris_curves_reproduce_the_tone_functions() {
         json!({"gain": {"y": 1.3}, "curves": {"y": [[0.25, 0.2], [0.75, 0.82]]}}),
     ] {
         let n = node(controls.clone());
-        let e = &compile(&Grade { nodes: vec![n.clone()] })[0];
+        let e = &compile(&Grade { nodes: vec![n.clone()] }, (1920, 1080))[0];
         for (k, id) in ["curve_red", "curve_green", "curve_blue"].into_iter().enumerate() {
             let pts = e.params[id].value.as_curve().unwrap().to_vec();
             let worst = (0..=500)
@@ -55,12 +55,12 @@ fn lumetris_curves_reproduce_the_tone_functions() {
 
 #[test]
 fn a_neutral_or_disabled_node_compiles_to_nothing() {
-    assert!(compile(&Grade::default()).is_empty());
+    assert!(compile(&Grade::default(), (1920, 1080)).is_empty());
     let mut n = node(json!({"gain": {"y": 0.5}, "saturation": 60.0}));
-    assert_eq!(compile(&Grade { nodes: vec![n.clone()] }).len(), 2, "tone, then saturation");
+    assert_eq!(compile(&Grade { nodes: vec![n.clone()] }, (1920, 1080)).len(), 2, "tone, then saturation");
     n.enabled = false;
-    assert!(compile(&Grade { nodes: vec![n] }).is_empty());
-    assert_eq!(compile(&Grade { nodes: vec![node(json!({"hue": 60.0}))] }).len(), 1);
+    assert!(compile(&Grade { nodes: vec![n] }, (1920, 1080)).is_empty());
+    assert_eq!(compile(&Grade { nodes: vec![node(json!({"hue": 60.0}))] }, (1920, 1080)).len(), 1);
 }
 
 /// At full size: smaller renders grade at an in-between size and then scale down, and averaging
@@ -161,4 +161,50 @@ fn mistakes_are_refused() {
     assert!(bad(e.execute("color.inspect", json!({"clip": 999_999}))));
     e.execute("playhead.set", json!({"seconds": 3600.0})).unwrap();
     assert!(bad(e.execute("color.inspect", json!({}))), "no clip under the playhead");
+}
+
+/// The demo frame's pixel at `(x, y)` of 1920 x 1080.
+fn at(f: &[[f32; 3]], x: usize, y: usize) -> [f32; 3] {
+    f[y * 1920 + x]
+}
+
+#[test]
+fn a_window_limits_the_node_to_its_shape() {
+    let mut e = demo();
+    let before = frame(&e, 1920);
+    let circle = json!({"shape": "circle", "enabled": true, "invert": false, "center": [0.5, 0.5], "size": [0.3, 0.3],
+        "rotation": 0.0, "softness": 0.0, "opacity": 100.0});
+    let out = adjust(&mut e, json!({"gain": {"y": 0.0}, "windows": [circle.clone()]}));
+    assert_eq!((out.result["width"].clone(), out.result["height"].clone()), (json!(1920), json!(1080)));
+    let inside = frame(&e, 1920);
+    assert!(at(&inside, 960, 540).iter().all(|v| *v < 0.01), "black inside the circle");
+    assert_eq!(at(&inside, 30, 30), at(&before, 30, 30), "untouched outside it");
+    // the circle is round: 0.3 of the width is 576 pixels across, so 260 above the centre is inside
+    assert!(at(&inside, 960, 540 - 260).iter().all(|v| *v < 0.01), "round, not squashed to the frame's height");
+    let mut inverted = circle;
+    inverted["invert"] = json!(true);
+    adjust(&mut e, json!({"windows": [inverted]}));
+    let outside = frame(&e, 1920);
+    assert_eq!(at(&outside, 960, 540), at(&before, 960, 540), "inverted: untouched inside");
+    assert!(at(&outside, 30, 30).iter().all(|v| *v < 0.01), "and black outside");
+}
+
+#[test]
+fn a_turned_linear_window_turns_its_rectangle() {
+    let w = |rotation: f32| {
+        let mut n = node(json!({"gain": {"y": 0.5}}));
+        let mut win = Window::new(Shape::Linear);
+        win.rotation = rotation;
+        n.windows = vec![win];
+        compile(&Grade { nodes: vec![n] }, (1920, 1080))
+    };
+    let corners = |e: &[EffectInstance]| match &e[0].masks[0].path.value {
+        ParamValue::Path(p) => p.vertices.iter().map(|v| (v.p.x.round(), v.p.y.round())).collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    assert_eq!(corners(&w(0.0))[0], (576.0, 300.0), "0.4 x 0.25 of the width, centred");
+    // a quarter turn clockwise: the top-left corner, 384 left of the centre and 240 above it,
+    // goes to 240 right of it and 384 above
+    let turned = corners(&w(90.0));
+    assert_eq!(turned[0], (1200.0, 156.0), "{turned:?}");
 }

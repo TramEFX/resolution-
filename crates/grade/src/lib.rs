@@ -105,6 +105,10 @@ pub struct Node {
     pub temp: f32,
     pub tint: f32,
     pub curves: Curves,
+    /// Where the node's correction applies (LOG D-031): inside the enabled windows, which add
+    /// up; everywhere when none is enabled. Grades stored before windows existed have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<Window>,
 }
 
 impl Default for Node {
@@ -124,6 +128,7 @@ impl Default for Node {
             temp: 0.0,
             tint: 0.0,
             curves: Curves::default(),
+            windows: Vec::new(),
         }
     }
 }
@@ -228,7 +233,7 @@ impl Node {
         }
     }
 
-    /// The node applied to one pixel (a disabled node passes it through).
+    /// The node applied to one pixel inside its windows (a disabled node passes it through).
     pub fn apply(&self, rgb: [f32; 3]) -> [f32; 3] {
         if !self.enabled {
             return rgb;
@@ -265,6 +270,7 @@ impl Node {
         self.color_boost = self.color_boost.clamp(-100.0, 100.0);
         self.temp = self.temp.clamp(-4000.0, 4000.0);
         self.tint = self.tint.clamp(-100.0, 100.0);
+        self.windows.iter_mut().for_each(Window::clamp);
         for c in [&mut self.curves.y, &mut self.curves.r, &mut self.curves.g, &mut self.curves.b] {
             c.tidy();
         }
@@ -296,6 +302,66 @@ fn contrast(v: f32, c: f32, pivot: f32) -> f32 {
     }
     let p = pivot.clamp(0.01, 0.99);
     if v <= p { p * (v / p).powf(c) } else { 1.0 - (1.0 - p) * ((1.0 - v) / (1.0 - p)).powf(c) }
+}
+
+/// A window's shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Shape {
+    /// Resolve's Linear window: a rectangle.
+    Linear,
+    /// Resolve's Circle window: an ellipse.
+    Circle,
+}
+
+/// A window (LOG D-031): limits its node's correction to a shape on the clip's picture, with a
+/// soft edge. Positions are fractions of the picture: `center` across its width and down its
+/// height, from the top left. Sizes are fractions of the picture's *width* on both axes, so equal
+/// numbers are a circle or a square however wide the picture is.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Window {
+    pub shape: Shape,
+    pub enabled: bool,
+    /// Apply the correction outside the shape instead.
+    pub invert: bool,
+    pub center: [f32; 2],
+    /// Width and height.
+    pub size: [f32; 2],
+    /// Degrees, clockwise.
+    pub rotation: f32,
+    /// The soft edge's width, centred on the shape's edge, as a fraction of the picture's width.
+    pub softness: f32,
+    /// How strongly the window lets the correction through, 0 to 100.
+    pub opacity: f32,
+}
+
+impl Window {
+    /// A new window in the middle of the picture: a third of its width across.
+    pub fn new(shape: Shape) -> Self {
+        let size = match shape {
+            Shape::Circle => [0.33, 0.33],
+            Shape::Linear => [0.4, 0.25],
+        };
+        Self {
+            shape,
+            enabled: true,
+            invert: false,
+            center: [0.5, 0.5],
+            size,
+            rotation: 0.0,
+            softness: 0.02,
+            opacity: 100.0,
+        }
+    }
+
+    fn clamp(&mut self) {
+        self.center = self.center.map(|v| v.clamp(-1.0, 2.0));
+        self.size = self.size.map(|v| v.clamp(0.002, 4.0));
+        self.rotation = self.rotation.clamp(-360.0, 360.0);
+        self.softness = self.softness.clamp(0.0, 1.0);
+        self.opacity = self.opacity.clamp(0.0, 100.0);
+    }
 }
 
 /// The four numbers under a Primaries wheel: `y`, the master (the ring under the wheel), and `r`,

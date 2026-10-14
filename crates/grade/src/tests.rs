@@ -218,3 +218,33 @@ fn a_disabled_node_passes_the_picture_through() {
     let g = Grade { nodes: vec![n] };
     assert!(g.is_neutral());
 }
+
+#[test]
+fn grades_stored_before_windows_still_load() {
+    // a node as D-028 stored it: no `windows` field
+    let mut v = serde_json::to_value(Node::default()).unwrap();
+    v.as_object_mut().unwrap().remove("windows");
+    let old = json!({ "nodes": [v] });
+    let g: Grade = serde_json::from_value(old).unwrap();
+    assert!(g.nodes[0].windows.is_empty());
+    // and a node without windows is stored without the field
+    assert!(serde_json::to_value(Node::default()).unwrap().get("windows").is_none());
+}
+
+#[test]
+fn windows_are_set_whole_and_held_to_their_ranges() {
+    let mut n = Node::default();
+    let mut w = Window::new(Shape::Circle);
+    w.softness = 5.0;
+    w.opacity = -3.0;
+    n.patch(&json!({ "windows": [w] })).unwrap();
+    assert_eq!(n.windows.len(), 1);
+    assert_eq!((n.windows[0].softness, n.windows[0].opacity), (1.0, 0.0));
+    assert!(n.patch(&json!({ "windows": [{ "shape": "star" }] })).is_err(), "unknown shape");
+    n.patch(&json!({ "windows": [] })).unwrap();
+    assert!(n.windows.is_empty());
+    let mut r = Node::default();
+    r.patch(&json!({ "windows": [Window::new(Shape::Linear)], "saturation": 70.0 })).unwrap();
+    r.reset();
+    assert!(r.windows.is_empty(), "resetting a node clears its windows");
+}

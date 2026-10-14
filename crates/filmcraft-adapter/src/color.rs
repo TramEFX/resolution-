@@ -10,14 +10,21 @@
 //! keep luma), with Hue as a constant Hue vs Hue curve. A neutral or disabled node compiles to
 //! nothing, so an ungraded clip costs nothing to render.
 //!
+//! A node's windows (LOG D-031) become effect masks on its Lumetri effects, in the clip's pixels:
+//! a Circle window an ellipse, a Linear window a rectangle, turned, with its softness as the
+//! feather. Masks add up, as Resolve's windows do.
+//!
 //! FilmCraft copies a clip's effects when it copies the clip (a split, a paste) but not our
 //! metadata. A clip with no stored grade whose Lumetri effects are exactly what another of the
 //! timeline's grades compiles to takes that grade. Lumetri effects that match no grade are
 //! "foreign" (made outside the Color page); the next grade edit replaces them.
 
-use filmcraft_engine::project::{ClipId, EffectInstance, ItemId, Param, ParamValue, Project, find_effect};
+use filmcraft_engine::project::{
+    ClipId, EffectInstance, ItemId, Mask, MaskPath, Param, ParamValue, Project, find_effect,
+};
+use filmcraft_geom::Vec2;
 use resolution_engine_api::{EngineError, Outcome, Result};
-use resolution_grade::Grade;
+use resolution_grade::{Grade, Shape, Window};
 use serde_json::{Value, json};
 
 use crate::FilmCraftEngine;
@@ -45,9 +52,10 @@ impl FilmCraftEngine {
         };
         let (mut grade, foreign) =
             self.grade_of(seq, clip).ok_or_else(|| bad(format!("no clip {} on the open timeline", clip.0)))?;
+        let size = self.clip_size(seq, clip);
         if id == "color.inspect" {
             return Ok(Outcome {
-                result: view(clip, &grade, foreign),
+                result: view(clip, &grade, foreign, size),
                 revision: self.session.revision,
                 undo_label: None,
             });
@@ -115,7 +123,7 @@ impl FilmCraftEngine {
         };
         let merge = params.get("merge").and_then(Value::as_str).map(|k| format!("color:{}:{k}", clip.0));
         let undo_label = self.store(id, seq, clip, &grade, label, merge.as_deref())?;
-        Ok(Outcome { result: view(clip, &grade, false), revision: self.session.revision, undo_label })
+        Ok(Outcome { result: view(clip, &grade, false, size), revision: self.session.revision, undo_label })
     }
 
     /// The clip under the playhead on the highest video track that shows one.
@@ -129,15 +137,26 @@ impl FilmCraftEngine {
             .find_map(|tr| tr.items.iter().find(|it| it.enabled && it.start <= t && t < it.end()).map(|it| it.id))
     }
 
+    /// The clip's picture size, which windows are measured on: its media's, else the timeline's.
+    fn clip_size(&self, seq: ItemId, clip: ClipId) -> (u32, u32) {
+        let p = &self.session.project;
+        let s = p.sequence(seq);
+        s.and_then(|s| s.find_item(clip))
+            .and_then(|(_, it)| p.source_size(it.item))
+            .or_else(|| s.map(|s| (s.settings.width, s.settings.height)))
+            .unwrap_or((1920, 1080))
+    }
+
     /// The clip's grade, and whether its Lumetri effects are foreign (see the module notes).
     /// `None` when the open timeline has no such clip.
     fn grade_of(&self, seq: ItemId, clip: ClipId) -> Option<(Grade, bool)> {
         let p = &self.session.project;
         let (_, it) = p.sequence(seq)?.find_item(clip)?;
         let front = lumetri_front(&it.effects);
+        let size = self.clip_size(seq, clip);
         let meta = &p.item(seq)?.metadata;
         if let Some(g) = meta.get(&key(clip)).and_then(|j| serde_json::from_str::<Grade>(j).ok()) {
-            let foreign = compile(&g) != front;
+            let foreign = compile(&g, size) != front;
             return Some((g, foreign));
         }
         if front.is_empty() {
@@ -148,7 +167,7 @@ impl FilmCraftEngine {
             .iter()
             .filter(|(k, _)| k.starts_with(KEY))
             .filter_map(|(_, j)| serde_json::from_str::<Grade>(j).ok())
-            .find(|g| compile(g) == front);
+            .find(|g| compile(g, size) == front);
         Some(adopted.map_or((Grade::default(), true), |g| (g, false)))
     }
 
@@ -164,7 +183,7 @@ impl FilmCraftEngine {
         merge: Option<&str>,
     ) -> Result<Option<String>> {
         let json = serde_json::to_string(grade).map_err(|e| EngineError::Engine(e.to_string()))?;
-        let effects = compile(grade);
+        let effects = compile(grade, self.clip_size(seq, clip));
         let neutral = *grade == Grade::default();
         let missing = || filmcraft_engine::EngineError::Other("the clip is gone".into());
         let edit = move |p: &mut Project, _: &mut filmcraft_engine::EditorState| {
@@ -199,8 +218,9 @@ fn lumetri_front(effects: &[EffectInstance]) -> Vec<EffectInstance> {
     effects.iter().take_while(|e| e.effect == "lumetri").cloned().collect()
 }
 
-/// A grade as `color.inspect` shows it: the nodes numbered from 1.
-fn view(clip: ClipId, grade: &Grade, foreign: bool) -> Value {
+/// A grade as `color.inspect` shows it: the nodes numbered from 1, and the size of the clip's
+/// picture that windows are measured on.
+fn view(clip: ClipId, grade: &Grade, foreign: bool, (width, height): (u32, u32)) -> Value {
     let nodes: Vec<Value> = grade
         .nodes
         .iter()
@@ -214,11 +234,19 @@ fn view(clip: ClipId, grade: &Grade, foreign: bool) -> Value {
             v
         })
         .collect();
-    json!({ "clip": clip.0, "nodes": nodes, "graded": !grade.is_neutral(), "foreign": foreign })
+    json!({
+        "clip": clip.0,
+        "nodes": nodes,
+        "graded": !grade.is_neutral(),
+        "foreign": foreign,
+        "width": width,
+        "height": height,
+    })
 }
 
-/// The grade as Lumetri effects, in node order (see the module notes).
-pub(crate) fn compile(grade: &Grade) -> Vec<EffectInstance> {
+/// The grade as Lumetri effects, in node order, for a clip whose picture is `size` (see the
+/// module notes).
+pub(crate) fn compile(grade: &Grade, size: (u32, u32)) -> Vec<EffectInstance> {
     let Some(def) = find_effect("lumetri") else {
         return Vec::new();
     };
@@ -231,6 +259,9 @@ pub(crate) fn compile(grade: &Grade) -> Vec<EffectInstance> {
     };
     let mut out = Vec::new();
     for n in grade.nodes.iter().filter(|n| n.enabled) {
+        let masks: Vec<Mask> =
+            n.windows.iter().filter(|w| w.enabled).enumerate().map(|(i, w)| mask(w, size, i)).collect();
+        let start = out.len();
         if !n.tone_is_identity() {
             let mut e = off();
             set(&mut e, "curves_on", ParamValue::Bool(true));
@@ -252,8 +283,39 @@ pub(crate) fn compile(grade: &Grade) -> Vec<EffectInstance> {
             }
             out.push(e);
         }
+        for e in &mut out[start..] {
+            e.masks = masks.clone();
+        }
     }
     out
+}
+
+/// A window as an effect mask in the pixels of a `w` x `h` picture.
+fn mask(win: &Window, (w, h): (u32, u32), n: usize) -> Mask {
+    let (w, h) = (f64::from(w), f64::from(h));
+    let c = Vec2::new(f64::from(win.center[0]) * w, f64::from(win.center[1]) * h);
+    // sizes are fractions of the picture's width on both axes
+    let r = Vec2::new(f64::from(win.size[0]) * w / 2.0, f64::from(win.size[1]) * w / 2.0);
+    let mut path = match win.shape {
+        Shape::Circle => MaskPath::ellipse(c, r),
+        Shape::Linear => MaskPath::rect(c.x - r.x, c.y - r.y, c.x + r.x, c.y + r.y),
+    };
+    let a = f64::from(win.rotation).to_radians();
+    if a != 0.0 {
+        // y runs down, so a positive angle turns clockwise on screen
+        let (sin, cos) = a.sin_cos();
+        let turn = |v: Vec2| Vec2::new(v.x * cos - v.y * sin, v.x * sin + v.y * cos);
+        for v in &mut path.vertices {
+            v.p = c + turn(v.p - c);
+            v.t_in = turn(v.t_in);
+            v.t_out = turn(v.t_out);
+        }
+    }
+    let mut m = Mask::new(format!("Window {}", n + 1), path);
+    m.feather = Param::new(ParamValue::Float(f64::from(win.softness) * w));
+    m.opacity = Param::new(ParamValue::Float(f64::from(win.opacity)));
+    m.inverted = win.invert;
+    m
 }
 
 fn set(e: &mut EffectInstance, id: &str, value: ParamValue) {

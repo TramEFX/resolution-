@@ -64,8 +64,9 @@ palette's controls and the Custom Curves, in Resolve's units. The math is ours a
 and compiles it onto the clip as Lumetri Color effects at the front of its effect stack: the tone
 functions as R, G and B curves, the saturation step as Saturation, Vibrance and a Hue vs Hue
 curve. So every renderer (playback, frame renders, Deliver) shows the grade, and each edit is one
-FilmCraft undo step holding both the metadata and the effects. Lumetri runs these on the CPU; GPU
-grading is a later step.
+FilmCraft undo step holding both the metadata and the effects. A node's windows become effect masks on
+its Lumetri effects, in the clip's pixels (LOG D-031). Lumetri runs these on the CPU; GPU grading is a
+later step, and with it real key masks for qualifiers (D-032).
 
 ## The editor (`apps/resolution-app`)
 

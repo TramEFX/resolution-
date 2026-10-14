@@ -40,6 +40,7 @@ filmcraft-frame = { git = "https://github.com/TramEFX/resolution-filmcraft", rev
 filmcraft-audio-dsp = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
 filmcraft-platform = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
 filmcraft-scopes = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
+filmcraft-geom = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
 
 # UI (LOG D-012): the same egui stack as FilmCraft's own UI, so its code is a working reference.
 egui = "0.36"
