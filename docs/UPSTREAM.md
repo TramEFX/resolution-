@@ -54,6 +54,9 @@ else belongs in Resolution's own crates.
    - `every_mapped_id_exists_upstream` (command renames/removals) and the adapter contract tests;
    - `.fcproj` round-trip and migration tests (to add);
    - the command-id diff from step 1, for new commands worth adding to the vocabulary.
+
+   Then `cargo clean`: Cargo keeps the old pin's build beside the new one, and they add up
+   (LOG B-032; a clean build of everything is 8.3 GB and about 6.5 minutes).
 4. Fix the adapter, never the engine in place. Compare upstream's `[profile.dev.package.*]`
    overrides at the new base with ours in `Cargo.toml`, and mirror any for crates in our graph
    (`cargo tree -i <crate>`). Commit the pin bump and adapter fixes together.
