@@ -44,7 +44,7 @@ pub const MAX_WINDOWS: usize = 8;
 /// every source pixel counts.
 const MAX_TAPS: f32 = 32.0;
 /// Numbers in the shader's per-layer uniform (`render.wgsl`'s `U`).
-const UNIFORM_FLOATS: usize = 52;
+const UNIFORM_FLOATS: usize = 56;
 
 /// How a layer's pixels are stored.
 #[derive(Clone, Copy)]
@@ -322,7 +322,18 @@ pub struct Renderer {
     layer_bgl: wgpu::BindGroupLayout,
     resolve_bgl: wgpu::BindGroupLayout,
     push_bgl: wgpu::BindGroupLayout,
+    stage: StagePipelines,
     dummy: wgpu::TextureView,
+}
+
+/// The grade stage's passes (LOG D-046; `render.wgsl`).
+struct StagePipelines {
+    signal: wgpu::RenderPipeline,
+    key: wgpu::RenderPipeline,
+    median: wgpu::RenderPipeline,
+    clean: wgpu::RenderPipeline,
+    blur: wgpu::RenderPipeline,
+    node: wgpu::RenderPipeline,
 }
 
 /// A texture drawn into.
@@ -436,6 +447,15 @@ impl Renderer {
         let blend_pipeline = pipeline("blend", &shader, &layer_bgl, "vs", "fs_blend", ACCUM_FORMAT, None);
         let resolve_pipeline = pipeline("resolve", &shader, &resolve_bgl, "vs_full", "fs_full", OUTPUT_FORMAT, None);
         let push_pipeline = pipeline("push", &push_shader, &push_bgl, "vs", "fs", ACCUM_FORMAT, over);
+        let full = |label, fs| pipeline(label, &shader, &layer_bgl, "vs_full", fs, ACCUM_FORMAT, None);
+        let stage = StagePipelines {
+            signal: pipeline("signal", &shader, &layer_bgl, "vs", "fs_signal", ACCUM_FORMAT, None),
+            key: full("key", "fs_key"),
+            median: full("median", "fs_median"),
+            clean: full("clean", "fs_clean"),
+            blur: full("blur", "fs_blur"),
+            node: full("node", "fs_node"),
+        };
         let dummy = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("dummy"),
@@ -458,6 +478,7 @@ impl Renderer {
             layer_bgl,
             resolve_bgl,
             push_bgl,
+            stage,
             dummy,
         }
     }
@@ -756,9 +777,36 @@ impl Renderer {
         for l in layers {
             let Some(bounds) = quad_bounds(l, out) else { continue };
             let reads = l.blend.reads_destination().then_some(backdrop).flatten();
-            let (views, kind, code_scale, alpha_scale, chroma) = self.upload(l);
-            let (node_data, tone_data, count) = grade_data(l.grade, (l.width, l.height));
-            let uniforms = uniforms(l, kind, code_scale, alpha_scale, chroma, out, count);
+            // a grade cleaning its keys over the picture is applied first, at a working size
+            let staged = self.stage(enc, l, keep);
+            let (graded, l) = match &staged {
+                Some((_, size)) => {
+                    let [a, b, c, d, e, f] = l.matrix;
+                    let (kx, ky) = (f64::from(l.width) / f64::from(size.0), f64::from(l.height) / f64::from(size.1));
+                    let sl = Layer {
+                        width: size.0,
+                        height: size.1,
+                        matrix: [a * kx, b * kx, c * ky, d * ky, e, f],
+                        grade: None,
+                        managed: None,
+                        ..*l
+                    };
+                    (true, sl)
+                }
+                None => (false, *l),
+            };
+            let l = &l;
+            let (views, kind, code_scale, alpha_scale, chroma) = match &staged {
+                // straight, display-encoded colour: drawn as an 8-bit sRGB picture is
+                Some((t, size)) => {
+                    let d = || self.dummy.clone();
+                    ([t.view.clone(), d(), d(), d()], 0.0, 1.0, 0.0, *size)
+                }
+                None => self.upload(l),
+            };
+            let (node_data, tone_data, count) =
+                if graded { (Vec::new(), Vec::new(), 0) } else { grade_data(l.grade, (l.width, l.height)) };
+            let uniforms = uniforms(l, Decoding { kind, code_scale, alpha_scale, chroma }, out, count, [0.0; 4]);
             let ub = self.buffer(wgpu::BufferUsages::UNIFORM, &uniforms);
             let nb = self.buffer(wgpu::BufferUsages::STORAGE, &node_data);
             let tb = self.buffer(wgpu::BufferUsages::STORAGE, &tone_data);
@@ -804,6 +852,126 @@ impl Renderer {
             }
             keep.push(group);
         }
+    }
+
+    /// Records the grade stage of `l` (LOG D-046), when its grade has a node whose qualifier cleans
+    /// its key over the picture (Denoise, Blur Radius): the layer drawn at its working size (as big
+    /// as it shows, at most its own size) as straight, display-encoded colour, then graded node by
+    /// node, each node's matte made in a mask first where it needs one. The graded texture and its
+    /// size; `None` for a layer graded as it is composited.
+    fn stage(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        l: &Layer<'_>,
+        keep: &mut Vec<wgpu::BindGroup>,
+    ) -> Option<(Target, (u32, u32))> {
+        let grade = l.grade?;
+        let active: Vec<&resolution_grade::Node> =
+            grade.nodes.iter().filter(|n| n.enabled && !n.is_neutral()).collect();
+        if !active.iter().any(|n| n.keyed().is_some_and(resolution_grade::Qualifier::is_spatial)) {
+            return None;
+        }
+        let [a, b, c, d, ..] = l.matrix;
+        let shown = ((a * a + b * b).sqrt().min((c * c + d * d).sqrt())).min(1.0);
+        let ww = ((f64::from(l.width) * shown).ceil() as u32).clamp(1, l.width.max(1));
+        let wh = ((f64::from(l.height) * f64::from(ww) / f64::from(l.width.max(1))).round() as u32).max(1);
+        let size = (ww, wh);
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let mut image = self.target(size, ACCUM_FORMAT, usage);
+        let mut next = self.target(size, ACCUM_FORMAT, usage);
+        let mut mask = self.target(size, ACCUM_FORMAT, usage);
+        let mut spare = self.target(size, ACCUM_FORMAT, usage);
+        let (node_data, tone_data, count) = grade_data(Some(grade), (l.width, l.height));
+        let nb = self.buffer(wgpu::BufferUsages::STORAGE, &node_data);
+        let tb = self.buffer(wgpu::BufferUsages::STORAGE, &tone_data);
+        let (views, kind, code_scale, alpha_scale, chroma) = self.upload(l);
+        // one pass: `pipeline` drawing into `into` with the stage's numbers `g0`, reading `t0`, `t1`
+        let mut run = |enc: &mut wgpu::CommandEncoder,
+                       pipeline: &wgpu::RenderPipeline,
+                       into: &Target,
+                       t: [&wgpu::TextureView; 4],
+                       u: Vec<f32>,
+                       vertices: u32| {
+            let ub = self.buffer(wgpu::BufferUsages::UNIFORM, &u);
+            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("stage"),
+                layout: &self.layer_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t[0]) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(t[1]) },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(t[2]) },
+                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(t[3]) },
+                    wgpu::BindGroupEntry { binding: 5, resource: nb.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: tb.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(&self.dummy) },
+                ],
+            });
+            {
+                let mut p = pass(enc, &into.view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT));
+                p.set_pipeline(pipeline);
+                p.set_bind_group(0, &group, &[]);
+                p.draw(0..vertices, 0..1);
+            }
+            keep.push(group);
+        };
+        // the layer at the working size
+        let at_size = Layer {
+            matrix: [f64::from(ww) / f64::from(l.width), 0.0, 0.0, f64::from(wh) / f64::from(l.height), 0.0, 0.0],
+            opacity: 1.0,
+            ..*l
+        };
+        let u = |g0: [f32; 4]| uniforms(l, Decoding { kind, code_scale, alpha_scale, chroma }, size, count, g0);
+        run(
+            enc,
+            &self.stage.signal,
+            &image,
+            [&views[0], &views[1], &views[2], &views[3]],
+            uniforms(&at_size, Decoding { kind, code_scale, alpha_scale, chroma }, size, 0, [0.0; 4]),
+            6,
+        );
+        let dummy = &self.dummy;
+        for (i, n) in active.iter().enumerate() {
+            let node = i as f32;
+            let spatial = n.keyed().filter(|q| q.is_spatial());
+            if let Some(q) = spatial {
+                run(enc, &self.stage.key, &mask, [&image.view, dummy, dummy, dummy], u([node, 0.0, 0.0, 0.0]), 3);
+                for _ in 0..q.denoise_passes(ww as usize) {
+                    for axis in [0.0, 1.0] {
+                        run(
+                            enc,
+                            &self.stage.median,
+                            &spare,
+                            [dummy, &mask.view, dummy, dummy],
+                            u([node, axis, 0.0, 0.0]),
+                            3,
+                        );
+                        std::mem::swap(&mut mask, &mut spare);
+                    }
+                }
+                run(enc, &self.stage.clean, &spare, [dummy, &mask.view, dummy, dummy], u([node, 0.0, 0.0, 0.0]), 3);
+                std::mem::swap(&mut mask, &mut spare);
+                let sigma = q.blur_sigma(ww as usize);
+                if sigma > 0.0 {
+                    for axis in [0.0, 1.0] {
+                        run(
+                            enc,
+                            &self.stage.blur,
+                            &spare,
+                            [dummy, &mask.view, dummy, dummy],
+                            u([node, axis, sigma, 0.0]),
+                            3,
+                        );
+                        std::mem::swap(&mut mask, &mut spare);
+                    }
+                }
+            }
+            let from_mask = if spatial.is_some() { 1.0 } else { 0.0 };
+            let m = if spatial.is_some() { &mask.view } else { dummy };
+            run(enc, &self.stage.node, &next, [&image.view, m, dummy, dummy], u([node, 0.0, 0.0, from_mask]), 3);
+            std::mem::swap(&mut image, &mut next);
+        }
+        Some((image, size))
     }
 }
 
@@ -852,15 +1020,18 @@ fn quad_bounds(l: &Layer<'_>, (w, h): (u32, u32)) -> Option<(u32, u32, u32, u32)
 }
 
 /// The shader's numbers for a layer (`render.wgsl`'s `U`).
-fn uniforms(
-    l: &Layer<'_>,
+/// How the shader reads a layer's textures: its kind, the scale its codes come at, its alpha
+/// plane's scale, and its chroma planes' size (what [`Renderer::upload`] says of them).
+#[derive(Clone, Copy)]
+struct Decoding {
     kind: f32,
     code_scale: f32,
     alpha_scale: f32,
     chroma: (u32, u32),
-    out: (u32, u32),
-    nodes: usize,
-) -> Vec<f32> {
+}
+
+fn uniforms(l: &Layer<'_>, src: Decoding, out: (u32, u32), nodes: usize, stage: [f32; 4]) -> Vec<f32> {
+    let Decoding { kind, code_scale, alpha_scale, chroma } = src;
     let [a, b, c, d, e, f] = l.matrix;
     // video range in code units of the picture's own bit depth: 2^bits levels, whatever scale the
     // texture holds the codes at (8-bit codes come back as code / 255; LOG B-035)
@@ -942,6 +1113,7 @@ fn uniforms(
         ];
         q
     }));
+    u.extend(stage);
     debug_assert_eq!(u.len(), UNIFORM_FLOATS);
     u
 }
@@ -983,6 +1155,11 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32)) -> (Vec<f32>, Vec<f
                 q.lum_low_soft,
                 q.lum_high_soft,
             ]);
+        }
+        if let Some(q) = n.keyed() {
+            // Clean Black and Clean White, as black and white points (LOG D-046)
+            b[22] = q.clean_black / 200.0;
+            b[23] = q.clean_white / 200.0;
         }
         let windows: Vec<_> = n.windows.iter().filter(|x| x.enabled).take(MAX_WINDOWS).collect();
         b[20] = windows.len() as f32;

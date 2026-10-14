@@ -417,3 +417,49 @@ fn the_linear_canvas_keeps_alpha_and_matches_the_frame() {
         assert!((0..3).all(|k| (enc(p[k]) - i32::from(f[k])).abs() <= 1), "{p:?} against {f:?}");
     }
 }
+
+/// The grade stage (LOG D-046): a qualifier cleaning its key over the picture (Denoise, Clean
+/// Black and White, Blur Radius), against the CPU's `Grade::apply_image`, drawn one to one.
+#[test]
+fn a_matte_cleaned_over_the_picture_matches_its_math() {
+    let Some(r) = renderer() else { return };
+    // wide enough for Blur Radius to spread a few pixels (it scales with the picture's width)
+    let (w, h) = (768u32, 64u32);
+    // grey noise, a red block, and red specks in the grey
+    let mut px = noise((w * h) as usize);
+    for (i, p) in px.chunks_mut(4).enumerate() {
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        if (300..460).contains(&x) && (16..48).contains(&y) {
+            p[..3].copy_from_slice(&[204, 40, 30]);
+        } else if (x * 7 + y * 13) % 41 == 0 {
+            p[..3].copy_from_slice(&[210, 30, 30]);
+        } else {
+            let g = p[0] / 2 + 64;
+            p[..3].copy_from_slice(&[g, g, g]);
+        }
+    }
+    let mut q = Qualifier::picked([0.8, 0.16, 0.12]);
+    (q.denoise, q.clean_black, q.clean_white, q.blur) = (40.0, 20.0, 20.0, 60.0);
+    assert!(q.is_spatial());
+    let n = node(json!({ "gain": {"y": 0.6, "b": 1.4}, "saturation": 30.0, "qualifier": q }));
+    let g = Grade { nodes: vec![n, node(json!({ "contrast": 1.2 }))] };
+    let out = r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap();
+    let mut cpu: Vec<[f32; 3]> = px.chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect();
+    g.apply_image(&mut cpu, w as usize, h as usize);
+    let worst = cpu
+        .iter()
+        .zip(out.chunks(4))
+        .map(|(c, o)| (0..3).map(|k| (c[k] * 255.0 - f32::from(o[k])).abs()).fold(0.0, f32::max))
+        .fold(0.0, f32::max);
+    eprintln!("the grade stage against its math: worst {worst:.2} code values");
+    assert!(worst <= 1.5, "the GPU's cleaned matte strays from the math by {worst} code values");
+    // and the cleaning matters: pixel by pixel (no Denoise, no Blur) is far off
+    let plain: Vec<[f32; 3]> =
+        px.chunks(4).map(|p| g.apply([p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0))).collect();
+    let apart = plain
+        .iter()
+        .zip(&cpu)
+        .map(|(a, b)| (0..3).map(|k| (a[k] - b[k]).abs() * 255.0).fold(0.0, f32::max))
+        .fold(0.0, f32::max);
+    assert!(apart > 20.0, "Denoise and Blur changed nothing ({apart})");
+}

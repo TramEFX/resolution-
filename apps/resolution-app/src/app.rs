@@ -2745,6 +2745,23 @@ mod tests {
     }
 
     #[test]
+    fn matte_finesse_cleans_the_qualifiers_key() {
+        let mut h = on_color_page();
+        click(&mut h, "Qualifier palette");
+        click(&mut h, "Add Qualifier");
+        let q = |a: &ResolutionApp| a.color.current().and_then(|n| n.qualifier);
+        pump(&mut h, "a qualifier", |a| !a.color.dragging && q(a).is_some());
+        for (field, get) in [
+            ("Blur Radius", (|q: resolution_grade::Qualifier| q.blur) as fn(resolution_grade::Qualifier) -> f32),
+            ("Clean Black", |q| q.clean_black),
+        ] {
+            let cell = h.get_by_label(field).rect();
+            drag(&mut h, cell.center(), cell.center() + vec2(60.0, 0.0));
+            pump(&mut h, field, |a| !a.color.dragging && q(a).is_some_and(|q| get(q) > 3.0));
+        }
+    }
+
+    #[test]
     fn edit_mode_keys_change_the_tool() {
         let mut h = demo();
         h.key_press(Key::T);

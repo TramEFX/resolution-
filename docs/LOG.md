@@ -106,6 +106,7 @@ doc is updated *and* the entry says which section moved.
 | D-044 | 2026-10-14 | color | Grades render by their own math on every path: graded clips' pictures graded at their source | active (Deliver's: D-045) |
 | B-036 | 2026-10-14 | color | The editor stopped when its window was resized while frames rendered (since D-039) | fixed |
 | D-045 | 2026-10-14 | color | Deliver renders the graded copy, so its own CPU frames show grades by their own math | active |
+| D-046 | 2026-10-14 | color | Matte finesse for the qualifier: Denoise, Clean Black, Clean White, Blur Radius; the GPU's grade stage | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2588,3 +2589,67 @@ Push). So `deliver.render` no longer exports the project; it exports its graded 
 
 **Checked:** adapter test of the Wipe to PNG (it fails through FilmCraft's export of the project);
 the earlier Deliver tests. 205 tests in the workspace.
+
+### D-046 — Matte finesse for the qualifier: Denoise, Clean Black, Clean White, Blur Radius; the GPU's grade stage
+**Area:** color · **Status:** active · **Doc:** `crates/grade` (`Qualifier::matte`, `Grade::apply_image`);
+`crates/renderer` (`Renderer::stage`, `render.wgsl`'s grade stage); `apps/resolution-app/src/color_page.rs`
+
+**Decision:** the first Color feature that needs a pixel's neighbours, built on D-044's grading at
+the source. On real footage a raw HSL key is speckled and hard-edged; Resolve cleans it in the
+Qualifier palette's Matte Finesse. Ours, in Resolve's 0 to 100, cleans the key in this order:
+
+1. **Denoise.** Passes of a three-pixel median across and then down. Up to three passes at 1920
+   pixels wide, in proportion at other widths, at least one when set.
+2. **Clean Black and Clean White.** The key's black point raised by Clean Black / 200 and its white
+   point lowered by Clean White / 200, the key stretched between them. These work pixel by pixel,
+   so they also go into the per-pixel grade and the Lumetri compile's baked table.
+3. **Blur Radius.** A Gaussian to three standard deviations. Its standard deviation is up to 10
+   pixels at 1920 pixels wide, in proportion at other widths, so a key looks the same at any
+   size.
+
+Pixels beyond the picture's edge are taken as the edge's. Qualifiers stored before this load with
+all four at 0 and are written back byte for byte.
+
+**The math** is in `crates/grade` as a reference over whole pictures (`Grade::apply_image`;
+`Grade::apply` stays per pixel, without Denoise and Blur).
+
+**The GPU's grade stage** (`Renderer::stage`) runs for a layer whose grade has a node whose
+qualifier denoises or blurs. The layer is drawn at its working size (as big as it shows, at most
+its own size) into a texture of straight, display-encoded colour, and graded there node by node.
+A node with such a qualifier first makes its matte in a mask: the key, the medians, Clean, then the
+Gaussian across and down. Every node is then applied through its matte and windows. The result is
+composited like an 8-bit picture. Other layers are graded in the compositing shader as before.
+
+**Not in the compile:** Denoise and Blur Radius cannot go in a baked table, so a render FilmCraft
+makes itself (no GPU, `--cpu-render`) keys without them. The table's id leaves them out, so
+dragging them makes no new table.
+
+**The page:** a fourth column, Matte Finesse, in the Qualifier palette, beside Hue, Saturation and
+Luminance: drag a number sideways, double-click it to reset.
+
+**Measured:**
+- The GPU's stage against the math: a 768 × 64 picture with a red block and red specks in grey
+  noise, keyed on red with Denoise 40, Clean Black and White 20 and Blur Radius 60, then a second
+  node: within 0.93 code values everywhere.
+- Mutation checks: a Gaussian of the wrong width fails the test (19.2 off); a median that returns
+  its middle value fails it (12.3 off).
+- On the Sony clip at a 1440-pixel viewer, keyed on the magenta light and desaturated:
+  - playback at 24.0 fps, every refresh the exact frame;
+  - 8.5 ms a frame with matte finesse against 8.1 ms without.
+
+**Wrong turns:**
+- The first stage test used a 96-pixel picture, where Blur Radius 60 is a third of a pixel. A
+  Gaussian of the wrong width passed it. It is now 768 wide.
+- The grade tests' first qualifier keyed greys too (grey's hue reads as red). Their qualifier now
+  has a saturation floor.
+
+**Checked:**
+- Grade tests: Clean levels; Denoise taking out a lone keyed pixel and keeping a block; Blur Radius
+  in proportion to the picture; a picture without spatial mattes graded pixel by pixel; old
+  qualifiers loading and values held to 0 to 100.
+- The renderer test above.
+- UI test: Matte Finesse's Blur Radius and Clean Black dragged, through the engine. 212 tests in
+  the workspace.
+- By hand, 2026-10-14: the Sony clip in the editor, plain key against matte finesse. The plain key
+  left hard, broken edges and pink specks on the face and hand; with matte finesse the edges are
+  soft and the specks are gone.

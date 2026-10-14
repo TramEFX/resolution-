@@ -51,9 +51,23 @@ impl Grade {
         self.nodes.iter().all(|n| !n.enabled || n.is_neutral())
     }
 
-    /// The grade applied to one pixel.
+    /// The grade applied to one pixel. A qualifier's Denoise and Blur Radius need the pixel's
+    /// neighbours and are left out here (see [`Grade::apply_image`]).
     pub fn apply(&self, rgb: [f32; 3]) -> [f32; 3] {
         self.nodes.iter().fold(rgb, |c, n| n.apply(c))
+    }
+
+    /// The grade applied to a whole picture, `w` × `h` pixels of straight, display-encoded RGB,
+    /// row by row: pixel by pixel as [`Grade::apply`], except that each qualifier's key is cleaned
+    /// over the picture by its Denoise and Blur Radius ([`Qualifier::matte`]). Windows are left
+    /// out (they need the picture's place in the clip's).
+    pub fn apply_image(&self, px: &mut [[f32; 3]], w: usize, h: usize) {
+        for n in self.nodes.iter().filter(|n| n.enabled) {
+            let keys = n.keyed().map(|q| q.matte(px, w, h));
+            for (i, p) in px.iter_mut().enumerate() {
+                *p = n.apply_keyed(*p, keys.as_ref().map(|k| k[i]));
+            }
+        }
     }
 
     /// Add a neutral node after node `at` (0-based); returns the new node's index.
@@ -244,14 +258,20 @@ impl Node {
         if !self.enabled {
             return rgb;
         }
+        self.apply_keyed(rgb, self.keyed().map(|q| q.clean(q.key(rgb))))
+    }
+
+    /// The node applied to one pixel inside its windows, its correction blended by `key` (the
+    /// qualifier's matte at that pixel) when it has one.
+    pub fn apply_keyed(&self, rgb: [f32; 3], key: Option<f32>) -> [f32; 3] {
+        if !self.enabled {
+            return rgb;
+        }
         let toned = [self.tone(0, rgb[0]), self.tone(1, rgb[1]), self.tone(2, rgb[2])];
         let out = self.color(toned);
-        match self.keyed() {
+        match key {
             // the correction, blended by how much the node's input is in the key
-            Some(q) => {
-                let k = q.key(rgb);
-                [0, 1, 2].map(|c| rgb[c] + (out[c] - rgb[c]) * k)
-            }
+            Some(k) => [0, 1, 2].map(|c| rgb[c] + (out[c] - rgb[c]) * k),
             None => out,
         }
     }
@@ -389,6 +409,23 @@ pub struct Qualifier {
     pub lum_high: f32,
     pub lum_low_soft: f32,
     pub lum_high_soft: f32,
+    /// Matte finesse (LOG D-046), cleaning the key in this order; 0 leaves it as keyed. Grades
+    /// stored before it have none. Denoise: passes of a small median over the key, more for more.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub denoise: f32,
+    /// Clean Black: the key's black point raised, so faint keying goes.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub clean_black: f32,
+    /// Clean White: the key's white point lowered, so nearly keyed is keyed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub clean_white: f32,
+    /// Blur Radius: the key softened by a Gaussian.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub blur: f32,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
 }
 
 impl Default for Qualifier {
@@ -411,6 +448,10 @@ impl Default for Qualifier {
             lum_high: 90.0,
             lum_low_soft: 10.0,
             lum_high_soft: 10.0,
+            denoise: 0.0,
+            clean_black: 0.0,
+            clean_white: 0.0,
+            blur: 0.0,
         }
     }
 }
@@ -451,6 +492,57 @@ impl Qualifier {
         if self.invert { 1.0 - k } else { k }
     }
 
+    /// Clean Black and Clean White on a key value: the black point raised by Clean Black / 200 and
+    /// the white point lowered by Clean White / 200, the key stretched between them.
+    pub fn clean(&self, k: f32) -> f32 {
+        if self.clean_black <= 0.0 && self.clean_white <= 0.0 {
+            return k;
+        }
+        let (b, w) = (self.clean_black / 200.0, 1.0 - self.clean_white / 200.0);
+        ((k - b) / (w - b).max(1e-3)).clamp(0.0, 1.0)
+    }
+
+    /// Whether the matte depends on a pixel's neighbours (Denoise or Blur Radius set).
+    pub fn is_spatial(&self) -> bool {
+        self.denoise > 0.0 || self.blur > 0.0
+    }
+
+    /// Denoise's passes of a three-pixel median across, then down, for a picture `width` pixels
+    /// wide: up to three at 1920 pixels, in proportion at other widths, at least one when set.
+    pub fn denoise_passes(&self, width: usize) -> usize {
+        if self.denoise <= 0.0 {
+            return 0;
+        }
+        ((self.denoise / 100.0 * 3.0 * width as f32 / 1920.0).round() as usize).max(1)
+    }
+
+    /// Blur Radius as a Gaussian's standard deviation in pixels of a picture `width` wide: up to
+    /// 10 pixels at 1920, in proportion at other widths.
+    pub fn blur_sigma(&self, width: usize) -> f32 {
+        self.blur / 100.0 * width as f32 / 192.0
+    }
+
+    /// The matte over a picture (`w` × `h`, row by row): the key of each pixel, then Denoise, then
+    /// Clean Black and Clean White, then Blur Radius. A pixel's neighbours beyond the picture's
+    /// edge are the edge's.
+    pub fn matte(&self, px: &[[f32; 3]], w: usize, h: usize) -> Vec<f32> {
+        let mut k: Vec<f32> = px.iter().map(|p| self.key(*p)).collect();
+        for _ in 0..self.denoise_passes(w) {
+            k = median3(&k, w, h, true);
+            k = median3(&k, w, h, false);
+        }
+        for v in &mut k {
+            *v = self.clean(*v);
+        }
+        let sigma = self.blur_sigma(w);
+        if sigma > 0.0 {
+            let weights = gaussian(sigma);
+            k = convolve(&k, w, h, &weights, true);
+            k = convolve(&k, w, h, &weights, false);
+        }
+        k
+    }
+
     /// A qualifier centred on one picked colour (Resolve's qualifier picker): its hue, its
     /// saturation and its luminance, with some room either side.
     pub fn picked(rgb: [f32; 3]) -> Self {
@@ -485,10 +577,59 @@ impl Qualifier {
             &mut self.lum_high,
             &mut self.lum_low_soft,
             &mut self.lum_high_soft,
+            &mut self.denoise,
+            &mut self.clean_black,
+            &mut self.clean_white,
+            &mut self.blur,
         ] {
             *v = v.clamp(0.0, 100.0);
         }
     }
+}
+
+/// The value at `(x, y)` of a `w` × `h` map, coordinates held to its edges.
+fn at(k: &[f32], w: usize, h: usize, x: isize, y: isize) -> f32 {
+    k[y.clamp(0, h as isize - 1) as usize * w + x.clamp(0, w as isize - 1) as usize]
+}
+
+/// The median of each value and its two neighbours across (`across`) or down.
+fn median3(k: &[f32], w: usize, h: usize, across: bool) -> Vec<f32> {
+    let (dx, dy) = if across { (1, 0) } else { (0, 1) };
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as isize, (i / w) as isize);
+            let (a, b, c) = (at(k, w, h, x - dx, y - dy), k[i], at(k, w, h, x + dx, y + dy));
+            a.min(b).max(a.max(b).min(c))
+        })
+        .collect()
+}
+
+/// A Gaussian's weights from its centre outwards, to three standard deviations, summing to 1
+/// over both sides.
+pub fn gaussian(sigma: f32) -> Vec<f32> {
+    let r = (3.0 * sigma).ceil().max(1.0) as usize;
+    let mut wts: Vec<f32> = (0..=r).map(|i| (-((i * i) as f32) / (2.0 * sigma * sigma)).exp()).collect();
+    let total = wts[0] + 2.0 * wts[1..].iter().sum::<f32>();
+    for v in &mut wts {
+        *v /= total;
+    }
+    wts
+}
+
+/// `k` convolved across (`across`) or down with the symmetric `weights` (centre first).
+fn convolve(k: &[f32], w: usize, h: usize, weights: &[f32], across: bool) -> Vec<f32> {
+    let (dx, dy) = if across { (1, 0) } else { (0, 1) };
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as isize, (i / w) as isize);
+            let mut v = weights[0] * k[i];
+            for (j, wt) in weights.iter().enumerate().skip(1) {
+                let j = j as isize;
+                v += wt * (at(k, w, h, x - j * dx, y - j * dy) + at(k, w, h, x + j * dx, y + j * dy));
+            }
+            v
+        })
+        .collect()
 }
 
 /// A window's shape.
