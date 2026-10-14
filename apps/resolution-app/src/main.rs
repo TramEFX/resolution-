@@ -2,12 +2,13 @@
 //!
 //! ```text
 //! resolution-app [--demo | --project <path.fcproj>] [--import <file>]… [--seek <seconds>]
-//!                [--mute] [--software-decode] [--theme <name>] [--source <clip>] [--page <name>]
-//!                [--play <s>] [--screenshot <out.png>]
+//!                [--mute] [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>]
+//!                [--page <name>] [--play <s>] [--screenshot <out.png>]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
-//! (LOG D-014). `--theme` switches to a colour theme (midnight, ember, mint, rose, charcoal;
+//! (LOG D-014). `--cpu-render` draws every timeline frame on FilmCraft's CPU renderer instead of
+//! Resolution's GPU renderer (LOG D-036). `--theme` switches to a colour theme (midnight, ember, mint, rose, charcoal;
 //! LOG D-018), which is then kept, as if chosen in Workspace > Theme. `--source` opens a Media
 //! Pool clip, by name, in the source viewer; `--page` starts on a page (`deliver`). Self-tests:
 //! `--play` plays for that long once a frame is on screen, prints what was shown and heard, and
@@ -29,11 +30,12 @@ mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>]";
+                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>]";
 
-fn options() -> Result<(app::Options, bool), String> {
+fn options() -> Result<(app::Options, bool, bool), String> {
     let mut o = app::Options::default();
     let mut software_decode = false;
+    let mut cpu_render = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         let mut value = |name: &str| args.next().ok_or_else(|| format!("{name} needs a value"));
@@ -45,6 +47,7 @@ fn options() -> Result<(app::Options, bool), String> {
             "--mute" => o.mute = true,
             "--play" => o.play_for = Some(value("--play")?.parse().map_err(|e| format!("--play: {e}"))?),
             "--software-decode" => software_decode = true,
+            "--cpu-render" => cpu_render = true,
             "--theme" => o.theme = Some(value("--theme")?),
             "--source" => o.source = Some(value("--source")?),
             "--page" => o.page = Some(value("--page")?),
@@ -52,11 +55,11 @@ fn options() -> Result<(app::Options, bool), String> {
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
-    Ok((o, software_decode))
+    Ok((o, software_decode, cpu_render))
 }
 
 fn main() -> eframe::Result {
-    let (mut options, software_decode) = match options() {
+    let (mut options, software_decode, cpu_render) = match options() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("{e}\n{USAGE}");
@@ -73,6 +76,7 @@ fn main() -> eframe::Result {
             Err(why) => format!("software decoding: {why}"),
         }
     };
+    resolution_filmcraft_adapter::use_gpu_renderer(!cpu_render);
     // agents reach this editor through `resolution mcp --editor` (LOG D-026)
     options.agent_link = Some(resolution_agent_link::default_path());
     let native = eframe::NativeOptions {

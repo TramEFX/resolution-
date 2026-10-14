@@ -66,8 +66,26 @@ functions as R, G and B curves, the saturation step as Saturation, Vibrance and 
 curve. So every renderer (playback, frame renders, Deliver) shows the grade, and each edit is one
 FilmCraft undo step holding both the metadata and the effects. A node's windows become effect masks on
 its Lumetri effects, in the clip's pixels (LOG D-031). A qualified node, key and all, is baked into a
-33-point LUT in the project's LUT library and carried by one Lumetri effect (D-032, D-033). Lumetri runs these on the CPU; GPU grading is a
-later step, and with it real key masks for qualifiers (D-032).
+33-point LUT in the project's LUT library and carried by one Lumetri effect (D-032, D-033). Lumetri runs these on the CPU. The
+viewers instead draw graded frames on Resolution's own GPU renderer, with the grade's own math and
+real key masks (next section); frame renders and Deliver use the compile until G3 (D-035).
+
+## The GPU renderer (`crates/renderer`, LOG D-035, D-036)
+
+A wgpu renderer of our own (the same wgpu as egui's). It draws a frame from layers: decoded
+pictures (8-bit RGBA, float RGBA, or planar Y'CbCr with optional alpha), each with its colour
+coding, a 2D affine placement, an opacity and a grade. Pictures are converted to linear light,
+shrunk by averaging, graded and added up premultiplied over black at half-float precision, then
+encoded to 8-bit sRGB and read back. The grade stage is `crates/grade`'s math in WGSL: per node the
+tone functions as tables, the saturation step, then the qualifier's key and the windows' coverage
+blending the node's result into its input. The renderer knows nothing of FilmCraft.
+
+The adapter (`gpu.rs`) uses it for the viewers' frames. Each playback snapshot keeps a copy of the
+timeline without the grades' Lumetri effects, and the grades. FilmCraft plans and decodes the frame
+from the copy (`plan_frame`). A plain stack of layers is drawn on the GPU, each graded clip with its
+grade; anything else (transitions, blend modes, adjustment layers, other effects, captions, HDR)
+falls back to FilmCraft's CPU renderer on the real project. `--cpu-render` turns the GPU renderer
+off, and `frame_counts()` says how many frames each drew.
 
 ## The editor (`apps/resolution-app`)
 

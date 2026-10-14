@@ -1,0 +1,19 @@
+[package]
+name = "resolution-renderer"
+description = "Resolution's GPU renderer: a frame's layers drawn on the GPU, each with its Resolution grade applied exactly"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+resolution-grade = { workspace = true }
+wgpu = { workspace = true }
+pollster = "0.4"
+half = "2"
+
+[dev-dependencies]
+serde_json = { workspace = true }

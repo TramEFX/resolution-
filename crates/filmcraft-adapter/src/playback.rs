@@ -85,6 +85,8 @@ impl SourceProvider for TimedProvider {
 
 pub struct Snapshot {
     project: Arc<Project>,
+    /// The timeline as the GPU renderer draws it (LOG D-036).
+    graded: crate::gpu::Graded,
     pool: Arc<MediaPool>,
     services: Arc<dyn Services>,
     previews: Arc<PreviewStore>,
@@ -106,6 +108,7 @@ impl Snapshot {
         let last = rate.frame_at(duration);
         let frames = if rate.tick_of(last) < duration { last + 1 } else { last };
         Some(Self {
+            graded: crate::gpu::Graded::of(&session.project, seq),
             project: session.project.clone(),
             pool: session.media.clone(),
             services: session.services.clone(),
@@ -144,20 +147,36 @@ impl Playback for Snapshot {
             TimedProvider(self.pool.provider(self.project.clone(), self.services.clone()), hints.decode_ns.clone());
         let opts = RenderOptions { scale, captions: true, ..Default::default() };
         let catch_up = hints.catch_up.map(Tick::from_seconds_f64);
-        // the decoder hints are per thread: set on the thread that renders
-        let render = || {
+        // the decoder hints are per thread: set on the thread that renders. Resolution's GPU
+        // renderer draws the frame where it covers it (LOG D-036), else FilmCraft's CPU renderer.
+        let gpu = in_frame_pool(|| {
             cancel::with_cancel(&hints.cancel, || {
                 cancel::with_catch_up(catch_up, || {
-                    cancel::with_draft(hints.draft, || render_sequence(&self.project, self.seq, t, opts, &provider))
+                    cancel::with_draft(hints.draft, || self.graded.render(self.seq, t, opts, &provider))
                 })
             })
+        });
+        let frame = match gpu {
+            Some(f) => f,
+            None => {
+                let img = in_frame_pool(|| {
+                    cancel::with_cancel(&hints.cancel, || {
+                        cancel::with_catch_up(catch_up, || {
+                            cancel::with_draft(hints.draft, || {
+                                render_sequence(&self.project, self.seq, t, opts, &provider)
+                            })
+                        })
+                    })
+                });
+                crate::gpu::counted_cpu_frame();
+                Frame { width: img.w as u32, height: img.h as u32, rgba: img.over_black_rgba8() }
+            }
         };
-        let img = in_frame_pool(render);
         // a cancelled render may be missing layers whose decoder gave up
         if hints.cancel.load(Ordering::Relaxed) {
             return Err(EngineError::Engine("cancelled".into()));
         }
-        Ok(Frame { width: img.w as u32, height: img.h as u32, rgba: img.over_black_rgba8() })
+        Ok(frame)
     }
 
     fn mixer(&self, sample_rate: u32) -> Mixer {

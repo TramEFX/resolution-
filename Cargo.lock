@@ -3471,6 +3471,7 @@ name = "resolution-filmcraft-adapter"
 version = "0.0.1"
 dependencies = [
  "filmcraft-audio-dsp",
+ "filmcraft-color",
  "filmcraft-engine",
  "filmcraft-frame",
  "filmcraft-geom",
@@ -3480,6 +3481,7 @@ dependencies = [
  "rayon",
  "resolution-engine-api",
  "resolution-grade",
+ "resolution-renderer",
  "serde_json",
 ]
 
@@ -3526,6 +3528,17 @@ dependencies = [
  "resolution-engine-api",
  "resolution-filmcraft-adapter",
  "serde_json",
+]
+
+[[package]]
+name = "resolution-renderer"
+version = "0.0.1"
+dependencies = [
+ "half",
+ "pollster 0.4.0",
+ "resolution-grade",
+ "serde_json",
+ "wgpu",
 ]
 
 [[package]]

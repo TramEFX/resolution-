@@ -1718,6 +1718,8 @@ impl ResolutionApp {
             st.cancelled,
             st.failed
         );
+        let (gpu, cpu) = resolution_filmcraft_adapter::frame_counts();
+        eprintln!("  renderer: {gpu} timeline frames drawn on the GPU, {cpu} on the CPU (LOG D-036)");
         eprintln!(
             "  sound: device {:?}, {} Hz, {} channels; clock from {}; {} device callbacks, {} underruns, {} frames of silence",
             audio.and_then(AudioOut::device),

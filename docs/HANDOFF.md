@@ -1,6 +1,6 @@
 # Picking up locally
 
-Where things stand and how to continue on your own machine. Last updated 2026-10-13 (UI order agreed).
+Where things stand and how to continue on your own machine. Last updated 2026-10-14 (GPU renderer, G1).
 
 ## 1. Set up (once)
 
@@ -48,9 +48,10 @@ select it; click or drag the ruler to move the playhead. While playing, the view
 frames per second reaching the screen. Put local test clips in `test media/`, which git ignores.
 
 Video is decoded by the GPU where the operating system can (LOG D-014); `--software-decode` turns that
-off, `--mute` plays without sound. Two self-tests: `--play 6` plays six seconds and prints what was shown
+off, `--mute` plays without sound, `--cpu-render` draws every frame on the CPU instead of Resolution's
+GPU renderer (LOG D-036). Two self-tests: `--play 6` plays six seconds and prints what was shown
 and heard; `--screenshot out.png` saves the window. To measure playback without a window:
-`cargo run -p resolution-playback --example play_bench -- <clip> [--hardware] [--side 1920]`; add
+`cargo run -p resolution-playback --example play_bench -- <clip | project.fcproj> [--hardware] [--side 1920] [--cpu-render]`; add
 `--wav heard.wav` to save the sound it played, for comparing with ffmpeg's decode.
 
 ## 3. Use the MCP server from Claude Code
@@ -85,9 +86,9 @@ Only you can accept or reject a draft; agents cannot.
 | Mirror CI | **Red outside our graph** for the pin: run [38413841087](https://github.com/TramEFX/resolution-filmcraft/actions/runs/38413841087) (2026-10-13, Linux, ~53 min) on the sync point: 3,473 tests passed, 3 failed, 44 ignored; fmt, clippy, layers, assets, wasm ok. The three failures are in FilmCraft's UI crate and desktop app, which Resolution doesn't use (LOG B-020); the pin was taken anyway (D-015). The mixer speed test stays outside the gate (LOG B-007) |
 | Engine boundary | `engine-api` trait + vocabulary (115 Resolve-named commands; 79 run headless on FilmCraft today, 30 are front-end, 6 not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
-| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame; agents read the video scopes as numbers (`scopes.read`). 165 tests across the workspace (passing on Windows, 2026-10-14), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
+| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame; agents read the video scopes as numbers (`scopes.read`). 180 tests across the workspace (passing on Windows, 2026-10-14), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
 | GPU parity, real hardware | Local, 2026-10-12, at the previous pin (`2ba0629`): FilmCraft's 33 golden tests pass, the 4 GPU-vs-CPU ones on an AMD Radeon RX 9070 XT through Vulkan (the adapter wgpu's default request picks, checked with a probe). CI covers the same tests on software Vulkan (LOG B-005) |
-| UI | **Edit page in the Black Box look** (`apps/resolution-app`, LOG D-012, D-016, D-018): interface toolbar showing and hiding panels in Resolve's fixed places, Media Pool, Index, source and timeline viewers side by side (scrub bars, transport, Mark In/Out; keys act on the active one, Q switches), Inspector, timeline toolbar (modes, insert/overwrite, snapping, linked selection, marker, zoom), track headers (destination control, lock, sync lock, auto track selector, show, solo, mute), markers on the ruler, waveforms on audio clips, scrolling and zooming as in Resolve (wheel, Alt or Ctrl with the wheel, scroll bars, middle-drag), editing with the mouse in Resolve's Selection, Trim and Blade modes (move, resize, roll, ripple, slip, slide, blade) with snapping, page bar; a minimal Deliver page (six presets, render queue, Render All; renders checked with ffprobe); five colour themes; Geist type and our own icons. Effects, Sound Library, Metadata and Mixer slots are empty. Agents edit the open timeline through the agent link, into a draft the user accepts or rejects (D-026, D-027). **Color page** (D-028, D-029): viewer, Node Editor (serial nodes), clip strip with thumbnails, Primaries wheels with master rings and adjustment bars, Custom Curves, Resolve's node keys, the Scopes panel (Waveform, Parade, Vectorscope, Histogram of the viewer's picture), Linear and Circle windows with an on-screen control, and an HSL qualifier with a picker; grades compile to Lumetri, so they play and render everywhere (on the CPU); the other palettes are not built. 57 tests, including UI tests that press keys, click buttons, drag clips, wheels and curves, roll the wheel, render a file and drive the editor as an agent |
+| UI | **Edit page in the Black Box look** (`apps/resolution-app`, LOG D-012, D-016, D-018): interface toolbar showing and hiding panels in Resolve's fixed places, Media Pool, Index, source and timeline viewers side by side (scrub bars, transport, Mark In/Out; keys act on the active one, Q switches), Inspector, timeline toolbar (modes, insert/overwrite, snapping, linked selection, marker, zoom), track headers (destination control, lock, sync lock, auto track selector, show, solo, mute), markers on the ruler, waveforms on audio clips, scrolling and zooming as in Resolve (wheel, Alt or Ctrl with the wheel, scroll bars, middle-drag), editing with the mouse in Resolve's Selection, Trim and Blade modes (move, resize, roll, ripple, slip, slide, blade) with snapping, page bar; a minimal Deliver page (six presets, render queue, Render All; renders checked with ffprobe); five colour themes; Geist type and our own icons. Effects, Sound Library, Metadata and Mixer slots are empty. Agents edit the open timeline through the agent link, into a draft the user accepts or rejects (D-026, D-027). **Color page** (D-028, D-029): viewer, Node Editor (serial nodes), clip strip with thumbnails, Primaries wheels with master rings and adjustment bars, Custom Curves, Resolve's node keys, the Scopes panel (Waveform, Parade, Vectorscope, Histogram of the viewer's picture), Linear and Circle windows with an on-screen control, and an HSL qualifier with a picker; the viewers draw graded frames on Resolution's GPU renderer (D-036), and grades also compile to Lumetri, so frame renders and Deliver show them (on the CPU); the other palettes are not built. 57 tests, including UI tests that press keys, click buttons, drag clips, wheels and curves, roll the wheel, render a file and drive the editor as an agent |
 | Playback | **Real time, with sound** (`crates/playback`, LOG D-013): frames rendered ahead, sound mixed ahead, the audio device as the clock, GPU video decoding (D-014). Measured on this PC: phone 4K30, Sony α7R II 4K 23.976 (100 Mbit/s) and 1080p60 H.264 play at full rate with no dropouts, the sound sample-exact against ffmpeg and checked by ear (2026-10-13); a sideways (portrait) phone 4K clip at full rate too since the 2026-10-13 engine sync; 4K60 HEVC at about 50 fps on the GPU (B-013, fixed upstream); CPU-heavy composites at about 13 fps; footage decoded in software at a few to 10 fps (B-017 no longer freezes it) |
 | CI for this repo | None yet: needs a token that can read the private mirror |
 
@@ -102,8 +103,10 @@ Deliver page, then agents in the editor, then the Color page. Steps 1 to 4 are b
 D-027); the bar itself, Truman cutting a one-minute piece from the Sony and Samsung clips, has not
 been tried yet. Step 5's first slice of the Color page is built: grades and the `color.*` vocabulary
 (D-028), the page (D-029), its scopes (D-030), windows (D-031) and qualifiers, baked into 3D LUTs for
-now (D-032, D-033). Next in M4: GPU grading for
-playback. For what Resolve does, read the installed 21.1 Reference Manual (`scripts/resolve-manual.py`
+now (D-032, D-033). GPU grading has begun (D-035): G1 is built, the viewers' frames on
+Resolution's own GPU renderer with grades drawn by their own math (D-036). Next: G2 (frames to the
+screen without a copy back; transitions, blend modes and effects on the GPU), then G3 (Deliver
+through the same renderer). For what Resolve does, read the installed 21.1 Reference Manual (`scripts/resolve-manual.py`
 extracts it for searching; LOG D-017), then try it in the local install.
 
 Alongside, pick any:
