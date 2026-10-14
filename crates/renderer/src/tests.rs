@@ -291,3 +291,75 @@ fn a_frame_left_on_the_gpu_reads_back_as_rendered() {
     assert_eq!(picture.read(), Some(&rendered[..]), "the same frame");
     assert_eq!(picture.read(), Some(&rendered[..]), "read once, kept");
 }
+
+#[test]
+fn a_picture_shrunk_sixteen_times_averages_all_its_pixels() {
+    let Some(r) = renderer() else { return };
+    // white stripes 2 pixels wide every 8, at each phase, shrunk 16 times: a quarter of the light
+    // in every output pixel (137 in sRGB), wherever the stripes fall
+    for phase in 0..8u32 {
+        let (w, h) = (256u32, 32u32);
+        let px: Vec<u8> =
+            (0..w * h).flat_map(|i| if ((i % w) + phase) % 8 < 2 { [255u8; 4] } else { [0, 0, 0, 255] }).collect();
+        let mut l = rgba_layer(w, h, &px, None);
+        l.matrix = [1.0 / 16.0, 0.0, 0.0, 1.0 / 16.0, 0.0, 0.0];
+        let out = r.render((16, 2), &[l]).unwrap();
+        let worst = out.chunks(4).map(|p| p[0].abs_diff(137)).max().unwrap();
+        assert!(worst <= 3, "phase {phase}: {:?}", out.chunks(4).map(|p| p[0]).collect::<Vec<_>>());
+    }
+}
+
+/// 4:2:0 chroma taken at the left one of each pair of luma columns (as H.264 and HEVC site it by
+/// default) is read back where it was taken: a sharp edge between two colours comes back sharp
+/// when read sited left, and smeared by a column when read as centred (LOG D-040).
+#[test]
+fn chroma_sited_left_is_read_where_it_was_taken() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (16u32, 4u32);
+    // full-resolution Y'CbCr of a red | blue edge after column `edge`, in video-range codes
+    let ycc = |rgb: [f32; 3]| {
+        let (kr, kb) = (0.2126f32, 0.0722f32);
+        let y = kr * rgb[0] + (1.0 - kr - kb) * rgb[1] + kb * rgb[2];
+        let cb = (rgb[2] - y) / (2.0 * (1.0 - kb));
+        let cr = (rgb[0] - y) / (2.0 * (1.0 - kr));
+        [16.0 + 219.0 * y, 128.0 + 224.0 * cb, 128.0 + 224.0 * cr].map(|v| v.round() as u8)
+    };
+    for edge in [6u32, 7] {
+        let colour = |x: u32| if x < edge { [0.8, 0.1, 0.1] } else { [0.1, 0.2, 0.9] };
+        let luma: Vec<u8> = (0..h).flat_map(|_| (0..w).map(|x| ycc(colour(x))[0])).collect();
+        // chroma sampled at even columns (sited left), every other row
+        let cw = w / 2;
+        let cb: Vec<u8> = (0..h / 2).flat_map(|_| (0..cw).map(|k| ycc(colour(2 * k))[1])).collect();
+        let cr: Vec<u8> = (0..h / 2).flat_map(|_| (0..cw).map(|k| ycc(colour(2 * k))[2])).collect();
+        let draw = |siting| {
+            let l = Layer {
+                width: w,
+                height: h,
+                pixels: Pixels::Yuv8 { planes: [&luma, &cb, &cr], chroma: (1, 1), alpha: None },
+                coding: Coding { siting, ..Coding::REC709 },
+                matrix: IDENTITY,
+                opacity: 1.0,
+                blend: Blend::Normal,
+                managed: None,
+                grade: None,
+            };
+            r.render((w, h), &[l]).unwrap()
+        };
+        // the columns sampled for chroma (even ones) must come back as their own colour
+        let error = |out: &[u8]| {
+            (0..w)
+                .step_by(2)
+                .map(|x| {
+                    let want = colour(x).map(|v| (v.powf(1.0) * 255.0) as i32);
+                    let px = &out[(x * 4) as usize..(x * 4 + 3) as usize];
+                    (0..3).map(|k| (i32::from(px[k]) - want[k]).abs()).max().unwrap_or(0)
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        let (left, centre) = (error(&draw(Siting::Left)), error(&draw(Siting::Center)));
+        eprintln!("edge after column {edge}: sited left worst {left}, read as centred worst {centre}");
+        assert!(left <= 4, "edge {edge}: read sited left, {left} off");
+        assert!(centre > 30, "edge {edge}: read as centred smears the edge ({centre})");
+    }
+}

@@ -99,6 +99,7 @@ doc is updated *and* the entry says which section moved.
 | D-037 | 2026-10-14 | color | G2, step 1: every frame FilmCraft plans as layers is drawn on the GPU; graded clips known by their pictures | active |
 | D-038 | 2026-10-14 | color | G2, step 2: blend modes, Push and HDR media on the GPU, ported from FilmCraft's compositor | active |
 | D-039 | 2026-10-14 | color | G2, step 3: the viewers show the renderer's frames on the GPU, without a copy back | active |
+| D-040 | 2026-10-14 | color | G2, step 4: a shrunk picture averages all its pixels; chroma read as sited left | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2298,3 +2299,45 @@ the same run: 49.5 ms a frame.
   - a screenshot of the graded Sony frame shown this way against the CPU renderer's: mean 0.40,
     99 % within 1 code value, no channel leaning (the colours are not encoded twice);
   - the Color page's waveform, drawn from a frame read back, matches what it showed before.
+
+### D-040 — G2, step 4: a shrunk picture averages all its pixels; chroma read as sited left
+**Area:** color · **Status:** active · **Doc:** `crates/renderer` (`MAX_TAPS`, `Siting`)
+
+**Decision:** the two picture-quality limits D-036 listed.
+
+- **Shrinking.** The shader averages samples over each frame pixel's footprint in the source,
+  capped at 4 × 4 as in FilmCraft's compositor. Shrunk more than 4 times, the samples skip source
+  pixels.
+  - Measured with a test: white stripes 2 pixels wide every 8, shrunk 16 times, came out **black**
+    at some phases (every sample landed between stripes). They should be a quarter grey at every
+    phase.
+  - Now: at least one sample per source pixel across the footprint, up to 32 a side. The work
+    stays about one sample per source pixel whatever the size.
+  - Cost, graded Sony 4K one frame at a time: 6.5 ms a frame at a 720-pixel viewer (6.3 before),
+    6.2 at 360 (5.7). The test now passes at every phase.
+- **Chroma siting.** The shader read subsampled chroma as if each sample sat halfway between its
+  luma columns (centred: MPEG-1, JPEG). H.264, HEVC and ProRes put it on the left column of each
+  pair by default (vertically halfway), and the Sony clip's file says so (`chroma_location=left`,
+  ffprobe). FilmCraft's frames do not carry the chroma location, so the adapter reads all Y'CbCr
+  as sited left (`Coding::siting`).
+
+  The evidence:
+  - **Definition.** A test makes 4:2:0 chroma from samples taken at the left column of each pair,
+    across a sharp red | blue edge. Read as sited left, the sampled columns come back within 1
+    code value; read as centred, 52 off.
+  - **The Sony frame's own edges.** Luma averaged to chroma resolution on the centred grid, then
+    edge strength cross-correlated with the chroma planes: the chroma edges sit 0.40 chroma pixels
+    left of the centred grid. Sited left predicts 0.25, centred 0.
+  - **Not decisive, recorded:** zscale (zimg, through ffmpeg 9) with `chromalin=left` agreed better
+    with our centred reading than with our left one at chroma edges (mean 5.7 against 6.1 code
+    values), as if its whole chroma grid sat a quarter chroma pixel from the definition above.
+    Unexplained. (A first try set `chromal`, the output's location, by mistake.) FilmCraft's CPU
+    takes the nearest chroma sample, which is arithmetically nearer a centred blend: on the Sony
+    frame at full size, GPU against CPU is now mean 0.83 (0.78 read centred), 99 % within 5.
+    Neither is the truth for this question.
+- **Limit:** phone video stored sideways is turned upright by FilmCraft's decoder, plane by plane,
+  which turns its siting by a quarter turn too. Read as sited left, its chroma is a quarter chroma
+  pixel off. FilmCraft's frames would need to carry the siting (and the turn) to fix it.
+
+**Checked:** renderer tests (13): the stripes at every phase, the siting test. 190 tests in the
+workspace.

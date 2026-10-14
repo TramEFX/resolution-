@@ -44,7 +44,7 @@ use filmcraft_frame::{AudioBuffer, Chroma, PixelData, VideoFrame};
 use filmcraft_media::{FrameRequest, MediaInfo, MediaSource, SharedSource, cancel};
 use resolution_engine_api::{Frame, GpuPicture};
 use resolution_grade::Grade;
-use resolution_renderer::{Blend, Coding, Curve, Layer, Managed, Picture, Pixels, Renderer, Step, Transfer};
+use resolution_renderer::{Blend, Coding, Curve, Layer, Managed, Picture, Pixels, Renderer, Siting, Step, Transfer};
 
 static GPU_FRAMES: AtomicU64 = AtomicU64::new(0);
 static CPU_FRAMES: AtomicU64 = AtomicU64::new(0);
@@ -422,7 +422,10 @@ fn layer<'a>(f: &'a VideoFrame, matrix: [f64; 6], opacity: f32, grade: Option<&'
         filmcraft_color::Transfer::Hlg => Transfer::Hlg,
     };
     let (kr, kb) = f.color.matrix.kr_kb();
-    let coding = Coding { kr, kb, full_range: f.color.range == filmcraft_color::Range::Full, transfer };
+    // FilmCraft's frames do not say where their chroma sits: as H.264, HEVC and ProRes do by
+    // default (LOG D-040)
+    let coding =
+        Coding { kr, kb, full_range: f.color.range == filmcraft_color::Range::Full, transfer, siting: Siting::Left };
     let shifts = |c: Chroma| c.shifts();
     let pixels = match &f.data {
         PixelData::Rgba8(d) => Pixels::Rgba8(d),

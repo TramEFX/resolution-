@@ -111,7 +111,7 @@ read, never copied into the repo.
     - [x] Blend modes, Push, colour management of HDR and wide-gamut media (D-038)
     - [ ] Standard effects on the GPU (they run on the CPU per layer for now)
     - [x] Frames to the screen without a copy back (D-039)
-    - [ ] Chroma siting; shrinking by more than 4× (D-036 "Limits")
+    - [x] Chroma siting; shrinking by more than 4× (D-040)
   - [ ] G3: Deliver through the same renderer, so viewer and file are identical
   - [ ] Later: parallel and layer nodes, matte finesse, no clamping between nodes
 
