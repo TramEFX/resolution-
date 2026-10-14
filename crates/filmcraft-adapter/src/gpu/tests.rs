@@ -103,13 +103,84 @@ fn a_qualifier_draws_on_the_gpu_close_to_its_baked_lut() {
     assert!(mean < 1.0 && p99 <= 10.0, "mean {mean}, 99% {p99}");
 }
 
+/// The demo timeline (LOG D-037): V1 Ocean Sunset 0–4.96 s (a dip from black over 0–1 s), Aurora
+/// Timelapse to 9.43 (a cross dissolve from Ocean over 4.46–5.46), City Night Drive to 13.39,
+/// Desert Dunes to 18.35 (a Lumetri of its own; a dip to black over 12.89–13.89), Misty Forest to
+/// 21.31, Neon Loop to 26.78 (a Push over 20.81–21.81); V2 Misty Forest again, with a Drop Shadow
+/// FilmCraft renders on the CPU, over 5.96–9.93.
+fn at(e: &mut FilmCraftEngine, seconds: f64) {
+    e.execute("playhead.set", json!({ "seconds": seconds })).unwrap();
+}
+
+/// Grades the clip under the playhead at `seconds` (the topmost there).
+fn grade_at(e: &mut FilmCraftEngine, seconds: f64, controls: Value) {
+    at(e, seconds);
+    adjust(e, controls);
+}
+
+fn warm() -> Value {
+    json!({"gamma": {"y": 0.15, "r": 0.05, "b": -0.05}, "contrast": 1.2, "saturation": 70.0})
+}
+
+fn cool() -> Value {
+    json!({"lift": {"y": 0.03, "b": 0.03}, "gain": {"y": 0.85}, "saturation": 120.0})
+}
+
+/// GPU and CPU frames of the playhead agree as graded frames do, and the frame was the GPU's.
+fn agrees(e: &FilmCraftEngine, what: &str) {
+    let before = frame_counts().0;
+    let Some((gpu, cpu)) = both(e) else { return };
+    let (mean, p99) = differ(&gpu, &cpu);
+    eprintln!("{what}: mean {mean:.2}, 99% {p99:.1} code values");
+    assert!(mean < 1.0 && p99 <= 3.0, "{what}: mean {mean}, 99% {p99}");
+    assert!(frame_counts().0 > before, "{what}: drawn on the GPU");
+}
+
 #[test]
-fn a_frame_with_a_foreign_lumetri_falls_back_to_the_cpu() {
-    let e = demo();
+fn dips_and_dissolves_between_graded_clips_draw_on_the_gpu() {
+    let mut e = demo();
+    grade_at(&mut e, 2.0, warm());
+    grade_at(&mut e, 7.0, cool());
+    grade_at(&mut e, 11.0, warm());
+    for (t, what) in
+        [(0.8, "dip from black"), (4.6, "dissolve, early"), (5.2, "dissolve, late"), (13.0, "dip to black")]
+    {
+        at(&mut e, t);
+        agrees(&e, what);
+    }
+}
+
+#[test]
+fn a_graded_clip_under_a_clip_the_cpu_renders_draws_on_the_gpu() {
+    let mut e = demo();
+    grade_at(&mut e, 5.5, cool());
+    at(&mut e, 7.0);
+    agrees(&e, "graded V1 under V2's drop shadow");
+}
+
+#[test]
+fn a_graded_clip_with_other_effects_is_rendered_graded_by_filmcraft() {
+    let mut e = demo();
+    // V2's Misty Forest has a Drop Shadow after its grade: FilmCraft renders it, grade and all.
+    // V1's Misty Forest later on is the same media, graded differently.
+    grade_at(&mut e, 7.0, warm());
+    grade_at(&mut e, 19.0, cool());
     let s = &e.session;
     let seq = s.state.active_sequence.unwrap();
-    // the demo's Desert Dunes clip carries a Lumetri of its own, not a Resolution grade
-    let (clip, start) = s
+    let graded = Graded::of(&s.project, seq);
+    assert_eq!(graded.grades.len(), 1, "both Misty Forest clips are graded; only V1's is ours to draw");
+    at(&mut e, 7.0);
+    agrees(&e, "V2 graded with a drop shadow");
+    at(&mut e, 19.0);
+    agrees(&e, "the same media on V1, its own grade");
+}
+
+#[test]
+fn a_clip_with_a_lumetri_of_its_own_is_drawn_as_filmcraft_draws_it() {
+    let mut e = demo();
+    let s = &e.session;
+    let seq = s.state.active_sequence.unwrap();
+    let clip = s
         .project
         .sequence(seq)
         .and_then(|q| {
@@ -117,18 +188,38 @@ fn a_frame_with_a_foreign_lumetri_falls_back_to_the_cpu() {
                 .iter()
                 .flat_map(|t| &t.items)
                 .find(|it| it.effects.first().is_some_and(|f| f.effect == "lumetri"))
-                .map(|it| (it.id, it.start))
+                .map(|it| it.id)
         })
         .unwrap();
-    let graded = Graded::of(&s.project, seq);
-    assert!(!graded.grades.contains_key(&clip), "a foreign Lumetri is not a grade");
+    assert!(!Graded::of(&s.project, seq).grades.contains_key(&clip), "a foreign Lumetri is not a grade");
+    at(&mut e, 15.0);
+    agrees(&e, "Desert Dunes' own Lumetri");
+}
+
+#[test]
+fn a_push_transition_falls_back_to_the_cpu() {
+    let mut e = demo();
+    at(&mut e, 21.2);
+    let s = &e.session;
+    let seq = s.state.active_sequence.unwrap();
     let provider = s.media.provider(s.project.clone(), s.services.clone());
     let opts = RenderOptions { scale: 0.25, captions: true, ..Default::default() };
     if renderer().is_some() {
-        assert!(
-            graded.render(seq, start, opts, &provider).is_none(),
-            "its Lumetri runs on the CPU: the whole frame does"
-        );
+        assert!(Graded::of(&s.project, seq).render(seq, s.playhead(), opts, &provider).is_none(), "not ported yet");
+    }
+}
+
+#[test]
+fn draft_playback_keeps_graded_frames_on_the_gpu() {
+    let mut e = demo();
+    grade_at(&mut e, 2.0, warm());
+    let s = &e.session;
+    let seq = s.state.active_sequence.unwrap();
+    let provider = s.media.provider(s.project.clone(), s.services.clone());
+    let opts = RenderOptions { scale: 0.25, captions: true, ..Default::default() };
+    if renderer().is_some() {
+        let graded = Graded::of(&s.project, seq);
+        assert!(cancel::with_draft(true, || graded.render(seq, s.playhead(), opts, &provider)).is_some());
     }
 }
 
