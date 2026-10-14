@@ -2,13 +2,15 @@
 //!
 //! A clip's grade is a [`Grade`] in Resolution's own types. It is kept as JSON in the timeline's
 //! metadata (`resolution.grade.<clip id>`) and compiled onto the clip as Lumetri Color effects at
-//! the front of its effect stack, so playback, frame renders and Deliver show it with nothing more
-//! to do. Each edit is one FilmCraft undo step holding both, so undo keeps them in step.
+//! the front of its effect stack. The viewers, frame renders and Deliver draw the grade by its own
+//! math (`gpu.rs`, LOG D-044); the compile is what FilmCraft shows, and what renders without a GPU
+//! use. Each edit is one FilmCraft undo step holding both, so undo keeps them in step.
 //!
 //! A node compiles to at most two Lumetri effects: its tone functions as the R, G and B curves
 //! (every other section off), then its saturation step as Lumetri's Saturation and Vibrance (both
-//! keep luma), with Hue as a constant Hue vs Hue curve. A neutral or disabled node compiles to
-//! nothing, so an ungraded clip costs nothing to render.
+//! keep luma), with Hue as a constant Hue vs Hue curve and the hue curves as Lumetri's HSL curves
+//! (LOG D-043). A neutral or disabled node compiles to nothing, so an ungraded clip costs nothing
+//! to render.
 //!
 //! A qualified node (LOG D-032) cannot be a curve and a saturation: Lumetri cannot limit them to a
 //! colour key. It becomes one Lumetri effect whose input LUT is the node itself, key and all,

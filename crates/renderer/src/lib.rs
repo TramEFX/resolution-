@@ -14,10 +14,12 @@
 //!   sRGB-encoded colour;
 //! - the Push transition between two layer stacks drawn apart ([`Step::Push`]).
 //!
-//! **The grade stage** runs a layer's [`Grade`] per pixel, as [`Grade::apply`] does: each node's
-//! tone functions (as [`TONE_N`]-point tables), its saturation step, its qualifier's key taken on
-//! the node's input, and its windows. The key is a real per-pixel mask over the whole node, not
-//! a baked LUT (D-032's goal).
+//! **Grades** run per pixel as a layer is composited, as [`Grade::apply`] does: each node's tone
+//! functions and hue curves (as [`TONE_N`]-point tables), its saturation step, its qualifier's key
+//! taken on the node's input, and its windows. The key is a real per-pixel mask over the whole
+//! node, not a baked LUT (D-032's goal). A layer whose qualifier cleans its key over the picture
+//! (Denoise, Blur Radius) is graded first in a stage of its own, at its working size, as
+//! [`Grade::apply_image`] does (LOG D-046).
 //!
 //! A frame is read back as 8-bit sRGB ([`Renderer::render_steps`]) or left on the GPU as a
 //! [`Picture`] for a front end drawing on the same device ([`Renderer::draw_steps`], LOG D-039).

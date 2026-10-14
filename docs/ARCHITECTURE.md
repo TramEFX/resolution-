@@ -58,18 +58,26 @@ we map to must still exist at the pinned revision.
 ## Colour grades (`crates/grade`, LOG D-028)
 
 A clip's grade is Resolution's own type: serial corrector nodes, each with the Primaries
-palette's controls and the Custom Curves, in Resolve's units. The math is ours and written down in
-`crates/grade`: a node is a tone function per channel and then a saturation step. The adapter
-(`color.rs`) keeps each grade as JSON in the timeline's metadata (`resolution.grade.<clip id>`)
-and compiles it onto the clip as Lumetri Color effects at the front of its effect stack: the tone
-functions as R, G and B curves, the saturation step as Saturation, Vibrance and a Hue vs Hue
-curve. So every renderer (playback, frame renders, Deliver) shows the grade, and each edit is one
-FilmCraft undo step holding both the metadata and the effects. A node's windows become effect masks on
-its Lumetri effects, in the clip's pixels (LOG D-031). A qualified node, key and all, is baked into a
-33-point LUT in the project's LUT library and carried by one Lumetri effect (D-032, D-033). Lumetri runs these on the CPU. The
-viewers instead draw graded frames on Resolution's own GPU renderer, with the grade's own math and
-real key masks (next section), and so does Deliver (D-042); frame renders for agents and the frames
-the GPU declines use the compile.
+palette's controls, the Custom Curves and the hue curves (D-043), in Resolve's units, and with its
+windows (D-031) and an HSL qualifier (D-032, D-033) with matte finesse (D-046). The math is ours and
+written down in `crates/grade`: a node is a tone function per channel, then a saturation step and
+the hue curves (`Node::color`), blended into the node's input by its qualifier's key and its
+windows' coverage. `Grade::apply` is the math per pixel; `Grade::apply_image` over a whole
+picture, for the qualifier's Denoise and Blur Radius, which need a pixel's neighbours.
+
+Grades render by their own math on every path (D-044): the viewers, agents' frames and Deliver
+draw them on Resolution's own GPU renderer (next section), and where FilmCraft draws a frame
+itself, it is handed the graded clips' pictures already graded.
+
+The adapter (`color.rs`) keeps each grade as JSON in the timeline's metadata
+(`resolution.grade.<clip id>`) and also compiles it onto the clip as Lumetri Color effects at the
+front of its effect stack, so the project opens sensibly in FilmCraft and renders without a GPU
+(or with `--cpu-render`) still show the grade. Each edit is one FilmCraft undo step holding both
+the metadata and the effects. The compile: the tone functions as R, G and B curves; the saturation
+step and the hue curves as Saturation, Vibrance and Lumetri's HSL curves; a node's windows as
+effect masks in the clip's pixels; a qualified node, key and all, baked into a 33-point LUT in the
+project's LUT library and carried by one Lumetri effect. It cannot carry Denoise and Blur Radius,
+and its baked key is coarse at a hard key edge.
 
 ## The GPU renderer (`crates/renderer`, LOG D-035, D-036)
 
@@ -80,9 +88,12 @@ colour management (HDR and wide-gamut media), a 2D affine placement, an opacity,
 modes and a grade. Pictures are converted to linear light, shrunk by averaging, graded and
 composited premultiplied over black at half-float precision, then encoded to 8-bit sRGB and read
 back. The compositing (sampling, colour management, blend modes, Push) is FilmCraft's GPU
-compositor's, ported. The grade stage is `crates/grade`'s math in WGSL: per node the
-tone functions as tables, the saturation step, then the qualifier's key and the windows' coverage
-blending the node's result into its input. The renderer knows nothing of FilmCraft.
+compositor's, ported. Grading is `crates/grade`'s math in WGSL: per node the tone functions
+and the hue curves as tables, the saturation step, then the qualifier's key and the windows'
+coverage blending the node's result into its input. A layer whose qualifier denoises or blurs its
+key is graded first in a stage of its own (`Renderer::stage`, D-046): drawn at its working size, each such node's matte made in a mask (the
+key, the medians, Clean Black and White, the Gaussian), the nodes applied one by one, and the
+result composited as an 8-bit picture. The renderer knows nothing of FilmCraft.
 
 The adapter (`gpu.rs`) uses it for the viewers' frames. Each playback snapshot keeps a copy of the
 timeline in which each graded clip we draw has its Lumetri effects taken off and points at a
@@ -92,8 +103,8 @@ for, so a graded clip's layer is known by its picture (D-037). Every layer of a 
 on the GPU: graded clips with their grade, everything else as FilmCraft planned it (dissolves, dips
 and Push, titles, captions, clips FilmCraft rendered on the CPU, blend modes, HDR media); standard
 effects run on the CPU for their layer. The frames FilmCraft itself draws on the CPU (adjustment
-layers, other transitions, HDR timelines) are drawn by FilmCraft's CPU renderer on the real
-project. `--cpu-render` turns the GPU renderer off,
+layers, other transitions, HDR timelines) are drawn by FilmCraft's CPU renderer from the copy, its
+graded clips' pictures graded at their source (below). `--cpu-render` turns the GPU renderer off,
 and `frame_counts()` says how many frames each drew.
 
 A front end can put the renderer on its own wgpu device (`use_gpu_device`) and ask for frames
@@ -113,7 +124,8 @@ Deliver uses it too (D-042): the adapter registers `ExportFrames` as FilmCraft's
 renderer, and `deliver.render` asks for GPU rendering. Each export worker's renderer makes the
 graded copy of the export's project once, then draws every frame as the viewers do, handing it
 back as the linear canvas (`Renderer::render_linear`) the export expects from FilmCraft's CPU
-renderer. Frames it declines render on the CPU, from the project with its compiled grades.
+renderer. Frames it declines, and those FilmCraft draws whole without asking it, render on the CPU
+from the graded copy, with graded sources (D-045).
 
 ## The editor (`apps/resolution-app`)
 
