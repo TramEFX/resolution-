@@ -18,14 +18,14 @@ use egui::{
     Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, Ui, UiBuilder,
     ViewportCommand, pos2, vec2,
 };
-use resolution_engine_api::Page;
+use resolution_engine_api::{Engine as _, Page};
 use resolution_filmcraft_adapter::FilmCraftEngine;
 use resolution_keymap::Keymap;
 use resolution_playback::AudioOut;
 use serde_json::json;
 
 use crate::chrome::{self, State};
-use crate::color_page::{self, ColorPage, Thumbs};
+use crate::color_page::{self, ColorPage, ScopeView, Thumbs};
 use crate::deliver::{self, Deliver};
 use crate::icons::Icon;
 use crate::model::{self, GradeView, Kind, MediaItem, SourceClip, Timeline};
@@ -156,6 +156,8 @@ pub struct ResolutionApp {
     /// The Color page: the clip being graded, its grade, the current node (LOG D-029).
     color: ColorPage,
     thumbs: Thumbs,
+    /// The Color page's Scopes panel (LOG D-030).
+    scope_view: ScopeView,
     /// An agent's draft, from the latest batch (LOG D-027).
     draft: Option<crate::worker::Draft>,
     /// Agents reach this editor through it while it is open; dropping it closes the link.
@@ -188,7 +190,9 @@ impl ResolutionApp {
         };
         look.apply(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
-        let worker = Worker::spawn(Box::new(FilmCraftEngine::new()), move || ctx.request_repaint());
+        let engine = FilmCraftEngine::new();
+        let scopes = engine.scopes();
+        let worker = Worker::spawn(Box::new(engine), move || ctx.request_repaint());
         if options.demo {
             worker.run("raw.filmcraft/file.openDemoProject", json!({}));
         }
@@ -237,6 +241,10 @@ impl ResolutionApp {
             thumbs: {
                 let ctx = cc.egui_ctx.clone();
                 Thumbs::new(move || ctx.request_repaint())
+            },
+            scope_view: {
+                let ctx = cc.egui_ctx.clone();
+                ScopeView::new(scopes, move || ctx.request_repaint())
             },
             clock: Instant::now(),
             play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
@@ -1580,6 +1588,7 @@ impl ResolutionApp {
         let fill = |c: Color32| Frame::new().fill(c);
         self.active = Viewer::Timeline;
         self.color_follow();
+        self.scope_view.follow(ui.ctx(), self.timeline_viewer.picture.as_ref());
         self.draft_banner(ui);
         let mut asks = Vec::new();
         egui::Panel::bottom("color-palettes")
@@ -1601,10 +1610,9 @@ impl ResolutionApp {
                 }
                 asks.extend(color_page::within(ui, left, |ui| color_page::primaries(ui, &look, &mut self.color)));
                 asks.extend(color_page::within(ui, mid, |ui| color_page::curves(ui, &look, &mut self.color)));
-                color_page::within(ui, right, |ui| {
-                    chrome::panel_header(ui, &look, "Scopes", None);
-                    chrome::not_built(ui, &look, "The Scopes panel");
-                });
+                color_page::within(ui, right, |ui| color_page::scopes_panel(ui, &look, &mut self.scope_view));
+                // the whole panel is used: a resizable panel shrinks to what its contents take
+                ui.allocate_rect(rect, Sense::hover());
             });
         let clips = self.strip_clips();
         egui::Panel::bottom("color-clips").exact_size(126.0).frame(fill(t.panel)).show(ui, |ui| {
@@ -2551,6 +2559,10 @@ mod tests {
     fn a_custom_curve_takes_a_point_where_clicked_and_bends_where_dragged() {
         let mut h = on_color_page();
         let plot = h.get_by_label("Custom Curves").rect();
+        for _ in 0..10 {
+            h.step();
+        }
+        assert_eq!(h.get_by_label("Custom Curves").rect(), plot, "the palettes keep their size from frame to frame");
         click_at(&mut h, plot.center());
         pump(&mut h, "a point in the middle of the Y curve", |a| {
             !a.color.dragging && a.color.current().is_some_and(|n| n.curves.y.0.len() == 3)
@@ -2599,6 +2611,31 @@ mod tests {
         click(&mut h, "Reject Draft");
         pump(&mut h, "the original back, ungraded", |a| {
             a.draft.is_none() && a.color.current().is_some_and(|n| n.saturation == 50.0)
+        });
+    }
+
+    #[test]
+    fn the_scopes_show_the_viewers_picture_and_switch_by_name() {
+        let mut h = on_color_page();
+        pump(&mut h, "the waveform of the viewer's picture", |a| {
+            a.scope_view.drawn == Some(resolution_engine_api::ScopeKind::Waveform)
+        });
+        for (button, kind) in [
+            ("Vectorscope", resolution_engine_api::ScopeKind::Vectorscope),
+            ("Histogram", resolution_engine_api::ScopeKind::Histogram),
+            ("Parade", resolution_engine_api::ScopeKind::Parade),
+        ] {
+            click(&mut h, button);
+            pump(&mut h, button, |a| a.scope_view.drawn == Some(kind));
+        }
+        // a grade changes the picture, and the scope follows it
+        let before = h.state().timeline_viewer.picture.as_ref().map(|p| std::sync::Arc::as_ptr(p) as usize);
+        let ring = h.get_by_label("Gain master").rect();
+        drag(&mut h, ring.center(), ring.center() - vec2(80.0, 0.0));
+        pump(&mut h, "a new picture, and its parade", |a| {
+            a.timeline_viewer.picture.as_ref().map(|p| std::sync::Arc::as_ptr(p) as usize) != before
+                && a.scope_view.drawn == Some(resolution_engine_api::ScopeKind::Parade)
+                && !a.color.dragging
         });
     }
 

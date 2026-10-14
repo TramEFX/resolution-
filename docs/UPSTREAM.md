@@ -56,7 +56,9 @@ else belongs in Resolution's own crates.
    - the command-id diff from step 1, for new commands worth adding to the vocabulary.
 
    Then `cargo clean`: Cargo keeps the old pin's build beside the new one, and they add up
-   (LOG B-032; a clean build of everything is 8.3 GB and about 6.5 minutes).
+   (LOG B-032; a clean build of everything is 8.3 GB and about 6.5 minutes). It also deletes the
+   manual's text in `target/resolve-manual/`; `python scripts/resolve-manual.py` makes it again in
+   about 2.5 minutes (it needs `pip install pypdf fonttools`).
 4. Fix the adapter, never the engine in place. Compare upstream's `[profile.dev.package.*]`
    overrides at the new base with ours in `Cargo.toml`, and mirror any for crates in our graph
    (`cargo tree -i <crate>`). Commit the pin bump and adapter fixes together.

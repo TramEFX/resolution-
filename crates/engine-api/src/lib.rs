@@ -7,6 +7,7 @@
 
 pub mod commands;
 pub mod playback;
+pub mod scopes;
 
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ use serde_json::Value;
 
 pub use commands::{COMMANDS, CommandSpec, Page, Risk};
 pub use playback::{Mixer, PEAK_RATE, PEAK_SAMPLES, Playback, Rate, RenderHints};
+pub use scopes::{PARADE_GAP, ScopeKind, Scopes, VECTORSCOPE_EXTENT};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -107,6 +109,11 @@ pub trait Engine {
     /// The clip open in the source viewer, played the same way: its frames from the first of
     /// its range, its sound from the same point. `None` when no clip is open.
     fn source_playback(&self) -> Option<Arc<dyn Playback>> {
+        None
+    }
+
+    /// Video scopes for the viewers' frames (LOG D-030); `None` when the engine has none.
+    fn scopes(&self) -> Option<Arc<dyn Scopes>> {
         None
     }
 

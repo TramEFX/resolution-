@@ -3,6 +3,7 @@
 mod color;
 pub mod map;
 pub mod playback;
+mod scopes;
 
 use std::sync::Arc;
 
@@ -260,6 +261,10 @@ impl Engine for FilmCraftEngine {
 
     fn source_playback(&self) -> Option<Arc<dyn Playback>> {
         playback::SourceSnapshot::of(&self.session).map(|s| Arc::new(s) as Arc<dyn Playback>)
+    }
+
+    fn scopes(&self) -> Option<Arc<dyn resolution_engine_api::Scopes>> {
+        Some(Arc::new(scopes::FilmCraftScopes))
     }
 
     fn drain_events(&mut self) -> Vec<EngineEvent> {

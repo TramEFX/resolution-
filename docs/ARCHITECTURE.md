@@ -122,7 +122,9 @@ An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP s
   `color.*` commands: the Node Editor, the clip strip (thumbnails rendered on a background thread
   from the playback snapshot), the Primaries wheels and the Custom Curves. A drag sends one
   `color.adjust` per frame under one merge key, so it is one undo step; while it lasts the page
-  shows the values it sends rather than the engine's trailing answers.
+  shows the values it sends rather than the engine's trailing answers. Its Scopes panel (LOG
+  D-030) draws the scope of the frame the timeline viewer shows, on a background thread, through
+  the engine's `Scopes` service: the engine draws the trace, the UI the graticule.
 - **Tests drive the real UI.** `egui_kittest` presses keys and clicks clips headlessly.
   `resolution-app --screenshot out.png` saves the window once a frame is on screen; `--play <s>`
   plays and prints what was shown and heard.

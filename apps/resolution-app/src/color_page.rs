@@ -16,7 +16,7 @@ use egui::{
     Align2, Color32, ColorImage, CornerRadius, Pos2, Rect, Response, Sense, Shape, Stroke, TextureHandle,
     TextureOptions, Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
 };
-use resolution_engine_api::{Playback, RenderHints};
+use resolution_engine_api::{Frame, PARADE_GAP, Playback, RenderHints, ScopeKind, Scopes, VECTORSCOPE_EXTENT};
 use resolution_grade::{Curve, Node, Wheel};
 use serde_json::{Map, Value, json};
 
@@ -758,4 +758,221 @@ impl Thumbs {
 /// Lay out `f` in `rect`.
 pub fn within<R>(ui: &mut Ui, rect: Rect, f: impl FnOnce(&mut Ui) -> R) -> R {
     ui.scope_builder(UiBuilder::new().max_rect(rect), f).inner
+}
+
+// ---- the Scopes ----
+
+/// A scope drawing to make: its number, the picture and the scope.
+type ScopeJob = (u64, Arc<Frame>, ScopeKind);
+
+/// The Scopes panel's state: one scope at a time, drawn on a background thread from the frame the
+/// timeline viewer shows, so it follows scrubbing, playback and every step of a grade drag. Only
+/// the newest picture is drawn; older requests are dropped.
+pub struct ScopeView {
+    pub kind: ScopeKind,
+    jobs: Option<Sender<ScopeJob>>,
+    ready: Arc<Mutex<Option<(u64, ScopeKind, ColorImage)>>>,
+    asked: u64,
+    /// The picture (by address) and scope last asked for.
+    last: Option<(usize, ScopeKind)>,
+    pub texture: Option<TextureHandle>,
+    /// The scope in `texture`.
+    pub drawn: Option<ScopeKind>,
+}
+
+impl ScopeView {
+    /// Start the drawing thread over the engine's scopes (none: the panel stays empty).
+    pub fn new(scopes: Option<Arc<dyn Scopes>>, repaint: impl Fn() + Send + 'static) -> Self {
+        let ready: Arc<Mutex<Option<(u64, ScopeKind, ColorImage)>>> = Arc::default();
+        let jobs = scopes.and_then(|scopes| {
+            let (tx, rx) = mpsc::channel::<ScopeJob>();
+            let results = ready.clone();
+            std::thread::Builder::new()
+                .name("scopes".into())
+                .spawn(move || {
+                    while let Ok(mut job) = rx.recv() {
+                        // only the newest picture matters
+                        while let Ok(newer) = rx.try_recv() {
+                            job = newer;
+                        }
+                        let (n, frame, kind) = job;
+                        let f = scopes.draw(&frame, kind);
+                        if f.width > 0 && f.height > 0 {
+                            let img =
+                                ColorImage::from_rgba_premultiplied([f.width as usize, f.height as usize], &f.rgba);
+                            *results.lock().unwrap_or_else(|e| e.into_inner()) = Some((n, kind, img));
+                            repaint();
+                        }
+                    }
+                })
+                .ok()
+                .map(|_| tx)
+        });
+        Self { kind: ScopeKind::default(), jobs, ready, asked: 0, last: None, texture: None, drawn: None }
+    }
+
+    /// Draw the scope of `picture` when it or the chosen scope has changed; put a finished
+    /// drawing on screen.
+    pub fn follow(&mut self, ctx: &egui::Context, picture: Option<&Arc<Frame>>) {
+        if let (Some(jobs), Some(p)) = (&self.jobs, picture) {
+            let key = (Arc::as_ptr(p) as usize, self.kind);
+            if self.last != Some(key) {
+                self.last = Some(key);
+                self.asked += 1;
+                let _ = jobs.send((self.asked, p.clone(), self.kind));
+            }
+        }
+        if let Some((_, kind, img)) = self.ready.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            match &mut self.texture {
+                Some(t) => t.set(img, TextureOptions::LINEAR),
+                None => self.texture = Some(ctx.load_texture("scope", img, TextureOptions::LINEAR)),
+            }
+            self.drawn = Some(kind);
+        }
+    }
+}
+
+/// Rec. 709 Cb and Cr of an RGB colour.
+fn cbcr(rgb: [f32; 3]) -> [f32; 2] {
+    let y = resolution_grade::luma(rgb);
+    [(rgb[2] - y) / 1.8556, (rgb[0] - y) / 1.5748]
+}
+
+/// The Scopes panel: the scope buttons in the title strip, the trace, and its graticule (levels
+/// in 10-bit code values, 0 to 1023, as Resolve labels them; the vectorscope's 75 % colour-bar
+/// targets and skin-tone line).
+pub fn scopes_panel(ui: &mut Ui, look: &Look, view: &mut ScopeView) {
+    let t = look.theme;
+    let measure = ui.painter().clone();
+    let width = |text: &str, font| measure.layout_no_wrap(text.into(), font, t.text).size().x;
+    let buttons: f32 = ScopeKind::ALL.iter().map(|k| width(k.label(), look.small()) + 12.0 + 3.0).sum();
+    // the title gives way to the buttons when the panel is narrow
+    let room = ui.available_width() - 20.0 - buttons;
+    let header =
+        chrome::panel_header(ui, look, if room > width("Scopes", look.medium()) + 12.0 { "Scopes" } else { "" }, None);
+    let mut x = header.right() - 10.0;
+    for kind in ScopeKind::ALL.into_iter().rev() {
+        let w = width(kind.label(), look.small()) + 12.0;
+        let b = Rect::from_min_max(pos2(x - w, header.top() + 4.0), pos2(x, header.bottom() - 4.0));
+        x -= w + 3.0;
+        let r = ui.interact(b, ui.id().with(("scope", kind.label())), Sense::click());
+        name(&r, WidgetType::Button, kind.label());
+        let on = view.kind == kind;
+        ui.painter().rect_filled(
+            b,
+            look.radius(),
+            if on {
+                t.active_bg
+            } else if r.hovered() {
+                t.hover
+            } else {
+                t.field
+            },
+        );
+        ui.painter().text(
+            b.center(),
+            Align2::CENTER_CENTER,
+            kind.label(),
+            look.small(),
+            if on { t.accent } else { t.dim },
+        );
+        if r.clicked() {
+            view.kind = kind;
+        }
+    }
+    let area = ui.available_rect_before_wrap().shrink(10.0);
+    ui.allocate_rect(area, Sense::hover());
+    let painter = ui.painter_at(area.expand(2.0));
+    painter.rect_filled(area, CornerRadius::ZERO, Color32::BLACK);
+    let line = Stroke::new(1.0, t.line);
+    let label = |p: Pos2, a: Align2, s: &str| {
+        painter.text(p, a, s, look.mono(10.0), t.dim);
+    };
+    let kind = view.kind;
+    // levels scopes leave room on the left for the numbers
+    let plot = match kind {
+        ScopeKind::Vectorscope => {
+            let side = area.width().min(area.height());
+            Rect::from_center_size(area.center(), vec2(side, side))
+        }
+        ScopeKind::Histogram => Rect::from_min_max(area.min + vec2(4.0, 4.0), area.max - vec2(4.0, 18.0)),
+        _ => Rect::from_min_max(area.min + vec2(36.0, 6.0), area.max - vec2(6.0, 18.0)),
+    };
+    // the trace, under the graticule
+    if view.drawn == Some(kind)
+        && let Some(tex) = &view.texture
+    {
+        painter.image(tex.id(), plot, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    }
+    match kind {
+        ScopeKind::Waveform | ScopeKind::Parade => {
+            for (f, code) in [(0.0, "0"), (0.25, "256"), (0.5, "512"), (0.75, "768"), (1.0, "1023")] {
+                let y = plot.bottom() - plot.height() * f;
+                painter.line_segment([pos2(plot.left(), y), pos2(plot.right(), y)], line);
+                label(pos2(plot.left() - 6.0, y), Align2::RIGHT_CENTER, code);
+            }
+            if kind == ScopeKind::Parade {
+                // the panes as the engine lays them out: three equal, PARADE_GAP apart
+                let gap = PARADE_GAP as f32 * plot.width() / (3.0 * 480.0 + 2.0 * PARADE_GAP as f32);
+                let pane = (plot.width() - 2.0 * gap) / 3.0;
+                for (k, (letter, colour)) in [("R", RED), ("G", GREEN), ("B", BLUE)].into_iter().enumerate() {
+                    let cx = plot.left() + pane / 2.0 + k as f32 * (pane + gap);
+                    painter.text(pos2(cx, plot.bottom() + 9.0), Align2::CENTER_CENTER, letter, look.small(), colour);
+                }
+            }
+        }
+        ScopeKind::Histogram => {
+            for (f, code) in [(0.0, "0"), (0.25, "256"), (0.5, "512"), (0.75, "768"), (1.0, "1023")] {
+                let x = plot.left() + plot.width() * f;
+                painter.line_segment([pos2(x, plot.top()), pos2(x, plot.bottom())], line);
+                let a = if f == 0.0 {
+                    Align2::LEFT_CENTER
+                } else if f == 1.0 {
+                    Align2::RIGHT_CENTER
+                } else {
+                    Align2::CENTER_CENTER
+                };
+                label(pos2(x, plot.bottom() + 9.0), a, code);
+            }
+        }
+        ScopeKind::Vectorscope => {
+            let c = plot.center();
+            let half = plot.width() / 2.0;
+            let at = |cb: f32, cr: f32| c + vec2(cb, -cr) / VECTORSCOPE_EXTENT * half;
+            painter.circle_stroke(c, half * 0.5 / VECTORSCOPE_EXTENT, line);
+            painter.line_segment([c - vec2(half, 0.0), c + vec2(half, 0.0)], line);
+            painter.line_segment([c - vec2(0.0, half), c + vec2(0.0, half)], line);
+            // skin tone: 123° counter-clockwise from +Cb
+            let a = 123f32.to_radians();
+            painter.line_segment([c, at(a.cos() * 0.5, a.sin() * 0.5)], Stroke::new(1.0, t.dim));
+            for (name, rgb) in [
+                ("R", [0.75, 0.0, 0.0]),
+                ("Mg", [0.75, 0.0, 0.75]),
+                ("B", [0.0, 0.0, 0.75]),
+                ("Cy", [0.0, 0.75, 0.75]),
+                ("G", [0.0, 0.75, 0.0]),
+                ("Yl", [0.75, 0.75, 0.0]),
+            ] {
+                let [cb, cr] = cbcr(rgb);
+                let p = at(cb, cr);
+                painter.rect_stroke(
+                    Rect::from_center_size(p, vec2(9.0, 9.0)),
+                    CornerRadius::ZERO,
+                    line,
+                    egui::StrokeKind::Middle,
+                );
+                let out = (p - c).normalized() * 14.0;
+                label(p + out, Align2::CENTER_CENTER, name);
+            }
+        }
+    }
+    if view.texture.is_none() {
+        painter.text(
+            area.center(),
+            Align2::CENTER_CENTER,
+            "Scopes appear with a picture in the viewer.",
+            look.small(),
+            t.dim,
+        );
+    }
 }

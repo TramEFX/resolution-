@@ -86,6 +86,8 @@ doc is updated *and* the entry says which section moved.
 | B-030 | 2026-10-14 | ui | The Color page's clip strip drew its tiles one text line tall: no pictures, no names | fixed |
 | B-031 | 2026-10-14 | ui | An agent's draft had no Accept or Reject on the Color page | fixed |
 | B-032 | 2026-10-14 | build | `target/` grew to 28 GB and filled the disk: Cargo keeps every engine pin's build | fixed |
+| D-030 | 2026-10-14 | color | Video scopes: drawn by the engine from the frame the viewer shows; read as numbers by agents | active |
+| B-033 | 2026-10-14 | ui | The Color page's palettes shrank a few points every frame, down to their minimum | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1697,3 +1699,67 @@ not measured.
 **Fix:** `cargo clean` after each engine sync, now step 3 of UPSTREAM.md's sync procedure;
 HANDOFF gives the measured size and time. Incremental builds stay on. Debug symbols stay full:
 the stack dumps of B-015 needed them, and 2.4 GB is affordable.
+
+### D-030 — Video scopes: drawn by the engine from the frame the viewer shows; read as numbers by agents
+**Area:** color · **Status:** active · **Doc:** ARCHITECTURE "The editor"; `crates/engine-api/src/scopes.rs`; `crates/filmcraft-adapter/src/scopes.rs`
+
+**Decision:** the Color page's Scopes panel and an agent's view of the same thing.
+
+- **A `Scopes` service on the engine boundary**, like `Playback`: `Engine::scopes()` hands out a
+  thread-safe drawer, and `draw(frame, kind)` returns the scope as a premultiplied RGBA picture.
+  The adapter implements it with FilmCraft's scope maths (`filmcraft-scopes`, now a direct
+  dependency at the same pin). That crate samples the frame (at most 480 × 270, nearest sample),
+  counts it into grids, and paints them with a phosphor-like intensity curve. The histogram is
+  painted in the adapter, levels across as Resolve shows it: FilmCraft's own UI draws it sideways.
+- **What it draws:** Waveform (R, G and B overlaid and tinted: white where they agree), Parade (R,
+  G and B side by side), Vectorscope (Rec. 709 Cb across and Cr up, coloured by hue), Histogram
+  (R, G and B levels, black on the left), as in the manual's "Explanation of Each Video Scope".
+- **The panel** (bottom right of the Color page) shows one scope at a time, chosen in its title
+  strip. The graticule is the UI's:
+  - levels in 10-bit code values, 0 to 1023, as Resolve labels them;
+  - the vectorscope's crosshair, the 75 % colour-bar targets (R, Mg, B, Cy, G, Yl) and the
+    skin-tone line at 123°.
+- **From the viewer's own frame.** The timeline viewer keeps the picture it shows. A background
+  thread draws the chosen scope of it whenever it changes: while scrubbing, while playing, and at
+  every step of a grade drag. Only the newest picture is drawn; older requests are dropped. So the
+  scope is the scope of what is on screen, at the viewer's resolution.
+- **For agents: `scopes.read`** (vocabulary, Color page, a read): FilmCraft's command of the same
+  name. It returns the frame at the playhead as numbers: R, G, B and Y minimum, maximum and mean,
+  levels by column, histogram bins, the vectorscope's mean and densest spots, hue and saturation.
+  115 commands now.
+
+**Why the engine draws and the UI only lays out:** the maths is FilmCraft's and tested there, and
+an engine swap brings its own. The UI stays free of image analysis.
+
+**Not built:** CIE chromaticity; the YRGB and Y'CbCr parade and waveform modes; colorize and
+extents options; 2, 4 or 9 scopes at once; zooming a scope; HDR (nits) scales.
+
+**Checked:**
+- Adapter tests (6): a grey frame draws one white waveform line at its level, 256 rows; the parade
+  puts each channel's pane at its level; grey sits at the vectorscope's centre and red up to the
+  left; the histogram puts each channel in its level's column; an empty frame draws nothing;
+  `scopes.read` on the demo returns numbers and changes nothing.
+- A UI test: the Color page draws the waveform of the viewer's picture, switches to Vectorscope,
+  Histogram and Parade by name, and draws again after a grade drag changes the picture.
+- By hand, 2026-10-14, on the Sony clip: the waveform matched the picture (the blue light tube
+  near 1023 on the left, red highlights on the right, the rest low). After an agent set Gain to
+  0.6, the waveform topped out near 614, and `scopes.read` gave every channel's maximum as 60 %.
+  The capture also showed the panel's title running into its buttons in a narrow panel; the title
+  now gives way.
+
+### B-033 — The Color page's palettes shrank a few points every frame, down to their minimum
+**Area:** ui · **Status:** fixed · **Caught by:** test
+(`a_custom_curve_takes_a_point_where_clicked_and_bends_where_dragged`, after D-030)
+
+**Symptom:** the curve test began failing every time. A drag landed somewhere other than where
+the test aimed. Printing the plot's rectangle frame by frame showed it 4 points smaller each frame.
+
+**Cause:** the palettes sit in a resizable bottom panel. egui sizes such a panel to what its
+contents allocate, and the palettes allocated a few points less than the panel's height. So the
+panel shrank every frame until it reached its minimum size. This was so since D-029. Before D-030
+the panel had always reached its minimum by the time the test measured it; the scopes changed the
+timing.
+
+**Fix:** the panel's contents allocate its whole rectangle. The curve test now checks that the
+plot keeps its place for ten frames. The Edit and Deliver pages' panels were checked the same way
+and hold still.
