@@ -72,11 +72,14 @@ real key masks (next section); frame renders and Deliver use the compile until G
 
 ## The GPU renderer (`crates/renderer`, LOG D-035, D-036)
 
-A wgpu renderer of our own (the same wgpu as egui's). It draws a frame from layers: decoded
-pictures (8-bit RGBA, float RGBA, or planar Y'CbCr with optional alpha), each with its colour
-coding, a 2D affine placement, an opacity and a grade. Pictures are converted to linear light,
-shrunk by averaging, graded and added up premultiplied over black at half-float precision, then
-encoded to 8-bit sRGB and read back. The grade stage is `crates/grade`'s math in WGSL: per node the
+A wgpu renderer of our own (the same wgpu as egui's). It draws a frame from steps: runs of
+layers, and Push transitions between two layer stacks drawn apart (D-038). A layer is a decoded
+picture (8-bit RGBA, float RGBA, or planar Y'CbCr with optional alpha) with its colour coding and
+colour management (HDR and wide-gamut media), a 2D affine placement, an opacity, one of 27 blend
+modes and a grade. Pictures are converted to linear light, shrunk by averaging, graded and
+composited premultiplied over black at half-float precision, then encoded to 8-bit sRGB and read
+back. The compositing (sampling, colour management, blend modes, Push) is FilmCraft's GPU
+compositor's, ported. The grade stage is `crates/grade`'s math in WGSL: per node the
 tone functions as tables, the saturation step, then the qualifier's key and the windows' coverage
 blending the node's result into its input. The renderer knows nothing of FilmCraft.
 
@@ -85,11 +88,11 @@ timeline in which each graded clip we draw has its Lumetri effects taken off and
 stand-in media item. FilmCraft plans and decodes the frame from the copy (`plan_frame`), through a
 source provider that opens the stand-ins' real media and notes which clip each decoded picture is
 for, so a graded clip's layer is known by its picture (D-037). Every layer of a layer plan is drawn
-on the GPU: graded clips with their grade, everything else as FilmCraft planned it (dissolves and
-dips, titles, captions, clips FilmCraft rendered on the CPU); standard effects run on the CPU for
-their layer. Push transitions, blend modes and colour-managed media still send the frame to
-FilmCraft's CPU renderer on the real project, as do the frames FilmCraft itself draws on the CPU
-(adjustment layers, other transitions, HDR timelines). `--cpu-render` turns the GPU renderer off,
+on the GPU: graded clips with their grade, everything else as FilmCraft planned it (dissolves, dips
+and Push, titles, captions, clips FilmCraft rendered on the CPU, blend modes, HDR media); standard
+effects run on the CPU for their layer. The frames FilmCraft itself draws on the CPU (adjustment
+layers, other transitions, HDR timelines) are drawn by FilmCraft's CPU renderer on the real
+project. `--cpu-render` turns the GPU renderer off,
 and `frame_counts()` says how many frames each drew.
 
 ## The editor (`apps/resolution-app`)

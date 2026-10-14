@@ -1,4 +1,6 @@
+use filmcraft_engine::render::plan::execute_cpu;
 use filmcraft_engine::render::render_sequence;
+use filmcraft_geom::Affine;
 use resolution_engine_api::Engine;
 use serde_json::{Value, json};
 
@@ -197,15 +199,118 @@ fn a_clip_with_a_lumetri_of_its_own_is_drawn_as_filmcraft_draws_it() {
 }
 
 #[test]
-fn a_push_transition_falls_back_to_the_cpu() {
+fn a_push_between_graded_clips_draws_on_the_gpu() {
     let mut e = demo();
-    at(&mut e, 21.2);
-    let s = &e.session;
-    let seq = s.state.active_sequence.unwrap();
-    let provider = s.media.provider(s.project.clone(), s.services.clone());
-    let opts = RenderOptions { scale: 0.25, captions: true, ..Default::default() };
-    if renderer().is_some() {
-        assert!(Graded::of(&s.project, seq).render(seq, s.playhead(), opts, &provider).is_none(), "not ported yet");
+    grade_at(&mut e, 19.0, warm());
+    grade_at(&mut e, 24.0, cool());
+    for t in [20.9, 21.2, 21.7] {
+        at(&mut e, t);
+        agrees(&e, &format!("push at {t}"));
+    }
+}
+
+/// A plan drawn by our renderer and by FilmCraft's CPU executor, as 8-bit RGBA, with no grades.
+fn plan_both(plan: &FramePlan) -> Option<(Frame, Frame)> {
+    let gpu = renderer()?;
+    let n = parts(plan).map_or(0, |(_, _, p)| p.iter().map(|x| x.layers().count()).sum());
+    let ours = draw(gpu, plan, &vec![None; n]).expect("drawn");
+    let img = execute_cpu(plan);
+    Some((ours, Frame { width: img.w as u32, height: img.h as u32, rgba: img.over_black_rgba8() }))
+}
+
+fn rgba_f32(w: u32, h: u32, px: impl Fn(u32, u32) -> [f32; 4]) -> Arc<VideoFrame> {
+    let px = &px;
+    let data = (0..h).flat_map(|y| (0..w).flat_map(move |x| px(x, y))).collect();
+    Arc::new(VideoFrame::rgba_f32(w, h, data))
+}
+
+/// Every blend mode against FilmCraft's CPU reference (`blend::composite`), drawn one to one: a
+/// colourful translucent layer over a gradient, so every mode's formula is exercised.
+#[test]
+fn every_blend_mode_draws_as_filmcraft_draws_it() {
+    if renderer().is_none() {
+        return;
+    }
+    let (w, h) = (96u32, 64u32);
+    let under = rgba_f32(w, h, |x, y| {
+        let (u, v) = (x as f32 / w as f32, y as f32 / h as f32);
+        [u * 0.9, v * 0.8, (1.0 - u) * 0.7, 1.0]
+    });
+    let over = rgba_f32(w, h, |x, y| {
+        let (u, v) = (x as f32 / w as f32, y as f32 / h as f32);
+        let a = 0.25 + 0.75 * v;
+        [((u * 7.0).sin() * 0.5 + 0.5) * a, u * v * a, (1.0 - v) * a, a]
+    });
+    for mode in filmcraft_engine::render::Blend::ALL {
+        let plan = FramePlan::Layers {
+            width: w as usize,
+            height: h as usize,
+            layers: vec![
+                PlanLayer::new(under.clone(), Affine::IDENTITY, 1.0, filmcraft_engine::render::Blend::Normal),
+                PlanLayer::new(over.clone(), Affine::IDENTITY, 0.8, mode),
+            ],
+        };
+        let Some((gpu, cpu)) = plan_both(&plan) else { return };
+        let (mean, p99) = differ(&gpu, &cpu);
+        let worst = gpu.rgba.iter().zip(&cpu.rgba).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        eprintln!("{mode:?}: mean {mean:.2}, 99% {p99}, worst {worst}");
+        // Hard Mix is a step: a pixel on its threshold may land either side
+        assert!(mean < 0.5 && p99 <= 2.0, "{mode:?}: mean {mean}, 99% {p99}");
+        assert!(format!("{mode:?}") == format!("{:?}", Blend::ALL[mode.index() as usize]), "{mode:?}: the same mode");
+    }
+}
+
+/// HDR and wide-gamut Y'CbCr on a Rec. 709 timeline: the shader's colour management matches
+/// FilmCraft's CPU running the same transform (as FilmCraft's own GPU test checks its shader).
+#[test]
+fn hdr_media_draws_as_filmcraft_draws_it() {
+    use filmcraft_color::{ColorInfo, ColorPipeline, ColorSpace, Matrix, Primaries, Range, Transfer};
+    if renderer().is_none() {
+        return;
+    }
+    // a 10-bit luma ramp (to the top code) under neutral, saturated and extreme chroma, 4:4:4
+    let (w, h) = (256u32, 6u32);
+    let chroma = [(512, 512), (300, 760), (760, 300), (64, 512), (960, 960), (512, 64)];
+    let y: Vec<u16> = (0..h).flat_map(|_| (0..w).map(|x| (64 + x * 876 / 255) as u16)).collect();
+    let cb: Vec<u16> = (0..h).flat_map(|r| std::iter::repeat_n(chroma[r as usize].0, w as usize)).collect();
+    let cr: Vec<u16> = (0..h).flat_map(|r| std::iter::repeat_n(chroma[r as usize].1, w as usize)).collect();
+    let data = PixelData::Yuv16 {
+        planes: [Arc::new(y), Arc::new(cb), Arc::new(cr)],
+        chroma: Chroma::C444,
+        bits: 10,
+        alpha: None,
+    };
+    let hdr = |transfer| ColorInfo {
+        matrix: Matrix::Bt2020Ncl,
+        transfer,
+        primaries: Primaries::Bt2020,
+        range: Range::Limited,
+    };
+    let cases = [
+        ("HLG", hdr(Transfer::Hlg), None),
+        ("PQ", hdr(Transfer::Pq), None),
+        ("PQ 4000 cd/m²", hdr(Transfer::Pq), Some(4000.0)),
+        ("BT.2020 SDR", ColorInfo { primaries: Primaries::Bt2020, ..ColorInfo::REC709 }, None),
+    ];
+    for (name, color, peak) in cases {
+        let frame = Arc::new(VideoFrame {
+            width: w,
+            height: h,
+            data: data.clone(),
+            color,
+            par: (1, 1),
+            pts: Default::default(),
+        });
+        let t = Arc::new(InputTransform::new(ColorSpace::from_info(&color), color.range, &ColorPipeline::REC709, peak));
+        let layer = PlanLayer {
+            input: Some(t),
+            ..PlanLayer::new(frame, Affine::IDENTITY, 1.0, filmcraft_engine::render::Blend::Normal)
+        };
+        let plan = FramePlan::Layers { width: w as usize, height: h as usize, layers: vec![layer] };
+        let Some((gpu, cpu)) = plan_both(&plan) else { return };
+        let worst = gpu.rgba.iter().zip(&cpu.rgba).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        eprintln!("{name}: worst {worst} code values");
+        assert!(worst <= 2, "{name}: {worst}");
     }
 }
 

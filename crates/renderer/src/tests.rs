@@ -23,6 +23,8 @@ fn rgba_layer<'a>(w: u32, h: u32, rgba: &'a [u8], grade: Option<&'a Grade>) -> L
         coding: Coding::REC709,
         matrix: IDENTITY,
         opacity: 1.0,
+        blend: Blend::Normal,
+        managed: None,
         grade,
     }
 }
@@ -87,6 +89,8 @@ fn video_range_rec709_decodes_to_white_black_and_red() {
             coding: Coding::REC709,
             matrix: IDENTITY,
             opacity: 1.0,
+            blend: Blend::Normal,
+            managed: None,
             grade: None,
         };
         let out = r.render((w, h), &[layer]).unwrap();
@@ -148,8 +152,17 @@ fn ycbcr_mid_tones_decode_as_the_formula_says() {
         } else {
             Pixels::Yuv16 { planes: [&y, &cb, &cr], chroma: (0, 0), bits, alpha: None }
         };
-        let layer =
-            Layer { width: n as u32, height: n as u32, pixels, coding, matrix: IDENTITY, opacity: 1.0, grade: None };
+        let layer = Layer {
+            width: n as u32,
+            height: n as u32,
+            pixels,
+            coding,
+            matrix: IDENTITY,
+            opacity: 1.0,
+            blend: Blend::Normal,
+            managed: None,
+            grade: None,
+        };
         let out = r.render((n as u32, n as u32), &[layer]).unwrap();
         let (worst, bias) = off(&out, &want);
         eprintln!("{bits}-bit, full range {full}: worst {worst:.2}, mean {bias:.3} code values");
@@ -170,6 +183,8 @@ fn ten_bit_white_is_white() {
         coding: Coding::REC709,
         matrix: IDENTITY,
         opacity: 1.0,
+        blend: Blend::Normal,
+        managed: None,
         grade: None,
     };
     let out = r.render((8, 8), &[layer]).unwrap();

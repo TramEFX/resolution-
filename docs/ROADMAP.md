@@ -108,7 +108,7 @@ read, never copied into the repo.
   - [ ] G2: the rest of the viewers' frames on the GPU, and to the screen without a copy back
     - [x] Dissolves, dips, titles, captions and clips FilmCraft renders itself; graded clips known
           by their pictures (D-037)
-    - [ ] Blend modes, Push, colour management of HDR and wide-gamut media
+    - [x] Blend modes, Push, colour management of HDR and wide-gamut media (D-038)
     - [ ] Standard effects on the GPU (they run on the CPU per layer for now)
     - [ ] Frames to the screen without a copy back
     - [ ] Chroma siting; shrinking by more than 4× (D-036 "Limits")

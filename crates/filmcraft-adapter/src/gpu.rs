@@ -1,4 +1,4 @@
-//! The viewers' frames on Resolution's GPU renderer (LOG D-035, D-036, D-037).
+//! The viewers' frames on Resolution's GPU renderer (LOG D-035 to D-038).
 //!
 //! Each playback snapshot keeps a copy of its timeline in which every graded clip FilmCraft would
 //! hand over as a plain decoded picture has its grade's Lumetri effects taken off and points at a
@@ -9,21 +9,20 @@
 //! planner put it: inside a transition, over or under other tracks, in a flattened nested
 //! timeline.
 //!
-//! Resolution's renderer then draws the plan's layers: graded clips with their grade, by the
-//! grade's own math; everything else as FilmCraft planned it (solids for dips, captions, titles
-//! and clips FilmCraft rendered on the CPU, pictures with their opacity). A layer carrying
-//! FilmCraft's standard effects has them run on the CPU for that layer alone (their GPU port is a
-//! later step of G2).
+//! Resolution's renderer then draws the plan: graded clips with their grade, by the grade's own
+//! math; everything else as FilmCraft planned it (solids for dips, captions, titles and clips
+//! FilmCraft rendered on the CPU, pictures with their opacity, blend mode and colour management;
+//! Push transitions between their two sides). A layer carrying FilmCraft's standard effects has
+//! them run on the CPU for that layer alone (their GPU port is a later step of G2).
 //!
 //! The whole frame is drawn by FilmCraft's CPU renderer, from the real project, compiled grades
 //! and all, when:
 //!
 //! - FilmCraft would draw it on the CPU anyway (an adjustment layer, a transition other than
 //!   dissolves, dips and Push, an HDR timeline);
-//! - it is a Push transition (`FramePlan::Composite`), has a blend mode other than Normal, or has
-//!   colour management FilmCraft runs on its GPU path (not ported yet);
-//! - a graded clip's picture is not drawn as decoded (FilmCraft converted it on the CPU first), so
-//!   its grade cannot be put back;
+//! - a layer's colour management has no GPU form (log media);
+//! - a graded clip's picture is not drawn as decoded (FilmCraft converted it on the CPU first, or
+//!   it has colour management to run before its grade), so its grade cannot be put back;
 //! - two graded clips show the very same picture (the same media at the same moment), so the
 //!   picture does not say which clip it is.
 //!
@@ -35,15 +34,16 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use filmcraft_engine::project::{ClipId, ItemId, Project};
-use filmcraft_engine::render::plan::{FramePlan, PlanLayer, effect_image, is_cpu_frame, plan_frame};
-use filmcraft_engine::render::{Blend, RenderOptions, SourceProvider};
+use filmcraft_color::{GpuCurve, InputTransform, REFERENCE_WHITE_NITS};
+use filmcraft_engine::project::{ClipId, EffectInstance, ItemId, ParamValue, Project};
+use filmcraft_engine::render::plan::{FramePlan, PlanLayer, PlanStep, effect_image_with, is_cpu_frame, plan_frame};
+use filmcraft_engine::render::{RenderOptions, SourceProvider};
 use filmcraft_engine::time::Tick;
 use filmcraft_frame::{AudioBuffer, Chroma, PixelData, VideoFrame};
 use filmcraft_media::{FrameRequest, MediaInfo, MediaSource, SharedSource, cancel};
 use resolution_engine_api::Frame;
 use resolution_grade::Grade;
-use resolution_renderer::{Coding, Layer, Pixels, Renderer, Transfer};
+use resolution_renderer::{Blend, Coding, Curve, Layer, Managed, Pixels, Renderer, Step, Transfer};
 
 static GPU_FRAMES: AtomicU64 = AtomicU64::new(0);
 static CPU_FRAMES: AtomicU64 = AtomicU64::new(0);
@@ -152,34 +152,13 @@ impl Graded {
         // Planned without draft playback's shortcut, which hands over shrunk copies of the decoded
         // pictures: a graded clip's layer is known by its picture.
         let plan = cancel::with_draft(false, || plan_frame(&self.project, seq, t, opts, &tagging));
-        let FramePlan::Layers { width, height, layers } = plan else { return None };
         let seen = std::mem::take(&mut *seen.lock().ok()?);
+        let (_, _, parts) = parts(&plan)?;
+        let layers: Vec<&PlanLayer> = parts.iter().flat_map(Part::layers).collect();
         let grades = self.layer_grades(&layers, &seen)?;
-        if layers.iter().any(|l| l.blend != Blend::Normal || l.input.is_some()) {
-            return None;
-        }
-        // standard effects the GPU does not run yet: on the CPU, layer by layer
-        let images: Vec<_> = layers.iter().map(|l| l.fx.as_ref().map(|fx| effect_image(&l.frame, fx))).collect();
-        let mut out = Vec::with_capacity(layers.len());
-        for ((l, grade), image) in layers.iter().zip(&grades).zip(&images) {
-            let m = l.matrix;
-            let matrix = [m.a, m.b, m.c, m.d, m.e, m.f];
-            match image {
-                Some(img) => out.push(Layer {
-                    width: img.w as u32,
-                    height: img.h as u32,
-                    pixels: Pixels::RgbaF32(&img.px),
-                    coding: Coding { transfer: Transfer::Linear, ..Coding::REC709 },
-                    matrix,
-                    opacity: l.opacity,
-                    grade: None,
-                }),
-                None => out.push(layer(&l.frame, matrix, l.opacity, *grade)?),
-            }
-        }
-        let rgba = gpu.lock().ok()?.render((width as u32, height as u32), &out)?;
+        let frame = draw(gpu, &plan, &grades)?;
         GPU_FRAMES.fetch_add(1, Ordering::Relaxed);
-        Some(Frame { width: width as u32, height: height as u32, rgba })
+        Some(frame)
     }
 
     /// Each layer's grade: the grade of the clip whose decoded picture it draws, if that clip is
@@ -187,7 +166,7 @@ impl Graded {
     /// module notes).
     fn layer_grades<'a>(
         &'a self,
-        layers: &[PlanLayer],
+        layers: &[&PlanLayer],
         seen: &[(Arc<VideoFrame>, ClipId)],
     ) -> Option<Vec<Option<&'a Grade>>> {
         let mut clip_of: HashMap<*const VideoFrame, ClipId> = HashMap::new();
@@ -216,6 +195,131 @@ impl Graded {
         }
         (drawn.len() == clip_of.len()).then_some(out)
     }
+}
+
+/// A part of a frame plan the renderer draws as one [`Step`].
+enum Part<'p> {
+    Layers(&'p [PlanLayer]),
+    Push { inputs: [&'p [PlanLayer]; 2], effect: &'p EffectInstance, progress: f32 },
+}
+
+impl<'p> Part<'p> {
+    fn layers(&self) -> impl Iterator<Item = &'p PlanLayer> + use<'p> {
+        let (a, b): (&'p [PlanLayer], &'p [PlanLayer]) = match *self {
+            Part::Layers(ls) => (ls, &[]),
+            Part::Push { inputs, .. } => (inputs[0], inputs[1]),
+        };
+        a.iter().chain(b)
+    }
+}
+
+/// A plan's size and parts, or `None` for a plan the renderer does not draw: a CPU image, or a
+/// transition other than Push.
+fn parts(plan: &FramePlan) -> Option<(usize, usize, Vec<Part<'_>>)> {
+    match plan {
+        FramePlan::Layers { width, height, layers } => Some((*width, *height, vec![Part::Layers(layers)])),
+        FramePlan::Composite { width, height, steps } => {
+            let parts = steps
+                .iter()
+                .map(|s| match s {
+                    PlanStep::Layers(ls) => Some(Part::Layers(ls)),
+                    PlanStep::Transition { inputs, effect, progress, .. } => (effect.effect == "push")
+                        .then_some(Part::Push { inputs: [&inputs[0], &inputs[1]], effect, progress: *progress }),
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some((*width, *height, parts))
+        }
+        FramePlan::Image(_) => None,
+    }
+}
+
+/// Draws `plan` on the GPU, its layers (in plan order, Push sides included) with `grades`.
+/// `None` when a layer cannot be drawn there or the GPU failed.
+fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>]) -> Option<Frame> {
+    let (width, height, parts) = parts(plan)?;
+    let all: Vec<&PlanLayer> = parts.iter().flat_map(Part::layers).collect();
+    // standard effects the GPU does not run yet: on the CPU, layer by layer (with the layer's
+    // colour management, which comes first)
+    let images: Vec<_> =
+        all.iter().map(|l| l.fx.as_ref().map(|fx| effect_image_with(&l.frame, fx, l.input.as_deref()))).collect();
+    let mut layers = Vec::with_capacity(all.len());
+    for ((l, grade), image) in all.iter().zip(grades).zip(&images) {
+        let m = l.matrix;
+        let matrix = [m.a, m.b, m.c, m.d, m.e, m.f];
+        let blend = Blend::ALL.get(l.blend.index() as usize).copied()?;
+        layers.push(match image {
+            Some(img) => Layer {
+                width: img.w as u32,
+                height: img.h as u32,
+                pixels: Pixels::RgbaF32(&img.px),
+                coding: Coding { transfer: Transfer::Linear, ..Coding::REC709 },
+                matrix,
+                opacity: l.opacity,
+                blend,
+                managed: None,
+                grade: None,
+            },
+            None => {
+                let managed = match &l.input {
+                    Some(t) => Some(managed(t)?),
+                    None => None,
+                };
+                Layer { blend, managed, ..layer(&l.frame, matrix, l.opacity, *grade)? }
+            }
+        });
+    }
+    let mut next = layers.into_iter();
+    let mut take = |n: usize| next.by_ref().take(n).collect::<Vec<_>>();
+    let steps: Vec<Step<'_>> = parts
+        .iter()
+        .map(|p| match p {
+            Part::Layers(ls) => Step::Layers(take(ls.len())),
+            Part::Push { inputs, effect, progress } => {
+                let (direction, blur) = push(effect);
+                Step::Push {
+                    inputs: [take(inputs[0].len()), take(inputs[1].len())],
+                    progress: *progress,
+                    direction,
+                    blur,
+                }
+            }
+        })
+        .collect();
+    let rgba = gpu.lock().ok()?.render_steps((width as u32, height as u32), &steps)?;
+    Some(Frame { width: width as u32, height: height as u32, rgba })
+}
+
+/// A Push transition's direction (0 down, 1 left, 2 up, 3 right) and motion blur (0 to 1), as
+/// FilmCraft's compositor reads them.
+fn push(effect: &EffectInstance) -> (u32, f32) {
+    let value = effect
+        .param("direction")
+        .map(|p| p.value.clone())
+        .or_else(|| effect.def().and_then(|d| d.param("direction")).map(|p| p.default.clone()));
+    let direction = match value {
+        Some(ParamValue::Choice(v)) => v,
+        _ => 0,
+    };
+    let blur = effect.f64_at("motion_blur", Default::default()) as f32 / 100.0;
+    (direction, if blur.is_finite() { blur.clamp(0.0, 1.0) } else { 0.0 })
+}
+
+/// A layer's colour management as the renderer runs it; `None` when it has no GPU form.
+fn managed(t: &InputTransform) -> Option<Managed> {
+    let p = t.gpu_params()?;
+    Some(Managed {
+        curve: match p.curve {
+            GpuCurve::Sdr => Curve::Sdr,
+            GpuCurve::Linear => Curve::Linear,
+            GpuCurve::Pq => Curve::Pq,
+            GpuCurve::Hlg => Curve::Hlg,
+        },
+        hlg: p.hlg,
+        matrix: p.matrix,
+        tone: p.tone,
+        desaturate: p.desaturate,
+        reference_white: REFERENCE_WHITE_NITS as f32,
+    })
 }
 
 /// A source provider that opens each stand-in's real media and notes, for every picture decoded
@@ -275,7 +379,8 @@ fn layer<'a>(f: &'a VideoFrame, matrix: [f64; 6], opacity: f32, grade: Option<&'
     let transfer = match f.color.transfer {
         filmcraft_color::Transfer::Linear => Transfer::Linear,
         filmcraft_color::Transfer::Bt709 | filmcraft_color::Transfer::Srgb => Transfer::Srgb,
-        _ => return None,
+        filmcraft_color::Transfer::Pq => Transfer::Pq,
+        filmcraft_color::Transfer::Hlg => Transfer::Hlg,
     };
     let (kr, kb) = f.color.matrix.kr_kb();
     let coding = Coding { kr, kb, full_range: f.color.range == filmcraft_color::Range::Full, transfer };
@@ -295,7 +400,17 @@ fn layer<'a>(f: &'a VideoFrame, matrix: [f64; 6], opacity: f32, grade: Option<&'
             alpha: alpha.as_deref().map(Vec::as_slice),
         },
     };
-    Some(Layer { width: f.width, height: f.height, pixels, coding, matrix, opacity, grade })
+    Some(Layer {
+        width: f.width,
+        height: f.height,
+        pixels,
+        coding,
+        matrix,
+        opacity,
+        blend: Blend::Normal,
+        managed: None,
+        grade,
+    })
 }
 
 #[cfg(test)]
