@@ -363,3 +363,36 @@ fn chroma_sited_left_is_read_where_it_was_taken() {
         assert!(centre > 30, "edge {edge}: read as centred smears the edge ({centre})");
     }
 }
+
+#[test]
+fn the_linear_canvas_keeps_alpha_and_matches_the_frame() {
+    let Some(r) = renderer() else { return };
+    // premultiplied linear: an opaque left half, a half-clear right half
+    let px: Vec<f32> =
+        (0..8 * 4).flat_map(|i| if i % 8 < 4 { [0.6, 0.2, 0.1, 1.0] } else { [0.15, 0.05, 0.0, 0.5] }).collect();
+    let l = Layer {
+        width: 8,
+        height: 4,
+        pixels: Pixels::RgbaF32(&px),
+        coding: Coding { transfer: Transfer::Linear, ..Coding::REC709 },
+        matrix: IDENTITY,
+        opacity: 1.0,
+        blend: Blend::Normal,
+        managed: None,
+        grade: None,
+    };
+    let steps = [Step::Layers(vec![l])];
+    let lin = r.render_linear((8, 4), &steps).unwrap();
+    assert_eq!(lin.len(), 8 * 4 * 4);
+    for (i, p) in lin.chunks(4).enumerate() {
+        let want = &px[i * 4..i * 4 + 4];
+        assert!(p.iter().zip(want).all(|(a, b)| (a - b).abs() < 2e-3), "pixel {i}: {p:?}, not {want:?}");
+    }
+    // the 8-bit frame is the canvas over black, encoded
+    let frame = r.render_steps((8, 4), &steps).unwrap();
+    let enc =
+        |v: f32| (if v <= 0.0031308 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 } * 255.0).round() as i32;
+    for (p, f) in lin.chunks(4).zip(frame.chunks(4)) {
+        assert!((0..3).all(|k| (enc(p[k]) - i32::from(f[k])).abs() <= 1), "{p:?} against {f:?}");
+    }
+}

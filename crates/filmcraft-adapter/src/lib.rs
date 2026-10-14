@@ -46,6 +46,8 @@ fn bin_of(node: &Value, bin: Option<u64>, item: u64) -> Option<Option<u64>> {
 impl FilmCraftEngine {
     /// A headless session on the native filesystem.
     pub fn new() -> Self {
+        // Deliver renders through the GPU renderer, as the viewers do (LOG D-042)
+        gpu::register_export_renderer();
         Self { session: Session::new(Arc::new(FsServices)) }
     }
 
@@ -186,6 +188,9 @@ impl Engine for FilmCraftEngine {
             return self.run(id, raw, params);
         }
         match map::target(id) {
+            // a file renders as the viewer shows it: through the GPU renderer, unless asked not to
+            // (LOG D-042)
+            Some(Target::Engine(fc)) if id == "deliver.render" => self.run(id, fc, gpu::deliver_params(params)),
             Some(Target::Engine(fc) | Target::Approx(fc, _)) => self.run(id, fc, params),
             Some(Target::Adapter) if id == "timeline.inspect" => self.inspect_timeline(),
             Some(Target::Adapter) if id == "source.inspect" => self.inspect_source(),

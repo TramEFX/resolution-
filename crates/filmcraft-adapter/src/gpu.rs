@@ -1,4 +1,4 @@
-//! The viewers' frames on Resolution's GPU renderer (LOG D-035 to D-038).
+//! The viewers' frames, and Deliver's, on Resolution's GPU renderer (LOG D-035 to D-042).
 //!
 //! Each playback snapshot keeps a copy of its timeline in which every graded clip FilmCraft would
 //! hand over as a plain decoded picture has its grade's Lumetri effects taken off and points at a
@@ -29,6 +29,11 @@
 //! A graded clip with other standard effects or opacity masks keeps its Lumetri effects in the
 //! copy: the grade comes first in its effect stack, so FilmCraft renders that clip on the CPU,
 //! graded, and the GPU draws it like any pre-rendered layer.
+//!
+//! **Deliver** (G3, LOG D-042): FilmCraft's export takes a registered frame renderer for the frames
+//! it would otherwise render on the CPU. Ours ([`ExportFrames`]) draws them the same way, from a
+//! graded copy of the export's project, and hands back the composite in linear light, before it is
+//! laid over black, as FilmCraft's CPU renderer would. So a file renders as the viewer shows it.
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -36,9 +41,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use filmcraft_color::{GpuCurve, InputTransform, REFERENCE_WHITE_NITS};
+use filmcraft_engine::export::FrameRenderer;
 use filmcraft_engine::project::{ClipId, EffectInstance, ItemId, ParamValue, Project};
 use filmcraft_engine::render::plan::{FramePlan, PlanLayer, PlanStep, effect_image_with, is_cpu_frame, plan_frame};
-use filmcraft_engine::render::{RenderOptions, SourceProvider};
+use filmcraft_engine::render::{Image, RenderOptions, SourceProvider};
 use filmcraft_engine::time::Tick;
 use filmcraft_frame::{AudioBuffer, Chroma, PixelData, VideoFrame};
 use filmcraft_media::{FrameRequest, MediaInfo, MediaSource, SharedSource, cancel};
@@ -173,6 +179,27 @@ impl Graded {
         sources: &dyn SourceProvider,
         keep: bool,
     ) -> Option<Frame> {
+        let out = if keep && SHARED.load(Ordering::Relaxed) { Out::Keep } else { Out::Pixels };
+        let Drawn::Frame(frame) = self.drawn(seq, t, opts, sources, out)? else { return None };
+        GPU_FRAMES.fetch_add(1, Ordering::Relaxed);
+        Some(frame)
+    }
+
+    /// The frame at `t`, drawn on the GPU, as FilmCraft's CPU renderer hands frames to an export:
+    /// linear light, premultiplied, not laid over black.
+    fn render_linear(&self, seq: ItemId, t: Tick, opts: RenderOptions, sources: &dyn SourceProvider) -> Option<Image> {
+        let Drawn::Linear(w, h, px) = self.drawn(seq, t, opts, sources, Out::Linear)? else { return None };
+        Some(Image { w: w as usize, h: h as usize, px })
+    }
+
+    fn drawn(
+        &self,
+        seq: ItemId,
+        t: Tick,
+        opts: RenderOptions,
+        sources: &dyn SourceProvider,
+        out: Out,
+    ) -> Option<Drawn> {
         if !GPU_ON.load(Ordering::Relaxed) {
             return None;
         }
@@ -190,9 +217,7 @@ impl Graded {
         let (_, _, parts) = parts(&plan)?;
         let layers: Vec<&PlanLayer> = parts.iter().flat_map(Part::layers).collect();
         let grades = self.layer_grades(&layers, &seen)?;
-        let frame = draw(gpu, &plan, &grades, keep && SHARED.load(Ordering::Relaxed))?;
-        GPU_FRAMES.fetch_add(1, Ordering::Relaxed);
-        Some(frame)
+        draw(gpu, &plan, &grades, out)
     }
 
     /// Each layer's grade: the grade of the clip whose decoded picture it draws, if that clip is
@@ -267,9 +292,24 @@ fn parts(plan: &FramePlan) -> Option<(usize, usize, Vec<Part<'_>>)> {
     }
 }
 
-/// Draws `plan` on the GPU, its layers (in plan order, Push sides included) with `grades`, read
-/// back or (`keep`) left there. `None` when a layer cannot be drawn there or the GPU failed.
-fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>], keep: bool) -> Option<Frame> {
+/// What a drawing is wanted as.
+enum Out {
+    /// 8-bit sRGB pixels.
+    Pixels,
+    /// Left on the GPU.
+    Keep,
+    /// Linear light, premultiplied, not laid over black.
+    Linear,
+}
+
+enum Drawn {
+    Frame(Frame),
+    Linear(u32, u32, Vec<f32>),
+}
+
+/// Draws `plan` on the GPU, its layers (in plan order, Push sides included) with `grades`, as
+/// `out` asks. `None` when a layer cannot be drawn there or the GPU failed.
+fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>], out: Out) -> Option<Drawn> {
     let (width, height, parts) = parts(plan)?;
     let all: Vec<&PlanLayer> = parts.iter().flat_map(Part::layers).collect();
     // standard effects the GPU does not run yet: on the CPU, layer by layer (with the layer's
@@ -320,12 +360,64 @@ fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>], keep
         })
         .collect();
     let size = (width as u32, height as u32);
-    if keep {
-        let picture = gpu.lock().ok()?.draw_steps(size, &steps);
-        return Some(Frame { width: size.0, height: size.1, rgba: Vec::new(), gpu: Some(Arc::new(OnGpu(picture))) });
+    let r = gpu.lock().ok()?;
+    Some(match out {
+        Out::Keep => {
+            let picture = r.draw_steps(size, &steps);
+            Drawn::Frame(Frame { width: size.0, height: size.1, rgba: Vec::new(), gpu: Some(Arc::new(OnGpu(picture))) })
+        }
+        Out::Pixels => Drawn::Frame(Frame::new(size.0, size.1, r.render_steps(size, &steps)?)),
+        Out::Linear => Drawn::Linear(size.0, size.1, r.render_linear(size, &steps)?),
+    })
+}
+
+/// An export's frame renderer (LOG D-042): one for each of the export's renderer slots, each
+/// making its graded copy of the export's project when first asked.
+struct ExportFrames {
+    /// The project it was made for (by address) and its graded copy.
+    graded: Option<(usize, Graded)>,
+}
+
+/// Registers [`ExportFrames`] as the frame renderer of FilmCraft's exports that ask for GPU
+/// rendering (`gpuRendering: auto`, which `deliver.render` does unless told otherwise). Once is
+/// enough; again is harmless.
+pub(crate) fn register_export_renderer() {
+    filmcraft_engine::export::register_frame_renderer(export_frames);
+}
+
+/// `deliver.render`'s parameters for FilmCraft's export: GPU rendering on unless they say
+/// otherwise, or the GPU renderer is turned off ([`use_gpu_renderer`]).
+pub(crate) fn deliver_params(mut params: serde_json::Value) -> serde_json::Value {
+    if let Some(p) = params.as_object_mut()
+        && !p.contains_key("gpuRendering")
+    {
+        let on = GPU_ON.load(Ordering::Relaxed);
+        p.insert("gpuRendering".into(), serde_json::Value::from(if on { "auto" } else { "off" }));
     }
-    let rgba = gpu.lock().ok()?.render_steps(size, &steps)?;
-    Some(Frame::new(size.0, size.1, rgba))
+    params
+}
+
+fn export_frames() -> Option<Box<dyn FrameRenderer>> {
+    renderer()?;
+    Some(Box::new(ExportFrames { graded: None }))
+}
+
+impl FrameRenderer for ExportFrames {
+    fn render(
+        &mut self,
+        project: &Project,
+        seq: ItemId,
+        t: Tick,
+        opts: RenderOptions,
+        sources: &dyn SourceProvider,
+    ) -> Option<Image> {
+        let id = project as *const Project as usize;
+        if self.graded.as_ref().is_none_or(|(p, _)| *p != id) {
+            self.graded = Some((id, Graded::of(&Arc::new(project.clone()), seq)));
+        }
+        let (_, graded) = self.graded.as_ref()?;
+        graded.render_linear(seq, t, opts, sources)
+    }
 }
 
 /// A Push transition's direction (0 down, 1 left, 2 up, 3 right) and motion blur (0 to 1), as

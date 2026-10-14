@@ -213,7 +213,7 @@ fn a_push_between_graded_clips_draws_on_the_gpu() {
 fn plan_both(plan: &FramePlan) -> Option<(Frame, Frame)> {
     let gpu = renderer()?;
     let n = parts(plan).map_or(0, |(_, _, p)| p.iter().map(|x| x.layers().count()).sum());
-    let ours = draw(gpu, plan, &vec![None; n], false).expect("drawn");
+    let Some(Drawn::Frame(ours)) = draw(gpu, plan, &vec![None; n], Out::Pixels) else { panic!("drawn") };
     let img = execute_cpu(plan);
     Some((ours, Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8())))
 }
@@ -375,4 +375,53 @@ fn camera_video_draws_on_the_gpu_as_on_the_cpu() {
     assert!(n > w * h / 2, "most of the picture is flat");
     assert!(worst <= 2, "the flat parts agree: worst {worst}");
     assert!(lean.iter().all(|v| v.abs() < 0.25), "no colour leans: {lean:?}");
+}
+
+/// Deliver's frames (LOG D-042): our export frame renderer against FilmCraft's CPU renderer, as an
+/// export takes them (linear light, not laid over black), on the graded demo: a dissolve, a clip
+/// FilmCraft renders on the CPU, a Push and a clip with a Lumetri of its own.
+#[test]
+fn deliver_frames_draw_as_the_cpu_does() {
+    let mut e = demo();
+    grade_at(&mut e, 2.0, warm());
+    grade_at(&mut e, 7.0, cool());
+    grade_at(&mut e, 24.0, cool());
+    let Some(mut frames) = export_frames() else { return };
+    let s = &e.session;
+    let seq = s.state.active_sequence.unwrap();
+    let provider = s.media.full_res_provider(s.project.clone(), s.services.clone());
+    let opts = RenderOptions { scale: 0.5, ..Default::default() };
+    for secs in [5.0, 7.0, 15.0, 21.2] {
+        let t = Tick::from_seconds_f64(secs);
+        let ours = frames.render(&s.project, seq, t, opts, &provider).expect("drawn on the GPU");
+        let cpu = render_sequence(&s.project, seq, t, opts, &provider);
+        assert_eq!((ours.w, ours.h), (cpu.w, cpu.h));
+        let as_frame = |i: &Image| Frame::new(i.w as u32, i.h as u32, i.over_black_rgba8());
+        let (mean, p99) = differ(&as_frame(&ours), &as_frame(&cpu));
+        let alpha = ours.px.chunks(4).zip(cpu.px.chunks(4)).map(|(a, b)| (a[3] - b[3]).abs()).fold(0.0, f32::max);
+        eprintln!("export frame at {secs}: mean {mean:.2}, 99% {p99}, alpha off by {alpha:.4}");
+        assert!(mean < 1.0 && p99 <= 3.0 && alpha < 2e-3, "at {secs}: mean {mean}, 99% {p99}, alpha {alpha}");
+    }
+}
+
+#[test]
+fn deliver_renders_through_the_gpu_renderer() {
+    if renderer().is_none() {
+        return;
+    }
+    let mut e = demo();
+    grade_at(&mut e, 2.0, warm());
+    let dir = std::env::temp_dir().join(format!("resolution-deliver-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("graded.mp4");
+    let before = filmcraft_engine::export::gpu_render_stats().frames;
+    e.execute(
+        "deliver.render",
+        json!({ "path": path.to_string_lossy(), "preset": "High Quality 1080p HD", "startSeconds": 1.5, "endSeconds": 2.5, "wait": true }),
+    )
+    .unwrap();
+    let drawn = filmcraft_engine::export::gpu_render_stats().frames - before;
+    assert!(drawn >= 20, "a second of frames drawn on the GPU, not {drawn}");
+    assert!(std::fs::metadata(&path).map(|m| m.len() > 1000).unwrap_or(false), "the file was written");
+    let _ = std::fs::remove_dir_all(&dir);
 }

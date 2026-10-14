@@ -100,6 +100,8 @@ doc is updated *and* the entry says which section moved.
 | D-038 | 2026-10-14 | color | G2, step 2: blend modes, Push and HDR media on the GPU, ported from FilmCraft's compositor | active |
 | D-039 | 2026-10-14 | color | G2, step 3: the viewers show the renderer's frames on the GPU, without a copy back | active |
 | D-040 | 2026-10-14 | color | G2, step 4: a shrunk picture averages all its pixels; chroma read as sited left | active |
+| D-041 | 2026-10-14 | color | The GPU port of FilmCraft's standard effects waits for an Effects panel | active |
+| D-042 | 2026-10-14 | color | G3: Deliver renders through the GPU renderer, so a file matches the viewer | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2341,3 +2343,67 @@ the same run: 49.5 ms a frame.
 
 **Checked:** renderer tests (13): the stripes at every phase, the siting test. 190 tests in the
 workspace.
+
+### D-041 — The GPU port of FilmCraft's standard effects waits for an Effects panel
+**Area:** color · **Status:** active · **Doc:** ROADMAP M4
+
+**Decision (Truman, 2026-10-14):** G2 is closed without porting FilmCraft's standard effects
+(Brightness & Contrast, Tint, Levels and the rest of its GPU list) to our renderer.
+
+**Why:** Resolution has no Effects panel yet, so these effects reach a timeline only through an
+imported project or an agent's raw command. They already render correctly: FilmCraft runs them on
+the CPU for that one layer, and the rest of the frame stays on the GPU (D-037). The port is FilmCraft's
+effect shaders and compute stage (about 1,300 lines) plus our own types for each effect's settings.
+It speeds up something that is rare today.
+
+The choices put to Truman: defer and start G3 (chosen); port now; something else first. The port
+is listed under the Effects panel's work in the ROADMAP.
+
+### D-042 — G3: Deliver renders through the GPU renderer, so a file matches the viewer
+**Area:** color · **Status:** active · **Doc:** ARCHITECTURE "The GPU renderer";
+`crates/filmcraft-adapter/src/gpu.rs` (`ExportFrames`); `crates/renderer` (`render_linear`)
+
+**Decision:** FilmCraft's export takes a registered frame renderer (`register_frame_renderer`) for
+the frames it would otherwise render on the CPU, when the export asks for GPU rendering. It builds
+up to four, one per export worker, and falls back to its CPU renderer frame by frame when one
+declines. Resolution registers its own:
+
+- **`ExportFrames`.** On its first frame it makes the graded copy of the export's project (as a
+  playback snapshot does). Every frame is then planned, tagged and drawn exactly as the viewers'
+  frames are (D-037 to D-040). The frame comes back as the renderer's canvas: linear light,
+  premultiplied, not laid over black (`Renderer::render_linear`, read back from half floats), which
+  is what FilmCraft's CPU renderer hands an export. Alpha survives for formats that keep it.
+- **`deliver.render` asks for it.** The adapter adds `gpuRendering: auto` to FilmCraft's export
+  parameters unless the caller gives one, or `--cpu-render` turned the GPU renderer off. FilmCraft's
+  own default is off. The registration happens when the engine starts.
+- Frames FilmCraft draws on the CPU itself (adjustment layers, other transitions, HDR timelines)
+  stay on the CPU, as in the viewers.
+
+So a file now renders with the same renderer as the viewer: graded clips by the grade's own math,
+qualifiers as real keys. The Lumetri compile (D-028) still sits in the project, for FilmCraft's own
+renders and for frames the GPU declines.
+
+**Measured** (this PC):
+- Deliver's frames against FilmCraft's CPU renderer, the graded demo at half size, as the export
+  takes them (a dissolve, a clip FilmCraft renders on the CPU, a Push, a clip with its own
+  Lumetri): mean 0 to 0.11, 99 % within 1 code value, alpha within 0.0005.
+- Ten seconds (241 frames) of the graded Sony 4K clip, from the CLI (software decoding):
+
+  | Preset | GPU renderer | CPU | |
+  |---|---|---|---|
+  | H.264 1080p | 13.4 s (17.9 fps) | 39.3 s (6.1 fps) | 2.9× |
+  | H.264 2160p 4K | 38.4 s (6.3 fps) | 81.3 s (3.0 fps) | 2.1× |
+
+  The two files against each other (ffmpeg's PSNR): 47.8 dB at 1080p and 47.2 at 4K on average,
+  46.2 at worst, about a code value. The rest of the time is decoding and FilmCraft's H.264 encoder,
+  both on the CPU here.
+- In the editor (an agent's `deliver.render` over the agent link, the renderer on egui's device,
+  hardware decoding): five seconds of the graded Sony clip to H.264 1080p at 22.3 fps.
+
+**Checked:**
+- Adapter tests: Deliver's frames against the CPU, as above; `deliver.render` of one second of the
+  graded demo writes the file, with every frame counted as the GPU renderer's
+  (`gpu_render_stats`).
+- Renderer test: the linear canvas keeps alpha, and encoded it gives the 8-bit frame.
+- 193 tests in the workspace.
+- By hand, 2026-10-14: the renders and measurements above.

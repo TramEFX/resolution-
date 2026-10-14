@@ -593,9 +593,94 @@ impl Renderer {
     /// Anything drawing the picture later on the same device sees it finished.
     pub fn draw_steps(&self, size: (u32, u32), steps: &[Step<'_>]) -> Picture {
         let (w, h) = (size.0.max(1), size.1.max(1));
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        let (canvas, kept) = self.compose(&mut enc, (w, h), steps);
+        let drawn = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let output = self.target((w, h), OUTPUT_FORMAT, drawn | wgpu::TextureUsages::COPY_SRC);
+        let resolve = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("resolve"),
+            layout: &self.resolve_bgl,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&canvas.view) }],
+        });
+        {
+            let mut p = pass(&mut enc, &output.view, wgpu::LoadOp::Clear(wgpu::Color::BLACK));
+            p.set_pipeline(&self.resolve_pipeline);
+            p.set_bind_group(0, &resolve, &[]);
+            p.draw(0..3, 0..1);
+        }
+        self.queue.submit([enc.finish()]);
+        drop(kept);
+        Picture {
+            texture: output.texture,
+            view: output.view,
+            size: (w, h),
+            device: self.device.clone(),
+            queue: self.queue.clone(),
+            pixels: OnceLock::new(),
+        }
+    }
+
+    /// The frame of `size` pixels as `steps` composite it, before it is laid over black: linear
+    /// light, premultiplied RGBA, four floats a pixel (as FilmCraft's CPU renderer hands an
+    /// export its frames, LOG D-042). `None` when the GPU could not finish it.
+    pub fn render_linear(&self, size: (u32, u32), steps: &[Step<'_>]) -> Option<Vec<f32>> {
+        let (w, h) = (size.0.max(1), size.1.max(1));
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        let (canvas, kept) = self.compose(&mut enc, (w, h), steps);
+        // half floats, 8 bytes a pixel
+        let row = (w * 8).div_ceil(256) * 256;
+        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: u64::from(row * h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &canvas.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) },
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([enc.finish()]);
+        drop(kept);
+        let slice = buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        self.device
+            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(std::time::Duration::from_secs(8)) })
+            .ok()?;
+        rx.recv().ok()?.ok()?;
+        let data = slice.get_mapped_range().ok()?;
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            let line = &data[(y * row) as usize..(y * row + w * 8) as usize];
+            out.extend(line.as_chunks::<2>().0.iter().map(|b| half::f16::from_bits(u16::from_le_bytes(*b)).to_f32()));
+        }
+        drop(data);
+        buf.unmap();
+        Some(out)
+    }
+
+    /// Records `steps` drawn in order onto a new canvas (premultiplied linear light over
+    /// transparent). The resources the commands use come back with it, to keep until they are
+    /// submitted.
+    fn compose(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        (w, h): (u32, u32),
+        steps: &[Step<'_>],
+    ) -> (Target, (Vec<wgpu::BindGroup>, Vec<Target>)) {
         let drawn = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
         let canvas = self.target((w, h), ACCUM_FORMAT, drawn | wgpu::TextureUsages::COPY_SRC);
-        let output = self.target((w, h), OUTPUT_FORMAT, drawn | wgpu::TextureUsages::COPY_SRC);
         let layers = |s: &Step<'_>| -> Vec<Blend> {
             match s {
                 Step::Layers(ls) => ls.iter().map(|l| l.blend).collect(),
@@ -605,19 +690,18 @@ impl Renderer {
         let backdrop = steps.iter().flat_map(layers).any(Blend::reads_destination).then(|| {
             self.target((w, h), ACCUM_FORMAT, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST)
         });
-        let mut enc = self.device.create_command_encoder(&Default::default());
         // everything the passes use is kept until the commands are submitted
         let mut keep: Vec<wgpu::BindGroup> = Vec::new();
         let mut inputs_kept: Vec<Target> = Vec::new();
-        clear(&mut enc, &canvas.view);
+        clear(enc, &canvas.view);
         for step in steps {
             match step {
-                Step::Layers(ls) => self.draw(&mut enc, &canvas, backdrop.as_ref(), ls, (w, h), &mut keep),
+                Step::Layers(ls) => self.draw(enc, &canvas, backdrop.as_ref(), ls, (w, h), &mut keep),
                 Step::Push { inputs, progress, direction, blur } => {
                     let sides = [0, 1].map(|i| {
                         let t = self.target((w, h), ACCUM_FORMAT, drawn | wgpu::TextureUsages::COPY_SRC);
-                        clear(&mut enc, &t.view);
-                        self.draw(&mut enc, &t, backdrop.as_ref(), &inputs[i], (w, h), &mut keep);
+                        clear(enc, &t.view);
+                        self.draw(enc, &t, backdrop.as_ref(), &inputs[i], (w, h), &mut keep);
                         t
                     });
                     let p = if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 };
@@ -642,7 +726,7 @@ impl Renderer {
                         ],
                     });
                     {
-                        let mut pass = pass(&mut enc, &canvas.view, wgpu::LoadOp::Load);
+                        let mut pass = pass(enc, &canvas.view, wgpu::LoadOp::Load);
                         pass.set_pipeline(&self.push_pipeline);
                         pass.set_bind_group(0, &group, &[]);
                         pass.draw(0..3, 0..1);
@@ -652,27 +736,7 @@ impl Renderer {
                 }
             }
         }
-        let resolve = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("resolve"),
-            layout: &self.resolve_bgl,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&canvas.view) }],
-        });
-        {
-            let mut p = pass(&mut enc, &output.view, wgpu::LoadOp::Clear(wgpu::Color::BLACK));
-            p.set_pipeline(&self.resolve_pipeline);
-            p.set_bind_group(0, &resolve, &[]);
-            p.draw(0..3, 0..1);
-        }
-        self.queue.submit([enc.finish()]);
-        drop((keep, inputs_kept));
-        Picture {
-            texture: output.texture,
-            view: output.view,
-            size: (w, h),
-            device: self.device.clone(),
-            queue: self.queue.clone(),
-            pixels: OnceLock::new(),
-        }
+        (canvas, (keep, inputs_kept))
     }
 
     /// Records `layers` drawn onto `target`, bottom to top. A layer whose blend mode reads the
