@@ -161,16 +161,18 @@ fn a_graded_clip_under_a_clip_the_cpu_renders_draws_on_the_gpu() {
 }
 
 #[test]
-fn a_graded_clip_with_other_effects_is_rendered_graded_by_filmcraft() {
+fn a_graded_clip_with_other_effects_is_graded_at_its_source() {
     let mut e = demo();
-    // V2's Misty Forest has a Drop Shadow after its grade: FilmCraft renders it, grade and all.
-    // V1's Misty Forest later on is the same media, graded differently.
+    // V2's Misty Forest has a Drop Shadow after its grade: its pictures come graded from their
+    // source, and FilmCraft lays the shadow under them. V1's Misty Forest later on is the same
+    // media, graded differently, in the shader.
     grade_at(&mut e, 7.0, warm());
     grade_at(&mut e, 19.0, cool());
     let s = &e.session;
     let seq = s.state.active_sequence.unwrap();
     let graded = Graded::of(&s.project, seq);
-    assert_eq!(graded.grades.len(), 1, "both Misty Forest clips are graded; only V1's is ours to draw");
+    assert_eq!(graded.stand_ins.len(), 2, "both Misty Forest clips stand in");
+    assert_eq!(graded.stand_ins.values().filter(|s| s.in_shader).count(), 1, "V1's in the shader");
     at(&mut e, 7.0);
     agrees(&e, "V2 graded with a drop shadow");
     at(&mut e, 19.0);
@@ -193,7 +195,10 @@ fn a_clip_with_a_lumetri_of_its_own_is_drawn_as_filmcraft_draws_it() {
                 .map(|it| it.id)
         })
         .unwrap();
-    assert!(!Graded::of(&s.project, seq).grades.contains_key(&clip), "a foreign Lumetri is not a grade");
+    assert!(
+        !Graded::of(&s.project, seq).stand_ins.values().any(|s| s.clip == clip),
+        "a foreign Lumetri is not a grade"
+    );
     at(&mut e, 15.0);
     agrees(&e, "Desert Dunes' own Lumetri");
 }
@@ -424,4 +429,83 @@ fn deliver_renders_through_the_gpu_renderer() {
     assert!(drawn >= 20, "a second of frames drawn on the GPU, not {drawn}");
     assert!(std::fs::metadata(&path).map(|m| m.len() > 1000).unwrap_or(false), "the file was written");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A frame FilmCraft draws itself, whole, on the CPU (a Wipe between two graded clips): its graded
+/// clips' pictures come graded from their sources, by the grade's own math (LOG D-044), not through
+/// the Lumetri compile (whose qualifier is a baked table, D-033).
+#[test]
+fn a_frame_filmcraft_draws_itself_shows_grades_by_their_own_math() {
+    if renderer().is_none() {
+        return;
+    }
+    let mut e = demo();
+    // a Wipe into City Night Drive (9.43 s), where Aurora ends
+    let city = {
+        let s = &e.session;
+        let seq = s.state.active_sequence.unwrap();
+        s.project.sequence(seq).unwrap().video_tracks[0].items.iter().find(|it| it.name.starts_with("City")).unwrap().id
+    };
+    e.execute(
+        "raw.filmcraft/sequence.applyVideoTransition",
+        json!({ "clip": city.0, "effect": "wipe", "edge": "in", "frames": 24 }),
+    )
+    .unwrap();
+    let t = 9.43;
+    let (seq, plain) = {
+        let s = &e.session;
+        let seq = s.state.active_sequence.unwrap();
+        assert!(is_cpu_frame(&s.project, seq, Tick::from_seconds_f64(t)), "a Wipe is drawn on the CPU");
+        (seq, cpu_frame(&e, seq, t))
+    };
+    // both clips keyed hard on a band of warm hues (a sharp edge, which the compile's 33-point table
+    // cannot follow), cooled inside the key
+    let mut key = resolution_grade::Qualifier::picked([0.8, 0.5, 0.3]);
+    (key.hue_soft, key.sat_on, key.lum_on) = (0.5, false, false);
+    let grade = json!({ "gain": {"y": 0.7, "b": 1.3}, "saturation": 30.0, "qualifier": key });
+    grade_at(&mut e, 8.0, grade.clone());
+    grade_at(&mut e, 11.0, grade.clone());
+    let graded = cpu_frame(&e, seq, t);
+    let mut n = resolution_grade::Node::default();
+    n.patch(&grade).unwrap();
+    let mut off: Vec<f32> = plain
+        .rgba
+        .chunks(4)
+        .zip(graded.rgba.chunks(4))
+        .map(|(p, g)| {
+            let want = n.apply([p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0));
+            (0..3).map(|k| (want[k] * 255.0 - f32::from(g[k])).abs()).fold(0.0, f32::max)
+        })
+        .collect();
+    off.sort_by(f32::total_cmp);
+    let (p99, p999) = (off[off.len() * 99 / 100], off[off.len() * 999 / 1000]);
+    eprintln!("wipe, graded at the source: 99% within {p99:.2}, 99.9% within {p999:.2} code values");
+    assert!(p99 <= 1.0 && p999 <= 2.0, "99% {p99}, 99.9% {p999}");
+}
+
+/// The frame at `t` as the viewer's CPU path draws it (no GPU compositing), at half size.
+fn cpu_frame(e: &FilmCraftEngine, seq: ItemId, t: f64) -> Frame {
+    let s = &e.session;
+    let provider = s.media.provider(s.project.clone(), s.services.clone());
+    let opts = RenderOptions { scale: 0.5, captions: true, ..Default::default() };
+    let tk = Tick::from_seconds_f64(t);
+    let img = Graded::of(&s.project, seq)
+        .render_cpu(seq, tk, opts, &provider)
+        .unwrap_or_else(|| render_sequence(&s.project, seq, tk, opts, &provider));
+    Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8())
+}
+
+/// An agent's frame is the viewer's (LOG D-044): the qualifier as a real key, not the baked
+/// table.
+#[test]
+fn an_agents_frame_is_the_viewers() {
+    if renderer().is_none() {
+        return;
+    }
+    let mut e = demo();
+    adjust(&mut e, json!({ "gain": {"y": 0.5}, "qualifier": resolution_grade::Qualifier::picked([0.8, 0.4, 0.2]) }));
+    let agent = e.render_frame(None, 960).unwrap();
+    let Some((viewer, _)) = both(&e) else { return };
+    let (mean, p99) = differ(&agent, &viewer);
+    assert!(mean < 0.01 && p99 == 0.0, "the agent's frame is the viewer's: mean {mean}, 99% {p99}");
 }

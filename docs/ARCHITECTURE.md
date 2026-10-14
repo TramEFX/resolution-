@@ -96,11 +96,17 @@ layers, other transitions, HDR timelines) are drawn by FilmCraft's CPU renderer 
 project. `--cpu-render` turns the GPU renderer off,
 and `frame_counts()` says how many frames each drew.
 
-The editor puts the renderer on egui's own wgpu device (`use_gpu_device`), and its viewers ask
-for frames left there (`RenderHints::gpu`): a `Frame` then carries the renderer's texture
-(`Frame::gpu`, an opaque `GpuPicture`) instead of pixels, and the viewer draws it as an egui
-native texture without a copy back to memory (D-039). Anything wanting the pixels (the scopes,
-the qualifier's picker) reads them back with `Frame::pixels`.
+A front end can put the renderer on its own wgpu device (`use_gpu_device`) and ask for frames
+left there (`RenderHints::gpu`): a `Frame` then carries the renderer's texture (`Frame::gpu`, an
+opaque `GpuPicture`) instead of pixels, to draw without a copy back to memory (D-039); `Frame::pixels`
+reads either. The editor does not, for now (LOG B-036): eframe's surface reconfigures fail while
+another thread submits to the same queue. Sharing the device again needs the GPU work on the UI
+thread.
+
+Every graded clip in the working copy points at a stand-in. Its pictures are graded in the shader
+or, for a clip with other effects and for frames FilmCraft draws itself, graded at their source by
+the renderer (`GradedSource`), so FilmCraft composites already-graded pictures (D-044). Agents'
+frames are the viewers'.
 
 Deliver uses it too (D-042): the adapter registers `ExportFrames` as FilmCraft's export frame
 renderer, and `deliver.render` asks for GPU rendering. Each export worker's renderer makes the

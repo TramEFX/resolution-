@@ -258,6 +258,16 @@ impl Engine for FilmCraftEngine {
             .ok_or_else(|| EngineError::Disabled("render".into(), "no timeline is open".into()))?;
         let scale = (max_side.max(1) as f32 / w.max(h).max(1) as f32).min(1.0);
         let t = at_seconds.map_or_else(|| self.session.playhead(), Tick::from_seconds_f64);
+        // what the viewer shows: grades by their own math (LOG D-044)
+        if let Some(seq) = self.session.state.active_sequence {
+            let s = &self.session;
+            let graded = gpu::Graded::of(&s.project, seq);
+            let provider = s.media.provider(s.project.clone(), s.services.clone());
+            let opts = filmcraft_engine::render::RenderOptions { scale, captions: true, ..Default::default() };
+            if let Some(f) = graded.snapshot(seq, t, opts, &provider) {
+                return Ok(f);
+            }
+        }
         let img = self.session.try_render_program_at(scale, t).map_err(|e| EngineError::Engine(e.to_string()))?;
         Ok(Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8()))
     }
