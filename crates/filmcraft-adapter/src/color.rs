@@ -41,6 +41,8 @@ const LUT_PREFIX: &str = "resolution-";
 
 /// Points per side of a qualified node's LUT.
 const LUT_POINTS: usize = 33;
+/// Points a compiled hue curve is sampled at (LOG D-043).
+const HSL_SAMPLES: usize = 96;
 
 fn key(clip: ClipId) -> String {
     format!("{KEY}{}", clip.0)
@@ -314,15 +316,35 @@ pub(crate) fn compile(grade: &Grade, size: (u32, u32)) -> Vec<EffectInstance> {
             out.push(e);
         }
         let s = n.saturation();
-        if !s.is_identity() {
+        let c = &n.curves;
+        if !s.is_identity() || !c.hsl_is_identity() {
             let mut e = off();
             set(&mut e, "basic_on", ParamValue::Bool(true));
             set(&mut e, "saturation", ParamValue::Float(f64::from(s.amount) * 100.0));
             set(&mut e, "creative_on", ParamValue::Bool(true));
             set(&mut e, "vibrance", ParamValue::Float(f64::from(s.boost) * 100.0));
-            if s.hue_turns.abs() > 1e-6 {
+            // Hue's rotation rides on Hue vs Hue (LOG D-043)
+            if s.hue_turns.abs() > 1e-6 && c.hue_hue.is_identity() {
                 set(&mut e, "curves_on", ParamValue::Bool(true));
                 set(&mut e, "hue_vs_hue", ParamValue::Curve(vec![[0.5, 0.5 + s.hue_turns]]));
+            } else if !c.hue_hue.is_identity() {
+                set(&mut e, "curves_on", ParamValue::Bool(true));
+                set(
+                    &mut e,
+                    "hue_vs_hue",
+                    ParamValue::Curve(hsl_points(|x| c.hue_hue.eval(x, true) + s.hue_turns, true)),
+                );
+            }
+            for (curve, id, periodic) in [
+                (&c.hue_sat, "hue_vs_sat", true),
+                (&c.hue_lum, "hue_vs_luma", true),
+                (&c.lum_sat, "luma_vs_sat", false),
+                (&c.sat_sat, "sat_vs_sat", false),
+            ] {
+                if !curve.is_identity() {
+                    set(&mut e, "curves_on", ParamValue::Bool(true));
+                    set(&mut e, id, ParamValue::Curve(hsl_points(|x| curve.eval(x, periodic), periodic)));
+                }
             }
             out.push(e);
         }
@@ -331,6 +353,26 @@ pub(crate) fn compile(grade: &Grade, size: (u32, u32)) -> Vec<EffectInstance> {
         }
     }
     out
+}
+
+/// A hue curve as points for Lumetri to join (LOG D-043). Lumetri joins every HSL curve as if it
+/// ran round the wheel, its last point to its first. A curve over hue is sampled round the wheel.
+/// One over lightness or saturation is sampled from just inside 0 to just inside 1: Lumetri's
+/// table of the curve runs from 0.0003 to 0.9997, so it never reaches the join between the two
+/// ends (where a fully saturated colour, common after more Saturation, would take a value halfway
+/// to the other end's).
+fn hsl_points(f: impl Fn(f32) -> f32, periodic: bool) -> Vec<[f32; 2]> {
+    const EDGE: f32 = 1e-4;
+    (0..HSL_SAMPLES)
+        .map(|i| {
+            let x = if periodic {
+                i as f32 / HSL_SAMPLES as f32
+            } else {
+                EDGE + (1.0 - 2.0 * EDGE) * i as f32 / (HSL_SAMPLES - 1) as f32
+            };
+            [x, f(x)]
+        })
+        .collect()
 }
 
 /// The id of the LUT that carries qualified node `n`: a hash of what the table depends on (not

@@ -1,15 +1,16 @@
 //! Colour grades in Resolution's own types (LOG D-028): the corrector nodes of the Color page and
 //! the controls on them. A clip's grade is a chain of serial nodes; each holds the Primaries
-//! palette's controls and the Custom Curves.
+//! palette's controls, the Custom Curves and the hue curves.
 //!
 //! **The math is ours.** Resolve does not publish its formulas, so each control does what the
 //! Resolve manual says it does, by formulas defined here:
 //!
 //! - The signal is display-encoded RGB, 0 black and 1 white (the grading signal of an SDR
 //!   timeline), held to 0…1 after each node.
-//! - Every control except Saturation, Hue and Color Boost acts on each colour channel on its own,
-//!   so a node is a **tone function** per channel ([`Node::tone`]) followed by a **saturation
-//!   step** ([`Node::saturation`]). These two parts are what an engine has to reproduce.
+//! - Every control except Saturation, Hue, Color Boost and the hue curves acts on each colour
+//!   channel on its own, so a node is a **tone function** per channel ([`Node::tone`]) followed by
+//!   a **saturation step** ([`Node::saturation`]) and the **hue curves** ([`HslCurves`]), run
+//!   together in [`Node::color`]. These parts are what an engine has to reproduce.
 //!
 //! Numbers are in Resolve's units where the manual gives them: Lift and Gamma 0, Gain 1 and
 //! Offset 25 are neutral; Contrast 1 and Pivot 0.435; Saturation and Hue 50; Color Boost, Temp
@@ -147,7 +148,7 @@ impl Node {
 
     /// Whether the node changes nothing.
     pub fn is_neutral(&self) -> bool {
-        self.tone_is_identity() && self.saturation().is_identity()
+        self.tone_is_identity() && self.saturation().is_identity() && self.curves.hsl_is_identity()
     }
 
     /// Whether every channel's tone function is the identity.
@@ -244,7 +245,7 @@ impl Node {
             return rgb;
         }
         let toned = [self.tone(0, rgb[0]), self.tone(1, rgb[1]), self.tone(2, rgb[2])];
-        let out = self.saturation().apply(toned);
+        let out = self.color(toned);
         match self.keyed() {
             // the correction, blended by how much the node's input is in the key
             Some(q) => {
@@ -253,6 +254,31 @@ impl Node {
             }
             None => out,
         }
+    }
+
+    /// The saturation step and then the hue curves, on one pixel (after the tone functions).
+    ///
+    /// The hue curves and Hue's rotation run together in HSL, each curve read at the pixel's own
+    /// hue, saturation or lightness as they were before any of them (as Lumetri runs its HSL
+    /// curves, so a grade compiles to them exactly):
+    ///
+    /// - hue turns by Hue's rotation plus Hue vs Hue's distance from the middle line (± half a
+    ///   turn);
+    /// - saturation is multiplied by twice each of Hue vs Sat, Lum vs Sat and Sat vs Sat (the
+    ///   middle line is ×1, the top ×2, the bottom grey);
+    /// - lightness moves by half of Hue vs Lum's distance from the middle line.
+    pub fn color(&self, rgb: [f32; 3]) -> [f32; 3] {
+        let s = self.saturation();
+        let mut v = s.boosted(rgb);
+        let c = &self.curves;
+        if s.hue_turns.abs() > 1e-6 || !c.hsl_is_identity() {
+            let [h0, s0, l0] = rgb_to_hsl(v);
+            let hue = (h0 + s.hue_turns + c.hue_hue.eval(h0, true) - 0.5).rem_euclid(1.0);
+            let gain = 8.0 * c.hue_sat.eval(h0, true) * c.lum_sat.eval(l0, false) * c.sat_sat.eval(s0, false);
+            let light = l0 + (c.hue_lum.eval(h0, true) - 0.5) * 0.5;
+            v = hsl_to_rgb([hue, (s0 * gain).clamp(0.0, 1.0), light.clamp(0.0, 1.0)]).map(|q| q.clamp(0.0, 1.0));
+        }
+        v
     }
 
     /// The node's qualifier, when it is on.
@@ -303,6 +329,9 @@ impl Node {
         }
         for c in [&mut self.curves.y, &mut self.curves.r, &mut self.curves.g, &mut self.curves.b] {
             c.tidy();
+        }
+        for (c, periodic) in self.curves.hsl_mut() {
+            c.tidy(periodic);
         }
     }
 }
@@ -567,7 +596,8 @@ impl Wheel {
     }
 }
 
-/// The Custom Curves: Y (applied to all three channels) then R, G and B.
+/// The Custom Curves (Y, applied to all three channels, then R, G and B) and the hue curves
+/// (LOG D-043; see [`Node::color`]).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Curves {
@@ -575,11 +605,57 @@ pub struct Curves {
     pub r: Curve,
     pub g: Curve,
     pub b: Curve,
+    /// Hue vs Hue: by hue, how far it turns. Grades stored before the hue curves have none.
+    #[serde(default, skip_serializing_if = "HslCurve::is_empty")]
+    pub hue_hue: HslCurve,
+    /// Hue vs Sat: by hue, the saturation.
+    #[serde(default, skip_serializing_if = "HslCurve::is_empty")]
+    pub hue_sat: HslCurve,
+    /// Hue vs Lum: by hue, the lightness.
+    #[serde(default, skip_serializing_if = "HslCurve::is_empty")]
+    pub hue_lum: HslCurve,
+    /// Lum vs Sat: by lightness, the saturation.
+    #[serde(default, skip_serializing_if = "HslCurve::is_empty")]
+    pub lum_sat: HslCurve,
+    /// Sat vs Sat: by saturation, the saturation.
+    #[serde(default, skip_serializing_if = "HslCurve::is_empty")]
+    pub sat_sat: HslCurve,
 }
 
+/// The hue curves' JSON names, in order, and whether each runs round the colour wheel.
+pub const HSL_CURVES: [(&str, bool); 5] =
+    [("hue_hue", true), ("hue_sat", true), ("hue_lum", true), ("lum_sat", false), ("sat_sat", false)];
+
 impl Curves {
+    /// Whether the Custom Curves are all the identity (the hue curves aside).
     pub fn is_identity(&self) -> bool {
         [&self.y, &self.r, &self.g, &self.b].iter().all(|c| c.is_identity())
+    }
+
+    /// Whether every hue curve leaves the picture as it is.
+    pub fn hsl_is_identity(&self) -> bool {
+        self.hsl().iter().all(|(c, _)| c.is_identity())
+    }
+
+    /// The hue curves in [`HSL_CURVES`]' order, each with whether it runs round the wheel.
+    pub fn hsl(&self) -> [(&HslCurve, bool); 5] {
+        [
+            (&self.hue_hue, true),
+            (&self.hue_sat, true),
+            (&self.hue_lum, true),
+            (&self.lum_sat, false),
+            (&self.sat_sat, false),
+        ]
+    }
+
+    fn hsl_mut(&mut self) -> [(&mut HslCurve, bool); 5] {
+        [
+            (&mut self.hue_hue, true),
+            (&mut self.hue_sat, true),
+            (&mut self.hue_lum, true),
+            (&mut self.lum_sat, false),
+            (&mut self.sat_sat, false),
+        ]
     }
 
     fn channel(&self, k: usize) -> &Curve {
@@ -628,6 +704,51 @@ impl Curve {
     fn tidy(&mut self) {
         for p in &mut self.0 {
             *p = [p[0].clamp(0.0, 1.0), p[1].clamp(0.0, 1.0)];
+        }
+        self.0.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        self.0.dedup_by(|a, b| (a[0] - b[0]).abs() < 1e-6);
+    }
+}
+
+/// A hue curve (LOG D-043): control points (input, output) in 0…1, where an output of ½ (the
+/// middle line) changes nothing. No points is the middle line. Joined by a monotone cubic; a
+/// curve over hue runs round the colour wheel (the last point joins the first), the others hold
+/// their end points' values beyond them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct HslCurve(pub Vec<[f32; 2]>);
+
+impl HslCurve {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn is_identity(&self) -> bool {
+        self.0.iter().all(|p| (p[1] - 0.5).abs() < 1e-6)
+    }
+
+    /// The curve at `x`; `periodic` for a curve over hue.
+    pub fn eval(&self, x: f32, periodic: bool) -> f32 {
+        let mut pts = self.0.clone();
+        pts.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        match pts.len() {
+            0 => 0.5,
+            1 => pts[0][1],
+            _ if periodic => {
+                // a turn's worth of points either side, so the ends join
+                let around: Vec<[f32; 2]> =
+                    [-1.0f32, 0.0, 1.0].iter().flat_map(|o| pts.iter().map(move |p| [p[0] + o, p[1]])).collect();
+                monotone_cubic(&around, x.rem_euclid(1.0))
+            }
+            _ => monotone_cubic(&pts, x),
+        }
+    }
+
+    /// Points into 0…1 (over hue, 1 is 0 again), sorted, one per input.
+    fn tidy(&mut self, periodic: bool) {
+        for p in &mut self.0 {
+            let x = if periodic { p[0].rem_euclid(1.0) } else { p[0].clamp(0.0, 1.0) };
+            *p = [x, p[1].clamp(0.0, 1.0)];
         }
         self.0.sort_by(|a, b| a[0].total_cmp(&b[0]));
         self.0.dedup_by(|a, b| (a[0] - b[0]).abs() < 1e-6);
@@ -708,16 +829,23 @@ impl Saturation {
     /// Saturation and Color Boost about the pixel's Rec. 709 luma (luma is kept), then the hue
     /// rotation (in HSL); held to 0…1 after each.
     pub fn apply(&self, rgb: [f32; 3]) -> [f32; 3] {
-        let l = luma(rgb);
-        let spread = (rgb[0].max(rgb[1]).max(rgb[2]) - rgb[0].min(rgb[1]).min(rgb[2])).clamp(0.0, 1.0);
-        let s = self.amount * (1.0 + self.boost * (1.0 - spread));
-        let mut v = rgb.map(|q| (l + (q - l) * s).clamp(0.0, 1.0));
+        let mut v = self.boosted(rgb);
         if self.hue_turns.abs() > 1e-6 {
             let mut h = rgb_to_hsl(v);
             h[0] = (h[0] + self.hue_turns).rem_euclid(1.0);
             v = hsl_to_rgb(h).map(|q| q.clamp(0.0, 1.0));
         }
         v
+    }
+}
+
+impl Saturation {
+    /// Saturation and Color Boost about the pixel's Rec. 709 luma (luma is kept), held to 0…1.
+    pub fn boosted(&self, rgb: [f32; 3]) -> [f32; 3] {
+        let l = luma(rgb);
+        let spread = (rgb[0].max(rgb[1]).max(rgb[2]) - rgb[0].min(rgb[1]).min(rgb[2])).clamp(0.0, 1.0);
+        let s = self.amount * (1.0 + self.boost * (1.0 - spread));
+        rgb.map(|q| (l + (q - l) * s).clamp(0.0, 1.0))
     }
 }
 

@@ -17,7 +17,7 @@ use egui::{
     TextureOptions, Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
 };
 use resolution_engine_api::{Frame, PARADE_GAP, Playback, RenderHints, ScopeKind, Scopes, VECTORSCOPE_EXTENT};
-use resolution_grade::{Curve, Node, Qualifier, Shape as WindowShape, Wheel, Window};
+use resolution_grade::{Curve, HslCurve, Node, Qualifier, Shape as WindowShape, Wheel, Window, hsl_to_rgb};
 use serde_json::{Map, Value, json};
 
 use crate::chrome;
@@ -43,6 +43,8 @@ pub struct ColorPage {
     pub node: usize,
     /// The custom curve being edited: 0 Y, 1 R, 2 G, 3 B.
     pub channel: usize,
+    /// What the Curves palette shows: the Custom Curves or a hue curve.
+    pub curve_mode: CurveMode,
     /// The clip and revision of the last `color.inspect` asked for.
     pub asked: Option<(u64, u64)>,
     /// A control is being dragged.
@@ -385,6 +387,65 @@ fn wheel(ui: &mut Ui, look: &Look, col: Rect, spec: &WheelSpec, w: &Wheel, page:
 
 // ---- Curves ----
 
+/// The Curves palette's modes, chosen from its title strip as in Resolve (LOG D-043). Resolve's
+/// Sat vs Lum is not here: the engine's Lumetri, which frames off the GPU render with, has no
+/// such curve.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CurveMode {
+    #[default]
+    Custom,
+    HueHue,
+    HueSat,
+    HueLum,
+    LumSat,
+    SatSat,
+}
+
+impl CurveMode {
+    pub const ALL: [CurveMode; 6] = [
+        CurveMode::Custom,
+        CurveMode::HueHue,
+        CurveMode::HueSat,
+        CurveMode::HueLum,
+        CurveMode::LumSat,
+        CurveMode::SatSat,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            CurveMode::Custom => "Custom",
+            CurveMode::HueHue => "Hue vs Hue",
+            CurveMode::HueSat => "Hue vs Sat",
+            CurveMode::HueLum => "Hue vs Lum",
+            CurveMode::LumSat => "Lum vs Sat",
+            CurveMode::SatSat => "Sat vs Sat",
+        }
+    }
+
+    /// The hue curve's name in the grade, and whether it runs round the colour wheel; `None` for
+    /// the Custom Curves.
+    fn curve(self) -> Option<(&'static str, bool)> {
+        match self {
+            CurveMode::Custom => None,
+            CurveMode::HueHue => Some(("hue_hue", true)),
+            CurveMode::HueSat => Some(("hue_sat", true)),
+            CurveMode::HueLum => Some(("hue_lum", true)),
+            CurveMode::LumSat => Some(("lum_sat", false)),
+            CurveMode::SatSat => Some(("sat_sat", false)),
+        }
+    }
+}
+
+fn hsl_curve_of<'a>(n: &'a Node, key: &str) -> &'a HslCurve {
+    match key {
+        "hue_hue" => &n.curves.hue_hue,
+        "hue_sat" => &n.curves.hue_sat,
+        "hue_lum" => &n.curves.hue_lum,
+        "lum_sat" => &n.curves.lum_sat,
+        _ => &n.curves.sat_sat,
+    }
+}
+
 fn curve_of(n: &Node, channel: usize) -> &Curve {
     match channel {
         1 => &n.curves.r,
@@ -404,8 +465,27 @@ pub fn curves(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let t = look.theme;
     let header = palette_header(ui, look, page);
     let Some(node) = page.current().cloned() else { return asks };
+    // the mode, from a menu at the strip's right, as Resolve's Curves palette chooses it
+    let chooser =
+        Rect::from_min_max(pos2(header.right() - 118.0, header.top()), pos2(header.right() - 6.0, header.bottom()));
+    within(ui, chooser, |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.menu_button(format!("{} ▾", page.curve_mode.name()), |ui| {
+                for m in CurveMode::ALL {
+                    if ui.selectable_label(page.curve_mode == m, m.name()).clicked() {
+                        page.curve_mode = m;
+                        ui.close();
+                    }
+                }
+            });
+        });
+    });
+    if let Some((key, periodic)) = page.curve_mode.curve() {
+        hsl_curve(ui, look, page, &node, key, periodic, &mut asks);
+        return asks;
+    }
     // the channel buttons, in the title strip
-    let mut x = header.right() - 10.0;
+    let mut x = chooser.left() - 6.0;
     for (k, (letter, _)) in CHANNELS.iter().enumerate().rev() {
         let b = Rect::from_min_max(pos2(x - 24.0, header.top() + 4.0), pos2(x, header.bottom() - 4.0));
         x -= 28.0;
@@ -527,6 +607,134 @@ pub fn curves(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     }
     ui.allocate_rect(area, Sense::hover());
     asks
+}
+
+/// A hue curve (Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat or Sat vs Sat): the middle line
+/// changes nothing; above it more (hue turned one way, more saturation or lightness), below it
+/// less. Click to add a point on the curve, drag one to move it (a drag elsewhere makes one and
+/// moves it), right-click one to remove it. Along the bottom, what the curve is over: the colour
+/// wheel from red, black to white, or grey to full colour.
+fn hsl_curve(
+    ui: &mut Ui,
+    look: &Look,
+    page: &mut ColorPage,
+    node: &Node,
+    key: &'static str,
+    periodic: bool,
+    asks: &mut Vec<Ask>,
+) {
+    let t = look.theme;
+    let area = ui.available_rect_before_wrap().shrink(12.0);
+    let band = 10.0;
+    let plot = Rect::from_min_max(area.min, pos2(area.right(), area.bottom() - band - 4.0));
+    let painter = ui.painter_at(area.expand(6.0));
+    painter.rect_filled(plot, CornerRadius::ZERO, t.field);
+    for k in 1..6 {
+        let x = plot.left() + plot.width() * k as f32 / 6.0;
+        painter.line_segment([pos2(x, plot.top()), pos2(x, plot.bottom())], Stroke::new(1.0, t.line));
+    }
+    painter.line_segment(
+        [pos2(plot.left(), plot.center().y), pos2(plot.right(), plot.center().y)],
+        Stroke::new(1.0, t.dim),
+    );
+    // what the curve is over
+    let strip = Rect::from_min_max(pos2(plot.left(), plot.bottom() + 4.0), pos2(plot.right(), area.bottom()));
+    let steps = 48;
+    for i in 0..steps {
+        let u = (i as f32 + 0.5) / steps as f32;
+        let c = match key {
+            "lum_sat" => [u, u, u],
+            "sat_sat" => hsl_to_rgb([0.0, u, 0.5]),
+            _ => hsl_to_rgb([u, 1.0, 0.5]),
+        };
+        let x0 = strip.left() + strip.width() * i as f32 / steps as f32;
+        let x1 = strip.left() + strip.width() * (i + 1) as f32 / steps as f32;
+        let colour = Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8);
+        painter.rect_filled(
+            Rect::from_min_max(pos2(x0, strip.top()), pos2(x1 + 0.5, strip.bottom())),
+            CornerRadius::ZERO,
+            colour,
+        );
+    }
+    let to_screen = |p: [f32; 2]| pos2(plot.left() + p[0] * plot.width(), plot.bottom() - p[1] * plot.height());
+    let from_screen = |p: Pos2| {
+        [((p.x - plot.left()) / plot.width()).clamp(0.0, 1.0), ((plot.bottom() - p.y) / plot.height()).clamp(0.0, 1.0)]
+    };
+    let curve = hsl_curve_of(node, key).clone();
+    let line: Vec<Pos2> =
+        (0..=192).map(|i| i as f32 / 192.0).map(|x| to_screen([x, curve.eval(x, periodic)])).collect();
+    painter.add(Shape::line(line, Stroke::new(1.5, t.text)));
+    let mut points = curve.0.clone();
+    points.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    for p in &points {
+        painter.circle_filled(to_screen(*p), 4.0, t.text);
+    }
+    if points.is_empty() {
+        painter.text(
+            plot.center() + vec2(0.0, -18.0),
+            Align2::CENTER_CENTER,
+            "Click the line to add a point; drag it up or down",
+            look.small(),
+            t.dim,
+        );
+    }
+    let r = ui.interact(plot.expand(6.0), ui.id().with(("hsl curve", key)), Sense::click_and_drag());
+    name(&r, WidgetType::Other, &format!("{} curve", page.curve_mode.name()));
+    let near = |p: Pos2| points.iter().position(|k| to_screen(*k).distance(p) <= 8.0);
+    let send = |page: &mut ColorPage, asks: &mut Vec<Ask>, pts: Vec<[f32; 2]>| {
+        page.adjust(asks, json!({ "curves": obj(key, json!(pts)) }));
+    };
+    let mut started = false;
+    if r.drag_started()
+        && let Some(p) = r.interact_pointer_pos()
+    {
+        page.begin_drag();
+        started = true;
+        page.curve_point = near(p);
+        // a drag away from every point makes one there to move, as in Resolve
+        if page.curve_point.is_none() {
+            let x = from_screen(p)[0];
+            let mut pts = points.clone();
+            pts.push([x, curve.eval(x, periodic)]);
+            pts.sort_by(|a, b| a[0].total_cmp(&b[0]));
+            page.curve_point = pts.iter().position(|k| k[0] == x);
+            send(page, asks, pts);
+        }
+    }
+    if r.dragged()
+        && !started
+        && let (Some(i), Some(p)) = (page.curve_point, r.interact_pointer_pos())
+        && i < points.len()
+    {
+        let mut pts = points.clone();
+        let [x, y] = from_screen(p);
+        // a point stays between its neighbours
+        let lo = if i == 0 { 0.0 } else { pts[i - 1][0] + 0.005 };
+        let hi = if i + 1 == pts.len() { 1.0 } else { pts[i + 1][0] - 0.005 };
+        pts[i] = [x.clamp(lo, hi.max(lo)), y];
+        send(page, asks, pts);
+    }
+    if r.drag_stopped() {
+        page.end_drag();
+    }
+    if r.clicked()
+        && let Some(p) = r.interact_pointer_pos()
+        && near(p).is_none()
+    {
+        let x = from_screen(p)[0];
+        let mut pts = points.clone();
+        pts.push([x, curve.eval(x, periodic)]);
+        pts.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        send(page, asks, pts);
+    }
+    if r.secondary_clicked()
+        && let Some(i) = r.interact_pointer_pos().and_then(near)
+    {
+        let mut pts = points.clone();
+        pts.remove(i);
+        send(page, asks, pts);
+    }
+    ui.allocate_rect(area, Sense::hover());
 }
 
 // ---- the Node Editor ----

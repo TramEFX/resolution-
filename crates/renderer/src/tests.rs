@@ -205,6 +205,27 @@ fn the_grade_matches_its_own_math() {
     assert!(e <= 1.0, "the GPU strays from the grade's math by {e} code values");
 }
 
+/// The hue curves (LOG D-043), all five at once with Hue's rotation, on noise.
+#[test]
+fn the_hue_curves_match_their_own_math() {
+    let Some(r) = renderer() else { return };
+    let px = noise(64 * 64);
+    let n = node(json!({
+        "saturation": 60.0, "hue": 54.0,
+        "curves": {
+            "hue_hue": [[0.0, 0.55], [0.33, 0.45], [0.66, 0.5]],
+            "hue_sat": [[0.05, 0.2], [0.4, 0.7], [0.75, 0.5]],
+            "hue_lum": [[0.1, 0.6], [0.6, 0.35]],
+            "lum_sat": [[0.0, 0.3], [0.5, 0.55], [1.0, 0.4]],
+            "sat_sat": [[0.2, 0.5], [0.9, 0.8]]
+        }
+    }));
+    let g = Grade { nodes: vec![n] };
+    let out = r.render((64, 64), &[rgba_layer(64, 64, &px, Some(&g))]).unwrap();
+    let e = worst(&px, &out, |c| g.apply(c));
+    assert!(e <= 1.0, "the GPU strays from the hue curves' math by {e} code values");
+}
+
 #[test]
 fn a_qualifier_is_a_real_key_on_the_gpu() {
     let Some(r) = renderer() else { return };

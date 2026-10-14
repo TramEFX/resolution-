@@ -102,6 +102,7 @@ doc is updated *and* the entry says which section moved.
 | D-040 | 2026-10-14 | color | G2, step 4: a shrunk picture averages all its pixels; chroma read as sited left | active |
 | D-041 | 2026-10-14 | color | The GPU port of FilmCraft's standard effects waits for an Effects panel | active |
 | D-042 | 2026-10-14 | color | G3: Deliver renders through the GPU renderer, so a file matches the viewer | active |
+| D-043 | 2026-10-14 | color | The hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2407,3 +2408,67 @@ renders and for frames the GPU declines.
 - Renderer test: the linear canvas keeps alpha, and encoded it gives the 8-bit frame.
 - 193 tests in the workspace.
 - By hand, 2026-10-14: the renders and measurements above.
+
+### D-043 — The hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat
+**Area:** color · **Status:** active · **Doc:** `crates/grade` (`HslCurve`, `Node::color`);
+`crates/renderer`; `crates/filmcraft-adapter/src/color.rs`; `apps/resolution-app/src/color_page.rs`
+
+**Decision:** the Curves palette gets Resolve's curve modes beyond Custom. They come from a menu in
+the palette's title strip, as Resolve's Curves palette chooses them.
+
+- **The model** (`crates/grade`): each node holds five hue curves, `HslCurve`.
+  - Points run 0 to 1 both ways. An output of ½, the middle line, changes nothing.
+  - A curve over hue runs round the colour wheel (its last point joins its first). Lum vs Sat
+    and Sat vs Sat hold their end points' values beyond them.
+  - Grades stored before them load with none, and are written back byte for byte, so their
+    compiled Lumetri effects do not change.
+- **The math** (`Node::color`): after the saturation step, the hue curves and Hue's rotation run
+  together in HSL. Each curve is read at the pixel's hue, saturation or lightness as it was before
+  any of them:
+  - hue turns by the rotation plus Hue vs Hue's distance from the middle line;
+  - saturation is multiplied by twice each of Hue vs Sat, Lum vs Sat and Sat vs Sat;
+  - lightness moves by half of Hue vs Lum's distance from the middle line.
+
+  These are the operations FilmCraft's Lumetri HSL curves perform, so a grade compiles to them
+  exactly. Without hue curves a node is what it was before them.
+- **The GPU renderer** samples each curve into a 4096-point table, five more per node, wrapping
+  round the wheel for the hue curves.
+- **The compile:** the curves go into the node's saturation Lumetri effect (`hue_vs_hue` with
+  Hue's rotation added, `hue_vs_sat`, `hue_vs_luma`, `luma_vs_sat`, `sat_vs_sat`), sampled at 96
+  points.
+- **The page:** a hue curve's plot runs the width of the palette, with what it is over along its
+  foot: the colour wheel from red, black to white, or grey to full colour. Click the line to add a
+  point, drag one to move it (a drag elsewhere makes one and moves it), right-click one to remove
+  it. Each drag is one undo step.
+
+**Not here:** Resolve's Sat vs Lum, because Lumetri, which frames off the GPU render with, has no
+such curve. There is also no picker from the viewer yet (in Resolve, a click on the picture adds
+points around its hue).
+
+**Facts found:** Lumetri joins every HSL curve as if it ran round the wheel, Lum vs Sat and Sat vs
+Sat too. Sampled at the middles of even steps, a held curve's two ends met in a join inside
+Lumetri's table. Colours that more Saturation pushes to full saturation read Sat vs Sat there, and
+the CPU's render strayed from the math by 9 code values for 99 % of pixels (Saturation 60 with Hue
+vs Sat and Sat vs Sat). Bisected with renders of each curve alone, in pairs and in threes. The fix
+samples a held curve from just inside 0 to just inside 1, since Lumetri's table only runs from
+0.0003 to 0.9997.
+
+**Measured:**
+- The GPU against the math: within 1 code value, all five curves and Hue's rotation at once
+  (renderer test).
+- The CPU's render through Lumetri against the math, the demo at full size, all five with
+  Saturation and Hue: 99 % within 0.73, worst 0.85 code values.
+- In the editor, the Sony clip with Hue vs Sat taking the colour out of blues: GPU against CPU mean
+  0.38, 99 % within 2, worst 28. The worst pixels sit on the curve's steep fall, which the two sample
+  differently and grade before or after shrinking, as at a qualifier's soft edge (D-033).
+
+**Checked:**
+- Grade tests (6 new): the curves' wrap and ends; Hue vs Sat taking colour from one hue only; Hue
+  vs Hue and Hue vs Lum on one hue; Lum vs Sat and Sat vs Sat; the rotation and Hue vs Hue adding
+  up, and nodes without curves unchanged; tidying, and grades stored before them.
+- Renderer test against the math; mutation check: Hue vs Lum at half strength in the shader fails
+  it (19.6 code values).
+- Adapter test: the CPU's render against the math.
+- UI test: Hue vs Sat chosen from the menu, a drag at red, reds less saturated through the engine.
+- By hand, 2026-10-14: the Sony clip, as measured above. The blue light and background went grey;
+  the magenta and pink highlights kept their colour.
