@@ -3438,6 +3438,7 @@ dependencies = [
  "resolution-agent-link",
  "resolution-engine-api",
  "resolution-filmcraft-adapter",
+ "resolution-grade",
  "resolution-keymap",
  "resolution-playback",
  "rfd",

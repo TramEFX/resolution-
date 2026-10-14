@@ -238,3 +238,26 @@ command = "view.toggleViewer"
 [[bind]]
 keys = "Mod+N"
 command = "timeline.new"
+
+# ---- the Color page's nodes (Reference Manual, "Node Editing Basics": Option is Alt here) ----
+[[bind]]
+keys = "Alt+S"
+command = "color.addSerialNode"
+[[bind]]
+keys = "Shift+S"
+command = "color.addNodeBefore"
+[[bind]]
+keys = "Alt+K"
+command = "color.appendNode"
+[[bind]]
+keys = "Mod+D"
+command = "color.toggleNodes"
+[[bind]]
+keys = "Alt+D"
+command = "color.toggleAllNodes"
+[[bind]]
+keys = "Alt+Shift+;"
+command = "color.previousNode"
+[[bind]]
+keys = "Alt+Shift+'"
+command = "color.nextNode"

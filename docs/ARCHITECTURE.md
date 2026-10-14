@@ -118,6 +118,11 @@ An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP s
   timeline, "<name> (agent draft)", and its later edits go there too. The worker keeps the draft's
   record of steps (made, undone, redone, by whom), which the banner lists. Accept and Reject are
   the user's alone: they are worker requests, not vocabulary commands.
+- **The Color page** (LOG D-029, `color_page.rs`). It grades the clip under the playhead through
+  `color.*` commands: the Node Editor, the clip strip (thumbnails rendered on a background thread
+  from the playback snapshot), the Primaries wheels and the Custom Curves. A drag sends one
+  `color.adjust` per frame under one merge key, so it is one undo step; while it lasts the page
+  shows the values it sends rather than the engine's trailing answers.
 - **Tests drive the real UI.** `egui_kittest` presses keys and clicks clips headlessly.
   `resolution-app --screenshot out.png` saves the window once a frame is on screen; `--play <s>`
   plays and prints what was shown and heard.

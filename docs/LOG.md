@@ -82,6 +82,9 @@ doc is updated *and* the entry says which section moved.
 | D-027 | 2026-10-13 | ui | An agent's edits go to a draft of the timeline, which only the user accepts or rejects | active |
 | D-028 | 2026-10-14 | color | Grades are Resolution's own node model, compiled to FilmCraft Lumetri effects on each clip | active |
 | B-029 | 2026-10-14 | color | `color.inspect` showed 0.30000001192092896 for a control set to 0.3 | fixed |
+| D-029 | 2026-10-14 | ui | The Color page: viewer, Node Editor, clip strip, Primaries wheels and Custom Curves in Resolve's places | active |
+| B-030 | 2026-10-14 | ui | The Color page's clip strip drew its tiles one text line tall: no pictures, no names | fixed |
+| B-031 | 2026-10-14 | ui | An agent's draft had no Accept or Reject on the Color page | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1578,3 +1581,96 @@ would have read, and repeated, numbers nobody typed.
 **Fix:** `color.inspect` turns each node into JSON through text (`to_string`, which writes an
 `f32` at its own shortest precision, then `from_str`), so 0.3 reads 0.3. Stored grades were
 already written as text.
+
+### D-029 — The Color page: viewer, Node Editor, clip strip, Primaries wheels and Custom Curves in Resolve's places
+**Area:** ui · **Status:** active · **Doc:** ARCHITECTURE "The editor"; `apps/resolution-app/src/color_page.rs`
+
+**Decision:** the second half of step 5's first slice (D-016), over D-028's grades. The page
+grades the clip under the playhead (the highest video track that shows one). Its layout follows
+Resolve's default Color page:
+
+- **Viewer** in the middle: the timeline viewer, with its scrub bar and transport.
+- **Node Editor** on the right: the clip's serial nodes from input to output. Each node is
+  numbered as in Resolve, shows its label (or "Corrector", or "Off" when disabled) and a dot when
+  it changes the picture. Click a node to make it current. Right-click it for Add Serial Node, Add
+  Before Current, Enable/Disable, Reset Node Grade and Delete Node; the first, second and last
+  are also buttons.
+- **Clip strip** under them: every video clip in timeline order, with its number, track, a
+  picture from its middle and its name. The current clip is outlined; graded clips have an accent
+  number. Click a clip to move the playhead to it. Pictures are rendered small on a background
+  thread (`Playback::render`), and the current clip's again when its grade changes.
+- **Primaries palette** (Wheels mode), bottom left:
+  - Temp, Tint, Contrast and Pivot above; Color Boost, Saturation and Hue below. Drag sideways
+    to change one; double-click to reset it.
+  - The Lift, Gamma, Gain and Offset wheels. Drag a wheel to move the balance (relative, at half
+    speed, like a trackball); Shift jumps to the pointer; double-click resets. A balance move keeps
+    luma. Under each wheel is its master ring (drag sideways, double-click resets) and its Y, R, G
+    and B numbers.
+  - A reset button for the palette's controls. Changed values show in the accent colour.
+- **Curves palette** (Custom), bottom centre: Y, R, G and B buttons choose the curve. Click to add
+  a point, drag a point to move it, drag elsewhere to make a point there and move it, right-click a
+  point to remove it. The other curves show faintly.
+- **Scopes** keeps its place at the bottom right but is not built yet.
+- **Keys** (Reference Manual, "Node Editing Basics"; Option is Alt): Alt+S Add Serial Node,
+  Shift+S Add Before Current, Alt+K Append Node, Ctrl+D Enable/Disable Selected Nodes, Alt+D
+  Enable/Disable All Nodes, Alt+Shift+; and Alt+Shift+' Previous and Next Node (looping round).
+  They act on the Color page only.
+- **An agent's draft** shows its banner across the top of the Color page too (B-031).
+
+**How a drag works:** each frame of a drag sends a `color.adjust` under one merge key, so the
+viewer shows every step as the engine renders it and the whole drag is one undo step (D-028).
+While a drag lasts, the controls show the values being sent, not the engine's answers, which
+trail them; when it ends the page asks for the grade again.
+
+**Not built:** the Gallery, LUT browser, Mini-Timeline and Lightbox; Bars and Log modes of the
+Primaries; Shadows, Highlights, Midtone Detail and Lum Mix; the other palettes (HDR, RGB Mixer,
+Qualifier, Window, Tracker and the rest); scopes; parallel and layer nodes; dragging nodes.
+Thumbnails of clips other than the current one are not redrawn when an agent or an undo changes
+their grade. Grading plays back on the CPU (D-028's numbers).
+
+**Checked:**
+- UI tests (7), driving the page with the pointer and keys:
+  - a drag on the Gain master grades the clip, and Ctrl+Z takes the whole drag back;
+  - a drag on the Lift wheel moves the balance, keeps luma and leaves the master;
+  - Alt+S adds a node and selects it; Ctrl+D turns it off; Previous Node loops round; clicking a
+    node selects it;
+  - the node keys do nothing on the Edit page;
+  - a click on the curve adds a point, dragging it bends the curve, and a drag elsewhere makes a
+    new point;
+  - clicking a clip in the strip grades that clip, and its tile has room for its picture;
+  - an agent's grade arrives as a draft on the Color page, and Reject Draft there restores the
+    original.
+- Wrong turn: the curve-click test first failed. The harness moves its clock a quarter second a
+  step, and the test helper held the button for eight steps; egui takes a press longer than
+  0.8 s for the start of a drag. The helper now presses and releases in one step. A real
+  improvement came out of it: a drag that starts away from every point now makes a point there.
+- By hand, 2026-10-14: the editor on the demo, graded by an agent over `mcp --editor` (two nodes;
+  the wheels, Contrast, Pivot and Saturation on the first, a Y curve and Temp on the second).
+  Window captures showed the draft banner, the two nodes, the controls with their changed values,
+  and the clip strip with pictures. They also showed B-030 and B-031, both fixed and captured
+  again. The mouse interactions were not tried by hand: they would have moved the pointer on
+  Truman's desktop. The UI tests drive them.
+- Not tried on the Sony and Samsung clips: their unpacked folder was gone from Downloads on
+  2026-10-14 (the zip is still there).
+
+### B-030 — The Color page's clip strip drew its tiles one text line tall: no pictures, no names
+**Area:** ui · **Status:** fixed · **Caught by:** running it (a window capture of the page)
+
+**Symptom:** each tile showed its number and track and nothing under them. The UI test clicked a
+tile through its accessibility node, which has no height to check, so it passed.
+
+**Cause:** the tiles took `ui.available_height()` inside a horizontal scroll area, whose row is
+one line of text tall.
+
+**Fix:** the strip measures its height before the scroll area. The test now checks that a tile is
+over 100 points tall.
+
+### B-031 — An agent's draft had no Accept or Reject on the Color page
+**Area:** ui · **Status:** fixed · **Caught by:** running it (a window capture of the page)
+
+**Symptom:** an agent's grade went to a draft (D-027), but the draft's banner lived in the Edit
+page's timeline panel, which the Color page does not show. The user would have had to leave the
+page to accept or reject the grade.
+
+**Fix:** the banner is its own function, drawn above the Edit page's timeline and across the top
+of the Color page. A UI test grades as an agent on the Color page and rejects the draft there.

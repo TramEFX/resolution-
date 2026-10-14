@@ -17,6 +17,7 @@
 
 mod app;
 mod chrome;
+mod color_page;
 mod deliver;
 mod icons;
 mod keys;

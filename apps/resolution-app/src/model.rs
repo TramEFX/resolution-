@@ -31,6 +31,9 @@ pub struct Clip {
     pub reverse: bool,
     pub enabled: bool,
     pub selected: bool,
+    /// Its effects start with a Lumetri Color: the Color page's grade (LOG D-028), or a Lumetri
+    /// made elsewhere.
+    pub graded: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -142,6 +145,7 @@ impl Timeline {
                                                 reverse: c["reverse"].as_bool().unwrap_or(false),
                                                 enabled: c["enabled"].as_bool().unwrap_or(true),
                                                 selected: selection.contains(&id),
+                                                graded: c["effects"][0]["effect"] == "lumetri",
                                             })
                                         })
                                         .collect()
@@ -442,5 +446,37 @@ mod tests {
             ]
         );
         assert_eq!(items[0].duration, Some(3.0));
+    }
+}
+
+/// A clip's grade, as `color.inspect` and the other `color.*` commands answer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GradeView {
+    pub clip: u64,
+    pub grade: resolution_grade::Grade,
+    /// The clip has Lumetri effects made outside the Color page; a grade edit replaces them.
+    pub foreign: bool,
+}
+
+impl GradeView {
+    pub fn from_json(v: &Value) -> Option<Self> {
+        let nodes = v["nodes"]
+            .as_array()?
+            .iter()
+            .map(|n| {
+                // the node's own fields, without what `color.inspect` adds for reading
+                let mut n = n.clone();
+                if let Some(o) = n.as_object_mut() {
+                    o.remove("number");
+                    o.remove("neutral");
+                }
+                serde_json::from_value(n).ok()
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            clip: v["clip"].as_u64()?,
+            grade: resolution_grade::Grade { nodes },
+            foreign: v["foreign"].as_bool().unwrap_or(false),
+        })
     }
 }
