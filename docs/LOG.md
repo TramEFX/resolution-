@@ -73,6 +73,7 @@ doc is updated *and* the entry says which section moved.
 | D-023 | 2026-10-13 | ui | Timeline navigation follows Resolve's wheel and scroll-bar controls; the view pages to the playhead | active |
 | D-024 | 2026-10-13 | ui | New Timeline (Ctrl+N) starts empty in the open timeline's format; the source viewer shows the media's own timecode | active |
 | D-025 | 2026-10-13 | ui | A minimal Deliver page: presets, a render queue the app keeps, renders as engine export jobs | active |
+| D-026 | 2026-10-13 | mcp | Agents reach the open editor through a local, token-checked link; `resolution mcp --editor` serves MCP over it | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1273,3 +1274,48 @@ UI over it.
 
 **Not yet:** custom settings (codec, size, bitrate), audio-only renders, and keeping the queue
 in the project. Resolve also has per-job thumbnails and a render-time readout.
+
+### D-026 — Agents reach the open editor through a local, token-checked link; `resolution mcp --editor` serves MCP over it
+**Area:** mcp · **Status:** active · **Doc:** ARCHITECTURE "The editor"; HANDOFF §3; `crates/agent-link`
+
+**Decision:** the first half of step 4 (D-016). An agent edits the timeline that is open on
+screen, through the editor's own engine:
+
+- **Editor side.** While it runs, the editor listens on 127.0.0.1 at a port the system picks. It
+  writes `{port, token, pid}` to `agent-link.json` in the user's application-data folder
+  (`%LOCALAPPDATA%\Resolution` on Windows).
+  - The token is 128 bits from the system's random hash keys. A call without it is refused.
+  - Closing the editor removes the file. A force-quit leaves it behind, and connecting then fails
+    with "not answering"; the next editor overwrites it.
+- **Agent side.** `resolution mcp --editor` reads the file, connects, and serves the same MCP
+  tools as before over a `RemoteEngine`. That type implements `Engine` by forwarding each call,
+  one JSON line each way. The MCP crate is unchanged.
+- **Engine thread.** The editor runs agents' calls on its engine thread, between the user's own
+  commands.
+  - Edits land in one history and one set of snapshots, so they appear on screen as the agent
+    makes them.
+  - The status bar shows "Agent: <undo label>". The user's Ctrl+Z undoes an agent's edit like
+    their own.
+  - Engine notices from agents' calls go both to the agent and to the status bar.
+
+**Why a bridge, not an MCP server inside the app:** MCP clients start stdio servers themselves
+and cannot attach to a running GUI. An HTTP MCP endpoint in the app would need a fixed port in
+`.mcp.json`. With the bridge, `.mcp.json` stays a command (`resolution-editor` is registered next
+to the demo server), and the engine stays behind the same trait.
+
+**Security, flagged:** an open port that runs editing commands. It is bound to 127.0.0.1 only and
+needs a token that only the user's own account can read from disk; a web page cannot read it.
+Destructive commands still need the agent's `acknowledge`, as before (D-004). Other local
+processes running as the same user can read the file, as they can read the user's projects.
+
+**Not yet (step 4's second half):** draft timelines. Today an agent edits the live timeline
+directly. The safety net is undo, and checkpoints over MCP.
+
+**Checked:**
+- Link tests: an agent edits the demo through the link (split, undo, render, errors keep their
+  kind); a wrong token is refused; with no editor running, connecting says so.
+- A UI test: an agent's split shows in the open editor and its status bar, and Ctrl+Z undoes it.
+  Closing the editor removes the link file.
+- By hand: the editor opened with the Sony clip, and `resolution mcp --editor` driven by an MCP
+  client split it at 10 s (two cuts, video and audio) and rendered a frame. A capture of the
+  window showed the cut.

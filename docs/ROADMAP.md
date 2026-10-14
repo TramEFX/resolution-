@@ -79,7 +79,8 @@ read, never copied into the repo.
 
 ## M3 — Agents in the editor (step 4)
 
-- [ ] The app hosts the MCP server: agents edit the open timeline through the same engine thread
+- [x] Agents edit the open timeline through the editor's engine thread: the agent link and
+      `resolution mcp --editor` (D-026)
 - [ ] Draft timelines: agent edits shown as a draft the user accepts or rejects; provenance receipts
 
 ## M4 — Color page, first slice (step 5)

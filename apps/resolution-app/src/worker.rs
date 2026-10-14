@@ -8,11 +8,20 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
+use resolution_agent_link::{Call, Response, WireError};
 use resolution_engine_api::{Engine, EngineEvent, Outcome, Playback};
 use serde_json::{Value, json};
 
 pub enum Request {
-    Run { id: String, params: Value },
+    Run {
+        id: String,
+        params: Value,
+    },
+    /// A call from an agent over the agent link (LOG D-026), answered on `reply`.
+    Agent {
+        call: Call,
+        reply: Sender<Response>,
+    },
     Quit,
 }
 
@@ -62,6 +71,26 @@ impl Worker {
     pub fn poll(&self) -> Vec<Reply> {
         self.rx.try_iter().collect()
     }
+
+    /// What the agent link calls: hands an agent's call to the engine thread and waits for the
+    /// answer. Agents' edits land in the same engine, history and snapshots as the user's.
+    pub fn agent_handle(&self) -> impl Fn(Call) -> Response + Send + Sync + 'static {
+        let tx = self.tx.clone();
+        move |call| {
+            let (reply, answer) = mpsc::channel();
+            let closed = || {
+                Response::Err(WireError {
+                    kind: "engine".into(),
+                    what: "the editor is closing".into(),
+                    why: String::new(),
+                })
+            };
+            if tx.send(Request::Agent { call, reply }).is_err() {
+                return closed();
+            }
+            answer.recv().unwrap_or_else(|_| closed())
+        }
+    }
 }
 
 impl Drop for Worker {
@@ -81,6 +110,8 @@ fn serve(
 ) {
     let _ = replies.send(snapshot(engine.as_mut()));
     repaint();
+    // engine notices from agents' calls, kept until the agent asks for them
+    let mut agent_events: Vec<EngineEvent> = Vec::new();
     while let Ok(first) = requests.recv() {
         let batch: Vec<Request> = std::iter::once(first).chain(requests.try_iter()).collect();
         for request in batch {
@@ -94,6 +125,36 @@ fn serve(
                         })
                         .map_err(|e| e.to_string());
                     let _ = replies.send(Reply::Ran { id, result });
+                }
+                Request::Agent { call, reply } => {
+                    let edits = matches!(call, Call::Execute { .. } | Call::Undo | Call::Redo);
+                    let response = if call == Call::DrainEvents {
+                        Response::Ok(serde_json::to_value(std::mem::take(&mut agent_events)).unwrap_or_default())
+                    } else {
+                        catch_unwind(AssertUnwindSafe(|| resolution_agent_link::answer(engine.as_mut(), call)))
+                            .unwrap_or_else(|_| {
+                                Response::Err(WireError {
+                                    kind: "engine".into(),
+                                    what: "the engine panicked".into(),
+                                    why: String::new(),
+                                })
+                            })
+                    };
+                    if edits {
+                        // the user sees what an agent did; its notices go to it as well as here
+                        if let Response::Ok(v) = &response
+                            && let Some(label) = v["undo_label"].as_str()
+                        {
+                            let _ = replies.send(Reply::Notice { message: format!("Agent: {label}"), error: false });
+                        }
+                        for event in engine.drain_events() {
+                            if let EngineEvent::Notice { message, error } = &event {
+                                let _ = replies.send(Reply::Notice { message: message.clone(), error: *error });
+                            }
+                            agent_events.push(event);
+                        }
+                    }
+                    let _ = reply.send(response);
                 }
             }
         }

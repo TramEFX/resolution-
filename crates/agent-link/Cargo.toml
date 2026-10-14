@@ -1,0 +1,19 @@
+[package]
+name = "resolution-agent-link"
+description = "The agent link: an agent's MCP server drives the open editor's engine over a local socket"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+resolution-engine-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+
+[dev-dependencies]
+resolution-filmcraft-adapter = { workspace = true }

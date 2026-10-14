@@ -63,6 +63,12 @@ To work on a real project instead of the demo, edit `.mcp.json` locally (`"mcp",
 "C:/path/to/edit.fcproj"`) or run `cargo run -p resolution-cli -- mcp --project <path>` from any MCP
 client. Destructive commands (save/open/delete) ask the agent to confirm with you first.
 
+**Agents in the open editor** (LOG D-026): `.mcp.json` also registers `resolution-editor`
+(`mcp --editor`). With `resolution-app` running, an agent on that server edits the timeline you are
+looking at, in the same undo history: its edits appear on screen as it makes them, the status bar says
+"Agent: …", and Ctrl+Z undoes them like your own. Start the editor first; with none open the server
+says so and exits.
+
 ## 4. Where things stand
 
 | Area | State |

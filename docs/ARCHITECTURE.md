@@ -97,6 +97,11 @@ An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP s
   bundled). Icons (`icons.rs`) are our own 16×16 line drawings in SVG path syntax, stroked in the
   theme's colours; `chrome.rs` has the shared buttons and panel strips. Resolve's layout and keys
   only, never its artwork.
+- **Agents in the open editor** (LOG D-026, `crates/agent-link`). The editor listens on 127.0.0.1
+  and writes the port and a random token to a file in the user's application-data folder;
+  `resolution mcp --editor` connects and serves MCP over a `RemoteEngine`, which forwards each
+  `Engine` call to the editor's engine thread. Agents' edits land in the same history and snapshots
+  as the user's, so they show on screen as they happen.
 - **Tests drive the real UI.** `egui_kittest` presses keys and clicks clips headlessly.
   `resolution-app --screenshot out.png` saves the window once a frame is on screen; `--play <s>`
   plays and prints what was shown and heard.

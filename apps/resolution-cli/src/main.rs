@@ -1,7 +1,8 @@
 //! `resolution commands` — every command the engine offers (vocabulary, then raw engine commands)
 //! `resolution keys` — the Resolve keymap
 //! `resolution run [--project <path>] <id> [json] [<id> [json]]…` — run commands headlessly
-//! `resolution mcp [--project <path> | --demo]` — serve MCP over stdio for agents
+//! `resolution mcp [--project <path> | --demo | --editor]` — serve MCP over stdio for agents;
+//!   `--editor` drives the editor that is open on screen instead of an engine of its own
 
 use std::process::ExitCode;
 
@@ -35,7 +36,7 @@ fn main() -> ExitCode {
         Some("mcp") => mcp(&args[1..]),
         _ => {
             eprintln!(
-                "usage: resolution commands | keys | run [--project <path>] <id> [json]… | mcp [--project <path> | --demo]"
+                "usage: resolution commands | keys | run [--project <path>] <id> [json]… | mcp [--project <path> | --demo | --editor]"
             );
             ExitCode::FAILURE
         }
@@ -80,13 +81,32 @@ fn run(args: &[String]) -> ExitCode {
 }
 
 fn mcp(args: &[String]) -> ExitCode {
+    // the open editor's engine, through the agent link (LOG D-026)
+    if let [flag] = args
+        && flag == "--editor"
+    {
+        let engine = match resolution_agent_link::RemoteEngine::connect(&resolution_agent_link::default_path()) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        return match resolution_mcp::serve_stdio(Box::new(engine)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let mut engine = FilmCraftEngine::new();
     let opened = match args {
         [] => Ok(()),
         [flag] if flag == "--demo" => engine.execute("raw.filmcraft/file.openDemoProject", json!({})).map(|_| ()),
         [flag, path] if flag == "--project" => engine.execute("project.open", json!({ "path": path })).map(|_| ()),
         _ => {
-            eprintln!("usage: resolution mcp [--project <path> | --demo]");
+            eprintln!("usage: resolution mcp [--project <path> | --demo | --editor]");
             return ExitCode::FAILURE;
         }
     };
