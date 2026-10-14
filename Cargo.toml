@@ -8,6 +8,7 @@ members = [
     "crates/keymap",
     "crates/mcp",
     "crates/playback",
+    "crates/renderer",
     "apps/resolution-cli",
     "apps/resolution-app",
 ]
@@ -27,6 +28,7 @@ resolution-grade = { path = "crates/grade" }
 resolution-keymap = { path = "crates/keymap" }
 resolution-mcp = { path = "crates/mcp" }
 resolution-playback = { path = "crates/playback" }
+resolution-renderer = { path = "crates/renderer" }
 
 # The engine: FilmCraft via Resolution's private mirror (TramEFX/resolution-filmcraft), pinned to
 # a sync point's commit (branch sync/fc-20261013 = storytold/filmcraft@cee1feb + mirror plumbing).
@@ -41,6 +43,7 @@ filmcraft-audio-dsp = { git = "https://github.com/TramEFX/resolution-filmcraft",
 filmcraft-platform = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
 filmcraft-scopes = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
 filmcraft-geom = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
+filmcraft-color = { git = "https://github.com/TramEFX/resolution-filmcraft", rev = "29d01cf1298f3c525e112fcb4ccd17fc2183edf2" }
 
 # UI (LOG D-012): the same egui stack as FilmCraft's own UI, so its code is a working reference.
 egui = "0.36"
@@ -53,6 +56,8 @@ cpal = "0.18"
 # foundation
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# the GPU: the version egui's renderer and FilmCraft's compositor use (one device can serve all)
+wgpu = { version = "30", features = ["wgsl"] }
 thiserror = "2"
 toml = "0.9"
 

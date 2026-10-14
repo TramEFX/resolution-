@@ -102,10 +102,11 @@ read, never copied into the repo.
 - [ ] Polygon, Curve and Gradient windows; window handles on screen; tracking
 - [ ] Parallel and layer nodes
 - [ ] **Our own GPU renderer** (D-035, Truman's choice), replacing the Lumetri compile for grades:
-  - [ ] G1: the viewers' frames on the GPU, with the grade stage (tone, saturation, real key masks,
+  - [x] G1: the viewers' frames on the GPU, with the grade stage (tone, saturation, real key masks,
         windows) exact to `crates/grade`; FilmCraft's CPU renderer for what it does not cover yet
-  - [ ] G2: graded playback measured on the Sony clip; blend modes and standard effects; frames to
-        the screen without a copy back
+        (D-036; graded 4K plays at 24 fps on the GPU where the CPU managed 14)
+  - [ ] G2: frames to the screen without a copy back; transitions, blend modes and standard effects
+        on the GPU; chroma siting (D-036 "Limits")
   - [ ] G3: Deliver through the same renderer, so viewer and file are identical
   - [ ] Later: parallel and layer nodes, matte finesse, no clamping between nodes
 

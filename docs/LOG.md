@@ -92,7 +92,10 @@ doc is updated *and* the entry says which section moved.
 | D-032 | 2026-10-14 | color | Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal | active (built: D-033) |
 | D-033 | 2026-10-14 | color | The qualifier as built: Resolve's HSL ranges, a qualified node baked into a 33-point project LUT | active |
 | D-034 | 2026-10-14 | tools | An action journal: every command, who sent it, how long it took and how it ended, for finding failures and freezes | planned |
-| D-035 | 2026-10-14 | color | Our own GPU renderer: the viewer's frames, with Resolution's grade math run exactly on the GPU | active (to build) |
+| D-035 | 2026-10-14 | color | Our own GPU renderer: the viewer's frames, with Resolution's grade math run exactly on the GPU | active (G1 built: D-036) |
+| B-034 | 2026-10-14 | color | The GPU renderer blended 8-bit sRGB pixels before decoding them: enlarged pictures went dark between pixels | fixed |
+| B-035 | 2026-10-14 | color | The GPU renderer drew 8-bit camera video about one code value too red and too blue | fixed |
+| D-036 | 2026-10-14 | color | G1 built: the viewers' frames on Resolution's GPU renderer, grades by their own math | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1974,3 +1977,158 @@ stored changes.
 
 Until G3, Deliver keeps D-028's compile, which follows the same math within a code value (6.5 at
 a qualifier's soft edge, D-033).
+
+### B-034 — The GPU renderer blended 8-bit sRGB pixels before decoding them: enlarged pictures went dark between pixels
+**Area:** color · **Status:** fixed · **Caught by:** test (`playback_renders_the_same_frames_on_other_threads`,
+while building D-036)
+
+**Symptom:** with playback on the GPU renderer, the threaded playback test's frame at one second
+differed from the engine's CPU frame: 99 % of values within 7 code values, the worst 18. Its other
+frames matched exactly.
+
+**Cause:** at the test's 96-pixel size the decoder hands over a 90 × 51 picture, which is enlarged
+a little to fill the frame. To keep a grade's input codes exact, decoding of 8-bit sRGB had moved
+from the texture unit into the shader (D-036, "Facts found"). The shader then blended the four
+neighbouring pixels' sRGB codes and decoded the blend. The texture unit and FilmCraft's CPU decode
+each pixel first and blend in linear light. Blending codes darkens the pixels between contrasting
+ones. Blending straight colour, not premultiplied, also lets a clear pixel's unseen colour bleed in.
+
+**Fix:** the shader decodes and premultiplies each of the four pixels, then blends them. The frame
+now matches within 1 code value for 99 % of values (the worst 4). A renderer test
+(`an_enlarged_picture_blends_its_pixels_in_linear_light`) draws black beside white, and opaque red
+beside a clear green pixel, twice as wide. It fails with the old shader.
+
+### B-035 — The GPU renderer drew 8-bit camera video about one code value too red and too blue
+**Area:** color · **Status:** fixed · **Caught by:** running it (D-036's hand check: a Sony clip
+frame in the editor, drawn by each renderer and compared pixel by pixel)
+
+**Symptom:** on the Sony clip the GPU's frame was redder and bluer than the CPU's by about one code
+value on average (R +1.1, G −0.2, B +1.3), at every size, graded or not. The tests had not seen
+it. The demo's pictures are RGB, and the renderer's own Y'CbCr test checked only white, black and
+pure red, which clip and hide a small offset.
+
+**Cause:** the video-range constants (Y' from 16 in 219 steps, chroma about 128 in 224 steps) are
+scaled to the picture's bit depth by 2^bits / 256. FilmCraft's compositor keeps two numbers: the
+scale the texture holds codes at (255 for 8-bit, since the texture returns code / 255) and the
+number of code levels (256). The port used the first for both. So 8-bit video had its chroma centre
+at 127.5, not 128: a half-code push towards red and blue. 10-bit video was right.
+
+**Fix:** the levels come from the picture's bit depth.
+- A renderer test (`ycbcr_mid_tones_decode_as_the_formula_says`) sweeps mid-tone Y'CbCr at 8 and 10
+  bits, video and full range, against the conversion's formula. Now: worst 0.6 code values, mean
+  lean under 0.03. With the old code: worst 2.5, mean lean 1.05.
+- An adapter test draws the decoded test clip (`testdata/rotated.mp4`) both ways. Its flat areas
+  agree within 2 code values and no channel leans. It fails with the old code.
+- On the Sony clip the lean is now under 0.1 code values.
+
+### D-036 — G1 built: the viewers' frames on Resolution's GPU renderer, grades by their own math
+**Area:** color · **Status:** active · **Doc:** ARCHITECTURE "The GPU renderer"; `crates/renderer`;
+`crates/filmcraft-adapter/src/gpu.rs`
+
+**Decision:** D-035's G1, built.
+
+- **`crates/renderer`** (new; wgpu 30, the version egui uses) draws a frame from layers.
+  - A layer is one of:
+    - 8-bit RGBA (sRGB, straight alpha);
+    - float RGBA (linear, premultiplied);
+    - planar Y'CbCr at 8 to 16 bits, any chroma subsampling, with an optional alpha plane.
+
+    With it go its colour coding (matrix; video or full range; sRGB/Rec. 709 or linear transfer),
+    its placement (a 2D affine), its opacity and its grade.
+  - Shrinking averages up to 4 × 4 samples over each output pixel's footprint, as FilmCraft's GPU
+    compositor does. Its shader code was ported (MIT or Apache-2.0, as in D-013).
+  - Layers add up over black in linear light, premultiplied, at half-float precision. The result
+    is encoded to 8-bit sRGB and read back.
+  - The grade stage (WGSL) runs `crates/grade`'s math on each pixel, node by node:
+    - the tone functions, as 4096-point tables;
+    - then Saturation, Color Boost and Hue;
+    - then the qualifier's key and the windows' coverage (up to 8 windows a node), which blend the
+      node's result into its input.
+
+    As in `crates/grade`, a grade works on sRGB codes: the shader unpremultiplies and encodes,
+    grades, then decodes and premultiplies.
+  - There is one renderer for the program, made when a frame first wants it. Without a GPU there is
+    none, and every frame is drawn on the CPU.
+- **In the adapter** (`gpu.rs`): each playback snapshot keeps a copy of its timeline without the
+  grades' Lumetri effects, and each graded clip's grade. FilmCraft plans a frame from that copy
+  (`plan_frame`, which also decodes its layers). If the plan is a plain stack of layers, the GPU
+  renderer draws it, with each graded clip's grade. Otherwise FilmCraft's CPU renderer draws it from
+  the real project, compiled grades and all. These frames go to the CPU:
+  - a transition at that time, an adjustment layer, captions, an HDR timeline;
+  - a nested timeline, or any clip that is not plain media;
+  - a layer with effects FilmCraft runs itself, a blend mode, or a transfer other than sRGB, Rec. 709
+    or linear;
+  - a graded clip FilmCraft had to pre-render (other effects on it);
+  - a clip with a Lumetri of its own, not a Resolution grade: its Lumetri runs on the CPU.
+
+  FilmCraft's plans do not say which clip a layer is. Its planner adds one layer per enabled media
+  clip on an enabled track, bottom first. With the cases above excluded, the layers are the visible
+  clips in that order. Each pairing is checked against the clip's picture shape, and any doubt falls
+  back to the CPU.
+- **Viewers only.** Frame renders for agents (`render_frame`), the scopes and Deliver still use the
+  CPU and the Lumetri compile (until G3).
+- **Switches and counts:**
+  - `resolution-app --cpu-render` draws every frame on the CPU, to compare the two or to get round a
+    GPU that draws wrong.
+  - The adapter counts the frames drawn each way (`frame_counts()`), and `--play` prints them.
+  - `play_bench` can play a saved project and takes `--cpu-render`.
+
+**Measured** on this PC (AMD Radeon RX 9070 XT through Vulkan; hardware decoding):
+- Against `crates/grade`'s math: the grade within 1.0 code value; the qualifier's key within 0.6.
+- Against FilmCraft's CPU frames, on the demo at a 960-pixel viewer:
+  - ungraded: identical;
+  - graded: mean 0.16, 99 % within 1 code value;
+  - qualified: mean 0.51, 99 % within 8. Most of that is the CPU's baked LUT, 6.5 code values off at
+    the key's soft edge (D-033). Also, at a viewer's size the CPU grades the picture before
+    shrinking it and the GPU after, which differs on a steep key edge.
+- The Sony clip (4K, 8-bit 4:2:0) in the editor, GPU against CPU: mean 0.49 ungraded and 0.40
+  graded, 99 % within 1 code value, and no channel leaning (after B-035). What differs is on hard
+  edges. The CPU takes each pixel's nearest chroma sample and the GPU blends them, and the two shrink
+  differently at uneven scales.
+- Speed: the graded Sony clip at a 1440-pixel viewer, measured with `play_bench`.
+
+  | | GPU | CPU |
+  |---|---|---|
+  | One frame after another on one thread | 8.4 ms a frame | 124 ms a frame |
+  | Played in real time (several frame workers) | 24.0 fps; exact frame on 100 % of refreshes; 7.5 ms a frame, 3.9 ms of it getting the decoded picture | 14.0 fps; 148 ms a frame |
+  | Played at double speed | 47.9 fps; exact on 99.8 % | 11.0 fps |
+- In the editor (`--play 8`, with the default window's viewer about 744 pixels wide), both ways
+  play at 23.9 fps, since the CPU keeps up at that size. All 207 frames were drawn on the GPU.
+  Playback started in 44 ms on the GPU and 189 ms on the CPU.
+
+**Facts found:**
+- Decoding 8-bit sRGB in the texture unit (`Rgba8UnormSrgb`) put a grade's result up to 9 code
+  values off the key's math on this GPU, after the round trip to codes that the grade needs.
+  Loading the codes as they are (`Rgba8Unorm`) and decoding in the shader brought it to 0.6. That
+  change then caused B-034.
+- egui and the renderer share one wgpu, so G2 can hand frames to the screen without the copy back to
+  memory.
+
+**Limits (G2's list):**
+- Frames are read back to memory and uploaded again for display.
+- There is one renderer, behind a lock, so frame workers take turns on the GPU. It did not hold back
+  24 or 48 fps here; heavier loads are not measured.
+- Transitions, blend modes, adjustment layers and clips with other effects are CPU frames, and
+  graded clips in them use the Lumetri compile.
+- Chroma is blended as if each chroma sample sat at the centre of its pixels. Camera video usually
+  sites it at the left. Not yet measured against a reference.
+- Shrinking by more than 4× under-samples (4 × 4 samples a pixel). FilmCraft's decoders often hand
+  over a reduced picture, which hides it.
+
+**Checked:**
+- Renderer tests (10, run on the GPU here):
+  - RGBA comes back as it went in;
+  - Y'CbCr in video and full range, at 8 and 10 bits, against the formula;
+  - the grade and the qualifier against `crates/grade`;
+  - a window stays round on a 2:1 picture;
+  - layers with opacity;
+  - a shrunk checkerboard averages to grey;
+  - an enlarged picture blends in linear light.
+- Adapter tests (5):
+  - GPU against CPU frames, ungraded, graded and qualified;
+  - a foreign Lumetri falls back to the CPU;
+  - camera video (B-035).
+
+  The threaded playback test now allows for the two renderers' rounding (99 % within 3 code values).
+- By hand, 2026-10-14: the figures above. The graded Sony clip looks the same in the editor on both
+  renderers by eye.

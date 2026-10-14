@@ -4,19 +4,21 @@
 //! sound kept up. The numbers behind LOG D-013 and D-014.
 //!
 //! ```text
-//! cargo run -p resolution-playback --example play_bench -- <media file | --demo>
+//! cargo run -p resolution-playback --example play_bench -- <media file | project.fcproj | --demo>
 //!     [--from 0] [--seconds 10] [--side 1440] [--speed 1] [--workers n] [--hardware]
-//!     [--sequential] [--wav heard.wav]
+//!     [--cpu-render] [--sequential] [--wav heard.wav]
 //! ```
 //!
-//! `--wav` writes the sound the simulated device received, to compare with another decoder's.
+//! A project plays its open timeline (graded, say). `--cpu-render` draws every frame on
+//! FilmCraft's CPU renderer, not Resolution's GPU renderer (LOG D-036). `--wav` writes the sound
+//! the simulated device received, to compare with another decoder's.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use resolution_engine_api::{Engine, Playback};
-use resolution_filmcraft_adapter::{FilmCraftEngine, use_hardware_decoders};
+use resolution_filmcraft_adapter::{FilmCraftEngine, frame_counts, use_gpu_renderer, use_hardware_decoders};
 use resolution_playback::ahead::{self, AudioStats};
 use resolution_playback::frames::{FrameKey, FrameServer};
 use resolution_playback::{Step, Transport};
@@ -68,7 +70,7 @@ fn main() {
     };
     let Some(file) = args.first().filter(|a| *a == "--demo" || !a.starts_with("--")) else {
         eprintln!(
-            "usage: play_bench <media file | --demo> [--from 0] [--seconds 10] [--side 1440] [--speed 1] [--workers n] [--hardware] [--sequential] [--wav heard.wav]"
+            "usage: play_bench <media file | project.fcproj | --demo> [--from 0] [--seconds 10] [--side 1440] [--speed 1] [--workers n] [--hardware] [--cpu-render] [--sequential] [--wav heard.wav]"
         );
         std::process::exit(2);
     };
@@ -79,10 +81,13 @@ fn main() {
     } else {
         "software".into()
     };
+    use_gpu_renderer(!args.iter().any(|a| a == "--cpu-render"));
 
     let mut engine = FilmCraftEngine::new();
     if file == "--demo" {
         engine.execute("raw.filmcraft/file.openDemoProject", json!({})).expect("the demo project");
+    } else if file.ends_with(".fcproj") {
+        engine.execute("project.open", json!({ "path": file })).expect("the project");
     } else {
         engine.execute("media.import", json!({ "paths": [file] })).expect("import");
         let project = engine.execute("project.inspect", json!({})).expect("inspect").result;
@@ -109,6 +114,8 @@ fn main() {
             }
             println!("in order, every {stride}: {:.1} ms a frame", t.elapsed().as_secs_f64() * 1e3 / n as f64);
         }
+        let (gpu, cpu) = frame_counts();
+        println!("frames drawn on the GPU {gpu}, on the CPU {cpu}");
         return;
     }
     println!(
@@ -217,6 +224,8 @@ fn main() {
         st.job_ms / st.jobs.max(1) as f64,
         st.decode_ms / st.jobs.max(1) as f64
     );
+    let (gpu, cpu) = frame_counts();
+    println!("frames drawn on the GPU {gpu}, on the CPU {cpu}");
     let min_lead = stats.min_lead_frames.load(Ordering::Relaxed);
     println!(
         "sound: {} device callbacks, {} underruns, {} frames of silence; least lead {}",

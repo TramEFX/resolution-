@@ -161,25 +161,7 @@ impl FilmCraftEngine {
     /// The clip's grade, and whether its Lumetri effects are foreign (see the module notes).
     /// `None` when the open timeline has no such clip.
     fn grade_of(&self, seq: ItemId, clip: ClipId) -> Option<(Grade, bool)> {
-        let p = &self.session.project;
-        let (_, it) = p.sequence(seq)?.find_item(clip)?;
-        let front = lumetri_front(&it.effects);
-        let size = self.clip_size(seq, clip);
-        let meta = &p.item(seq)?.metadata;
-        if let Some(g) = meta.get(&key(clip)).and_then(|j| serde_json::from_str::<Grade>(j).ok()) {
-            let foreign = compile(&g, size) != front;
-            return Some((g, foreign));
-        }
-        if front.is_empty() {
-            return Some((Grade::default(), false));
-        }
-        // a copy of a graded clip
-        let adopted = meta
-            .iter()
-            .filter(|(k, _)| k.starts_with(KEY))
-            .filter_map(|(_, j)| serde_json::from_str::<Grade>(j).ok())
-            .find(|g| compile(g, size) == front);
-        Some(adopted.map_or((Grade::default(), true), |g| (g, false)))
+        grade_in(&self.session.project, seq, clip, self.clip_size(seq, clip))
     }
 
     /// Store `grade` for `clip` and compile it onto the clip: one undo step labelled `label`, or
@@ -239,6 +221,28 @@ impl FilmCraftEngine {
         .map_err(|e| crate::convert(id, e))?;
         Ok((self.undo_top() != before).then(|| label.to_string()))
     }
+}
+
+/// The grade of `clip` on timeline `seq` of `p`, whose picture is `size`, and whether its Lumetri
+/// effects are foreign (see the module notes). `None` when the timeline has no such clip.
+pub(crate) fn grade_in(p: &Project, seq: ItemId, clip: ClipId, size: (u32, u32)) -> Option<(Grade, bool)> {
+    let (_, it) = p.sequence(seq)?.find_item(clip)?;
+    let front = lumetri_front(&it.effects);
+    let meta = &p.item(seq)?.metadata;
+    if let Some(g) = meta.get(&key(clip)).and_then(|j| serde_json::from_str::<Grade>(j).ok()) {
+        let foreign = compile(&g, size) != front;
+        return Some((g, foreign));
+    }
+    if front.is_empty() {
+        return Some((Grade::default(), false));
+    }
+    // a copy of a graded clip
+    let adopted = meta
+        .iter()
+        .filter(|(k, _)| k.starts_with(KEY))
+        .filter_map(|(_, j)| serde_json::from_str::<Grade>(j).ok())
+        .find(|g| compile(g, size) == front);
+    Some(adopted.map_or((Grade::default(), true), |g| (g, false)))
 }
 
 /// The run of Lumetri effects at the front of a clip's effect stack: its grade.

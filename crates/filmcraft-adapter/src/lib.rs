@@ -1,6 +1,7 @@
 //! Resolution's [`Engine`] on top of FilmCraft's headless `Session`.
 
 mod color;
+mod gpu;
 pub mod map;
 pub mod playback;
 mod scopes;
@@ -9,6 +10,7 @@ use std::sync::Arc;
 
 use filmcraft_engine::time::Tick;
 use filmcraft_engine::{EngineError as FcError, Event, FsServices, Session};
+pub use gpu::{frame_counts, use_gpu_renderer};
 use map::Target;
 pub use playback::use_hardware_decoders;
 use resolution_engine_api::{CommandInfo, Engine, EngineError, EngineEvent, Frame, Outcome, Playback, Result, Risk};
@@ -554,7 +556,14 @@ mod tests {
         for (f, t) in frames.iter().zip(threads) {
             let from_thread = t.join().expect("render thread");
             let from_engine = e.render_frame(Some(rate.seconds_of(*f)), 96).expect("frame");
-            assert_eq!(from_thread.rgba, from_engine.rgba, "frame {f}");
+            assert_eq!((from_thread.width, from_thread.height), (from_engine.width, from_engine.height), "frame {f}");
+            // playback draws on the GPU where it can (LOG D-036), the engine on the CPU: the same
+            // picture, within the two renderers' rounding and filtering when shrinking
+            let mut d: Vec<u8> = from_thread.rgba.iter().zip(&from_engine.rgba).map(|(a, b)| a.abs_diff(*b)).collect();
+            let mean = d.iter().map(|v| f32::from(*v)).sum::<f32>() / d.len() as f32;
+            d.sort_unstable();
+            let p99 = d[d.len() * 99 / 100];
+            assert!(mean < 1.0 && p99 <= 3, "frame {f}: mean {mean}, 99% {p99}");
         }
         let cancelled = RenderHints::default();
         cancelled.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
