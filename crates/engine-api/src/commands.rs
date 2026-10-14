@@ -64,7 +64,7 @@ pub enum Risk {
 }
 
 /// Vocabulary commands that only read.
-const READ: &[&str] = &["project.inspect", "timeline.inspect", "source.inspect", "deliver.jobs"];
+const READ: &[&str] = &["project.inspect", "timeline.inspect", "source.inspect", "deliver.jobs", "color.inspect"];
 /// Vocabulary commands that write files or replace the open project.
 const DESTRUCTIVE: &[&str] = &["project.open", "project.save", "project.saveAs", "deliver.render"];
 
@@ -246,6 +246,31 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     c("deliver.jobs", "Render Jobs", Deliver, "query; returns every render job: progress, seconds left, result"),
     c("deliver.cancel", "Stop Render", Deliver, r#"{"job": id}"#),
+    // the Color page (LOG D-028): a clip's grade is serial corrector nodes, numbered from 1 as in
+    // the Node Editor; `clip` defaults to the clip under the playhead on the highest video track
+    c("color.inspect", "Color Grade", Color, r#"query; {"clip"?: id}: the clip's nodes and their controls"#),
+    c(
+        "color.adjust",
+        "Adjust Node",
+        Color,
+        r#"{"clip"?: id, "node": n, "controls": {"lift"|"gamma"|"gain"|"offset"?: {"y"?, "r"?, "g"?, "b"?}, "contrast"?, "pivot"?, "saturation"?, "hue"?, "color_boost"?, "temp"?, "tint"?, "curves"?: {"y"|"r"|"g"|"b"?: [[x, y]]}, "label"?}, "merge"?: string (calls with the same merge key in a row are one undo step: a drag)}"#,
+    ),
+    c("color.addSerialNode", "Add Serial Node", Color, r#"{"clip"?: id, "node"?: n (after it; default the last)}"#),
+    c(
+        "color.addNodeBefore",
+        "Add Before Current",
+        Color,
+        r#"{"clip"?: id, "node"?: n (before it; default the first)}"#,
+    ),
+    c("color.appendNode", "Append Node", Color, r#"{"clip"?: id}"#),
+    c("color.deleteNode", "Delete Node", Color, r#"{"clip"?: id, "node": n}"#),
+    c("color.toggleNodes", "Enable/Disable Selected Nodes", Color, r#"{"clip"?: id, "nodes": [n]}"#),
+    c("color.toggleAllNodes", "Enable/Disable All Nodes", Color, r#"{"clip"?: id}"#),
+    c("color.resetNode", "Reset Selected Node Grade", Color, r#"{"clip"?: id, "node": n}"#),
+    c("color.resetGradesKeepNodes", "Reset Grades and Keep Nodes", Color, r#"{"clip"?: id}"#),
+    c("color.resetAll", "Reset All Grades and Nodes", Color, r#"{"clip"?: id}"#),
+    c("color.previousNode", "Previous Node", Color, ""),
+    c("color.nextNode", "Next Node", Color, ""),
 ];
 
 pub fn find(id: &str) -> Option<&'static CommandSpec> {

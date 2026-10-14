@@ -1,5 +1,6 @@
 //! Resolution's [`Engine`] on top of FilmCraft's headless `Session`.
 
+mod color;
 pub mod map;
 pub mod playback;
 
@@ -188,6 +189,7 @@ impl Engine for FilmCraftEngine {
             Some(Target::Adapter) if id == "timeline.duplicate" || id == "media.delete" => {
                 self.on_selection(id, params)
             }
+            Some(Target::Adapter) if id.starts_with("color.") => self.color(id, params),
             Some(Target::Adapter) => {
                 // Undo and redo move through the history; they add no step of their own (LOG B-001).
                 let label = if id == "edit.undo" { self.undo() } else { self.redo() };

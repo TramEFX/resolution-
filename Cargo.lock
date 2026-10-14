@@ -3476,6 +3476,15 @@ dependencies = [
  "filmcraft-platform",
  "rayon",
  "resolution-engine-api",
+ "resolution-grade",
+ "serde_json",
+]
+
+[[package]]
+name = "resolution-grade"
+version = "0.0.1"
+dependencies = [
+ "serde",
  "serde_json",
 ]
 

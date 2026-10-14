@@ -4,6 +4,7 @@ members = [
     "crates/agent-link",
     "crates/engine-api",
     "crates/filmcraft-adapter",
+    "crates/grade",
     "crates/keymap",
     "crates/mcp",
     "crates/playback",
@@ -22,6 +23,7 @@ publish = false
 resolution-agent-link = { path = "crates/agent-link" }
 resolution-engine-api = { path = "crates/engine-api" }
 resolution-filmcraft-adapter = { path = "crates/filmcraft-adapter" }
+resolution-grade = { path = "crates/grade" }
 resolution-keymap = { path = "crates/keymap" }
 resolution-mcp = { path = "crates/mcp" }
 resolution-playback = { path = "crates/playback" }

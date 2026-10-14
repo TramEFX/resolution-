@@ -80,6 +80,8 @@ doc is updated *and* the entry says which section moved.
 | B-027 | 2026-10-13 | engine | `timeline.duplicate` put the copy at the top of the project; Resolve puts it in the original's bin | fixed |
 | B-028 | 2026-10-13 | ui | An agent's edit was lost, though reported made, when its draft failed after the copy | fixed |
 | D-027 | 2026-10-13 | ui | An agent's edits go to a draft of the timeline, which only the user accepts or rejects | active |
+| D-028 | 2026-10-14 | color | Grades are Resolution's own node model, compiled to FilmCraft Lumetri effects on each clip | active |
+| B-029 | 2026-10-14 | color | `color.inspect` showed 0.30000001192092896 for a control set to 0.3 | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1471,3 +1473,108 @@ is an "edit" by risk tier but makes no undo step. The cost is one extra run per 
   - The draft sat in the Sequences bin beside the original.
   - A capture of the window showed the banner and the cuts. Accept and Reject were not clicked by
     hand; the UI tests click them.
+
+### D-028 — Grades are Resolution's own node model, compiled to FilmCraft Lumetri effects on each clip
+**Area:** color · **Status:** active · **Doc:** ARCHITECTURE "Colour grades"; `crates/grade`; `crates/filmcraft-adapter/src/color.rs`
+
+**Decision:** the first half of step 5 (D-016), the engine side of the Color page. Truman chose
+this route on 2026-10-14 from three, after the measurements below.
+
+- **Our own model.** `crates/grade` (no FilmCraft types) holds a clip's grade: serial corrector
+  nodes. Each node has the Primaries palette's controls (Lift, Gamma, Gain and Offset wheels as
+  YRGB numbers, Contrast, Pivot, Saturation, Hue, Color Boost, Temp, Tint) and the Custom Curves
+  (Y, R, G, B). Numbers are in Resolve's units where the manual gives them (Gain 1, Offset 25,
+  Pivot 0.435, Saturation 50 neutral).
+- **Our own math.** Resolve does not publish its formulas. Each control does what the manual says
+  it does, by formulas written down in `crates/grade`; they are ours, not Resolve's. Every control
+  except Saturation, Hue and Color Boost acts on each channel alone, so a node is a tone function
+  per channel followed by a saturation step.
+- **Kept in the project.** The grade is JSON in the timeline's metadata map, under
+  `resolution.grade.<clip id>`: invariant 5's "extension map", no FilmCraft schema change.
+- **Compiled to Lumetri.** Each node becomes at most two Lumetri Color effects at the front of the
+  clip's effect stack:
+  - its tone functions as Lumetri's R, G and B curves, every other section off. The adapter
+    samples each tone function adaptively, adding points until the joined curve is within a
+    quarter of an 8-bit code value, at most 129 points.
+  - its saturation step as Lumetri's Saturation and Vibrance, both of which keep luma, with Hue as
+    a constant Hue vs Hue curve.
+
+  A neutral or disabled node compiles to nothing. Playback, frame renders, Deliver and agents see
+  the grade with no other change.
+- **One undo step per edit.** The adapter writes the metadata and the effects in one
+  `Session::edit`; a drag passes a `merge` key and uses `Session::edit_merged`, so a whole drag
+  is one step.
+- **Copies keep their grade.** FilmCraft copies effects with a clip (a split, a paste) but not our
+  metadata. A clip with no stored grade whose Lumetri effects are exactly what another of the
+  timeline's grades compiles to takes that grade. Lumetri effects that match no grade are reported
+  as `foreign`, and the next grade edit replaces them.
+- **Vocabulary:** `color.inspect`, `color.adjust` (any controls of one node, partial wheels
+  allowed, unknown fields refused), `color.addSerialNode`, `color.addNodeBefore`,
+  `color.appendNode`, `color.deleteNode`, `color.toggleNodes`, `color.toggleAllNodes`,
+  `color.resetNode`, `color.resetGradesKeepNodes`, `color.resetAll`. `color.previousNode` and
+  `color.nextNode` are front end. Nodes are numbered from 1 as in the Node Editor; `clip`
+  defaults to the clip under the playhead on the highest video track. 114 commands now.
+
+**Why, with numbers.** Nothing in our stack grades on the GPU today. FilmCraft's Lumetri runs its
+curves, wheels, HSL keys and LUTs on the CPU, and our playback renders on the CPU. A FilmCraft render
+hook or GPU effect would be an upstream feature; the mirror's patch stack may hold only fixes on
+their way upstream (UPSTREAM.md). Measured on the Sony 4K clip, per frame on top of the ungraded
+render (render_frame over MCP, 2026-10-14):
+
+| Grade | 960 px | 1920 px | 3840 px |
+|---|---|---|---|
+| one node, curves | +8 ms | +58 ms | +236 ms |
+| one node, curves and HSL key | +21 ms | +105 ms | +432 ms |
+| three nodes | +41 ms | +199 ms | +759 ms |
+
+The choices put to Truman:
+- **Compile to Lumetri** (chosen). Fast to build and right everywhere at once. Grading on a still
+  and scrubbing are fine; real-time playback of a graded 4K timeline drops frames past one or two
+  nodes until a GPU step.
+- **GPU first.** Weeks of work before anything visible, depending on upstream accepting it.
+- **Bake grades to 3D LUTs in the project.** Exact for any colour math, including parallel and
+  layer nodes, but about 1 MB of project file per graded node at 33³, with LUT interpolation error
+  and harder HDR.
+
+**Limits:**
+- Serial nodes only. Parallel and layer mixers need a 3D LUT or several Lumetri passes per branch;
+  qualifiers can use Lumetri's HSL Secondary (whose correction is temperature, tint, saturation and
+  hue only); windows can use Lumetri's effect masks. None of these is built yet.
+- The master ring moves Y only. In Resolve it moves Y, R, G and B together; here R, G and B show
+  the balance alone.
+- Hue turns HSL hue, as Lumetri does, not Resolve's rotation, which keeps luma.
+- SDR only. Lumetri holds the signal to 0…1 after each effect, so super-whites do not pass between
+  nodes as they do in Resolve's 32-bit float pipeline. HDR timelines are untested.
+- Every undo step holds a copy of the project, so each graded clip's JSON and Lumetri effects
+  are copied with every step. **Not measured** on a large project.
+- Speed as above: GPU grading is the next step for playback (ROADMAP M4).
+
+**Checked:**
+- `crates/grade` tests (17): each control against the manual's description (Lift moves black and
+  keeps white; Gain scales from black; Gamma keeps black and white; Contrast keeps the pivot and
+  cannot clip; Saturation keeps luma, 0 is grey; Color Boost favours dull colours; Hue 100 turns red
+  to cyan), curves, patching, JSON round trips, node add, delete and reset.
+- Adapter tests (8):
+  - FilmCraft's own curve code (`curve_lut`) reproduces our tone functions within half a code value;
+  - a full-size render of the demo frame matches our math within one code value for a grade of
+    Lift, Gamma, Gain, Contrast and Saturation together;
+  - gain 0 renders black and saturation 0 renders grey;
+  - an edit is one undo step, and a merged drag is one step;
+  - nodes are added, toggled and reset by number;
+  - both halves of a split clip keep the grade;
+  - mistakes are refused.
+- Wrong turn: the render test first failed by 10 code values at 96 px. A full-size render matched
+  every control within 0.8 code values. Small renders grade at an in-between size and then scale
+  down, and averaging after a curve is not the curve of the average. The test renders at full size.
+- Not yet checked by hand: there is no Color page to look at. It is the next PR.
+
+### B-029 — `color.inspect` showed 0.30000001192092896 for a control set to 0.3
+**Area:** color · **Status:** fixed · **Caught by:** test (`a_split_copy_keeps_the_grade`)
+
+**Symptom (in D-028 before merging):** controls are `f32`. `serde_json::to_value` widens an `f32`
+to `f64` digit for digit, so `color.inspect` reported Gamma 0.3 as 0.30000001192092896. Agents
+would have read, and repeated, numbers nobody typed.
+
+**Fix:** `color.inspect` turns each node into JSON through text (`to_string`, which writes an
+`f32` at its own shortest precision, then `from_str`), so 0.3 reads 0.3. Stored grades were
+already written as text.

@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 resolution-engine-api = { workspace = true }
+resolution-grade = { workspace = true }
 filmcraft-engine = { workspace = true }
 filmcraft-media = { workspace = true }
 filmcraft-frame = { workspace = true }
