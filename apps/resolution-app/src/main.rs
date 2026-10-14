@@ -72,6 +72,8 @@ fn main() -> eframe::Result {
             Err(why) => format!("software decoding: {why}"),
         }
     };
+    // agents reach this editor through `resolution mcp --editor` (LOG D-026)
+    options.agent_link = Some(resolution_agent_link::default_path());
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Resolution")

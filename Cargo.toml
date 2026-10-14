@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/agent-link",
     "crates/engine-api",
     "crates/filmcraft-adapter",
     "crates/keymap",
@@ -18,6 +19,7 @@ publish = false
 
 [workspace.dependencies]
 # internal
+resolution-agent-link = { path = "crates/agent-link" }
 resolution-engine-api = { path = "crates/engine-api" }
 resolution-filmcraft-adapter = { path = "crates/filmcraft-adapter" }
 resolution-keymap = { path = "crates/keymap" }

@@ -63,6 +63,9 @@ pub struct Options {
     pub source: Option<String>,
     /// The page to start on (`--page deliver`).
     pub page: Option<String>,
+    /// Where to write the agent link's file, so `resolution mcp --editor` can reach this editor
+    /// (LOG D-026); `None` opens no link (tests).
+    pub agent_link: Option<PathBuf>,
 }
 
 /// Commands that run at the frame on screen without stopping playback.
@@ -149,6 +152,8 @@ pub struct ResolutionApp {
     sound: Sound,
     waveforms: Waveforms,
     deliver: Deliver,
+    /// Agents reach this editor through it while it is open; dropping it closes the link.
+    _agent_link: Option<resolution_agent_link::Listener>,
     clock: Instant,
     play_test: Option<PlayTest>,
     /// Where the timeline is zoomed and scrolled.
@@ -187,6 +192,15 @@ impl ResolutionApp {
         if !options.import.is_empty() {
             worker.run("media.import", json!({ "paths": options.import }));
         }
+        let agent_link = options.agent_link.as_ref().and_then(|path| {
+            match resolution_agent_link::listen(path, worker.agent_handle()) {
+                Ok(link) => Some(link),
+                Err(e) => {
+                    eprintln!("agent link: {e}");
+                    None
+                }
+            }
+        });
         Self {
             worker,
             keymap: Keymap::resolve(),
@@ -210,6 +224,7 @@ impl ResolutionApp {
                 let ctx = cc.egui_ctx.clone();
                 Waveforms::new(move || ctx.request_repaint())
             },
+            _agent_link: agent_link,
             deliver: Deliver::new(),
             clock: Instant::now(),
             play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
@@ -2068,6 +2083,32 @@ mod tests {
         assert!(size > 1000, "{} is {size} bytes", file.display());
         assert!(!h.state().deliver.running);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_agent_edits_the_open_timeline_through_the_link() {
+        let path = std::env::temp_dir().join(format!("resolution-app-link-{}.json", std::process::id()));
+        let mut h = Harness::builder().with_size(egui::vec2(1600.0, 920.0)).build_eframe(|cc| {
+            ResolutionApp::new(
+                cc,
+                Options { demo: true, mute: true, agent_link: Some(path.clone()), ..Default::default() },
+            )
+        });
+        pump(&mut h, "the demo timeline", |a| a.timeline.is_some());
+        let clips = v1_clips(h.state());
+        use resolution_engine_api::Engine as _;
+        let mut agent = resolution_agent_link::RemoteEngine::connect(&path).expect("the editor's link");
+        agent.execute("playhead.set", json!({ "seconds": 2.0 })).expect("playhead");
+        let out = agent.execute("timeline.split", json!({})).expect("split");
+        assert!(out.undo_label.is_some());
+        // the editor shows the agent's edit, and says it was the agent's
+        pump(&mut h, "the agent's split on screen", |a| v1_clips(a) == clips + 1);
+        pump(&mut h, "the agent's edit in the status bar", |a| a.status.0.starts_with("Agent:"));
+        // one undo history: the user's Ctrl+Z undoes the agent's edit
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        pump(&mut h, "Ctrl+Z to undo the agent's split", |a| v1_clips(a) == clips);
+        drop(h);
+        assert!(!path.exists(), "closing the editor removes its link file");
     }
 
     #[test]

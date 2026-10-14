@@ -3,6 +3,10 @@
     "resolution": {
       "command": "cargo",
       "args": ["run", "-q", "-p", "resolution-cli", "--", "mcp", "--demo"]
+    },
+    "resolution-editor": {
+      "command": "cargo",
+      "args": ["run", "-q", "-p", "resolution-cli", "--", "mcp", "--editor"]
     }
   }
 }

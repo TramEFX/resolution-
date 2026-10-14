@@ -14,6 +14,7 @@ name = "resolution-app"
 path = "src/main.rs"
 
 [dependencies]
+resolution-agent-link = { workspace = true }
 resolution-engine-api = { workspace = true }
 resolution-filmcraft-adapter = { workspace = true }
 resolution-keymap = { workspace = true }
