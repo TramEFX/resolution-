@@ -379,8 +379,8 @@ impl Curve {
         self.0.iter().all(|p| (p[0] - p[1]).abs() < 1e-6)
     }
 
-    /// The points with black and white added where missing, sorted.
-    fn knots(&self) -> Vec<[f32; 2]> {
+    /// The points with black and white added where missing, sorted: what a curve editor shows.
+    pub fn knots(&self) -> Vec<[f32; 2]> {
         let mut k = self.0.clone();
         k.sort_by(|a, b| a[0].total_cmp(&b[0]));
         if k.first().is_none_or(|p| p[0] > 0.0) {

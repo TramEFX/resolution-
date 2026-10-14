@@ -90,7 +90,10 @@ read, never copied into the repo.
 
 - [x] Grades in Resolution's own types, compiled to Lumetri on each clip: serial nodes, the
       Primaries controls and Custom Curves, and the `color.*` vocabulary (D-028)
-- [ ] The Color page: viewer, node editor, clip thumbnails, Primaries wheels, Curves
+- [x] The Color page: viewer, Node Editor, clip strip with thumbnails, Primaries wheels, Custom
+      Curves, Resolve's node keys (D-029)
+- [ ] The rest of the Color page's first look: Gallery, Mini-Timeline, Bars and Log modes, Shadows,
+      Highlights, Midtone Detail, Lum Mix
 - [ ] Scopes from `filmcraft-scopes`
 - [ ] Parallel and layer nodes, qualifiers, windows
 - [ ] GPU colour pipeline: our playback on FilmCraft's GPU frame plans, and Lumetri's curves on

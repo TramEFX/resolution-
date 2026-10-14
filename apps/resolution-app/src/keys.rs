@@ -37,6 +37,8 @@ fn name(key: Key) -> Option<&'static str> {
         Home => "Home",
         End => "End",
         Slash => "/",
+        Semicolon => ";",
+        Quote => "'",
         Backslash => "\\",
         OpenBracket => "[",
         CloseBracket => "]",

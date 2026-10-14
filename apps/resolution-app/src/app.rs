@@ -25,9 +25,10 @@ use resolution_playback::AudioOut;
 use serde_json::json;
 
 use crate::chrome::{self, State};
+use crate::color_page::{self, ColorPage, Thumbs};
 use crate::deliver::{self, Deliver};
 use crate::icons::Icon;
-use crate::model::{self, Kind, MediaItem, SourceClip, Timeline};
+use crate::model::{self, GradeView, Kind, MediaItem, SourceClip, Timeline};
 use crate::monitor::{Monitor, Sound};
 use crate::theme::{self, Look, Theme};
 use crate::timeline_ui::{self, Action};
@@ -152,6 +153,9 @@ pub struct ResolutionApp {
     sound: Sound,
     waveforms: Waveforms,
     deliver: Deliver,
+    /// The Color page: the clip being graded, its grade, the current node (LOG D-029).
+    color: ColorPage,
+    thumbs: Thumbs,
     /// An agent's draft, from the latest batch (LOG D-027).
     draft: Option<crate::worker::Draft>,
     /// Agents reach this editor through it while it is open; dropping it closes the link.
@@ -229,6 +233,11 @@ impl ResolutionApp {
             _agent_link: agent_link,
             draft: None,
             deliver: Deliver::new(),
+            color: ColorPage::default(),
+            thumbs: {
+                let ctx = cc.egui_ctx.clone();
+                Thumbs::new(move || ctx.request_repaint())
+            },
             clock: Instant::now(),
             play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
             nav: timeline_ui::Nav::default(),
@@ -302,6 +311,13 @@ impl ResolutionApp {
     fn apply(&mut self, reply: Reply) {
         match reply {
             Reply::Ran { id, result } => {
+                // every color.* command answers with the clip's grade
+                if id.starts_with("color.")
+                    && let Ok(out) = &result
+                    && let Some(v) = GradeView::from_json(&out.result)
+                {
+                    self.color.take(v, out.revision);
+                }
                 // renders report on the Deliver page, not as "done"
                 match id.as_str() {
                     "deliver.render" => {
@@ -336,6 +352,7 @@ impl ResolutionApp {
                             self.say(label, false);
                         } else if !id.ends_with(".inspect")
                             && !id.starts_with("playhead.")
+                            && !id.starts_with("color.")
                             && !matches!(id.as_str(), "timeline.select" | "source.seek" | "source.open")
                         {
                             self.say(format!("{id}: done"), false);
@@ -391,7 +408,10 @@ impl ResolutionApp {
     fn command(&mut self, id: &str) {
         // panels, zoom and modes leave playback alone; edits stop it, except marking the viewer
         // that plays, which marks the frame on screen
-        let front_end = id.starts_with("workspace.") || id.starts_with("view.") || id.starts_with("mode.");
+        let front_end = id.starts_with("workspace.")
+            || id.starts_with("view.")
+            || id.starts_with("mode.")
+            || matches!(id, "color.previousNode" | "color.nextNode");
         let active = self.active;
         if !id.starts_with("playback.") && !front_end {
             for v in [Viewer::Source, Viewer::Timeline] {
@@ -493,6 +513,8 @@ impl ResolutionApp {
                 self.say(format!("{id} is not built yet"), false);
             }
             "project.save" | "project.saveAs" => self.save_dialog(),
+            // the Color page's node keys act there only
+            _ if id.starts_with("color.") => self.color_command(id),
             _ => self.worker.run(id, json!({})),
         }
     }
@@ -1254,10 +1276,11 @@ impl ResolutionApp {
         }
     }
 
-    fn timeline_panel(&mut self, ui: &mut Ui) {
+    /// An agent's draft (LOG D-027): what it changed, and the user's call. Above the timeline on
+    /// the Edit page, across the top of the Color page.
+    fn draft_banner(&mut self, ui: &mut Ui) {
         let look = self.look;
         let t = look.theme;
-        // an agent's draft (LOG D-027): what it changed, and the user's call
         if let Some(d) = self.draft.clone() {
             let mut decided = None;
             egui::Panel::top("agent-draft")
@@ -1295,6 +1318,12 @@ impl ResolutionApp {
                 self.worker.decide(accept);
             }
         }
+    }
+
+    fn timeline_panel(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let t = look.theme;
+        self.draft_banner(ui);
         egui::Panel::top("timeline-toolbar")
             .exact_size(look.skin.bar)
             .frame(Frame::new().fill(t.panel).inner_margin(Margin::symmetric(8, 0)))
@@ -1447,6 +1476,169 @@ impl ResolutionApp {
         }
     }
 
+    /// The clip the Color page grades: the one under the playhead on the highest video track
+    /// that shows one.
+    fn clip_at_playhead(&self) -> Option<u64> {
+        let tl = self.timeline.as_ref()?;
+        let f = self.playhead_frame();
+        tl.video.iter().rev().filter(|tr| tr.enabled).find_map(|tr| {
+            tr.clips
+                .iter()
+                .find(|c| c.enabled && tl.rate.frame_at(c.start) <= f && f < tl.rate.frame_at(c.end))
+                .map(|c| c.id)
+        })
+    }
+
+    /// Follow the playhead onto a clip, and ask for its grade when the clip or the project changes
+    /// (not during a drag: the controls show what is being sent).
+    fn color_follow(&mut self) {
+        let clip = self.clip_at_playhead();
+        if clip != self.color.clip {
+            self.color.clip = clip;
+            self.color.view = None;
+            self.color.node = 0;
+            self.color.asked = None;
+        }
+        if let Some(c) = clip
+            && !self.color.dragging
+            && self.color.asked != Some((c, self.revision))
+        {
+            self.color.asked = Some((c, self.revision));
+            self.worker.run("color.inspect", json!({ "clip": c }));
+        }
+    }
+
+    /// The timeline's video clips in order, for the Color page's strip.
+    fn strip_clips(&self) -> Vec<color_page::StripClip> {
+        let Some(tl) = &self.timeline else { return Vec::new() };
+        let mut clips: Vec<color_page::StripClip> = tl
+            .video
+            .iter()
+            .flat_map(|tr| {
+                tr.clips.iter().map(|c| color_page::StripClip {
+                    id: c.id,
+                    name: c.name.clone(),
+                    track: tr.label.clone(),
+                    start_frame: tl.rate.frame_at(c.start),
+                    mid_frame: tl.rate.frame_at((c.start + c.end) / 2.0),
+                    graded: c.graded,
+                })
+            })
+            .collect();
+        clips.sort_by(|a, b| a.start_frame.cmp(&b.start_frame).then_with(|| a.track.cmp(&b.track)));
+        clips
+    }
+
+    /// A node command from a key, a button or a node's menu, on the clip being graded. Previous
+    /// and Next Node only move the selection, looping round as in Resolve.
+    fn color_command(&mut self, id: &str) {
+        if self.page != Page::Color {
+            return;
+        }
+        let (Some(clip), Some(count)) = (self.color.clip, self.color.view.as_ref().map(|v| v.grade.nodes.len())) else {
+            return;
+        };
+        let n = self.color.node.min(count.saturating_sub(1));
+        let node = n + 1;
+        let params = match id {
+            "color.previousNode" => {
+                self.color.node = (n + count - 1) % count;
+                return;
+            }
+            "color.nextNode" => {
+                self.color.node = (n + 1) % count;
+                return;
+            }
+            "color.addSerialNode" => {
+                self.color.node = n + 1;
+                json!({ "clip": clip, "node": node })
+            }
+            "color.addNodeBefore" | "color.resetNode" => json!({ "clip": clip, "node": node }),
+            "color.appendNode" => {
+                self.color.node = count;
+                json!({ "clip": clip })
+            }
+            "color.deleteNode" => {
+                self.color.node = n.saturating_sub(1);
+                json!({ "clip": clip, "node": node })
+            }
+            "color.toggleNodes" => json!({ "clip": clip, "nodes": [node] }),
+            "color.resetAll" => {
+                self.color.node = 0;
+                json!({ "clip": clip })
+            }
+            _ => json!({ "clip": clip }),
+        };
+        self.edit(id, params);
+    }
+
+    /// The Color page (LOG D-029): the timeline viewer with the Node Editor to its right, the
+    /// clip strip under them, and the Primaries and Curves palettes at the bottom.
+    fn color_page(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let t = look.theme;
+        let fill = |c: Color32| Frame::new().fill(c);
+        self.active = Viewer::Timeline;
+        self.color_follow();
+        self.draft_banner(ui);
+        let mut asks = Vec::new();
+        egui::Panel::bottom("color-palettes")
+            .resizable(true)
+            .default_size(340.0)
+            .min_size(260.0)
+            .frame(fill(t.panel))
+            .show(ui, |ui| {
+                let rect = ui.max_rect();
+                let gap = look.skin.gap;
+                let left_w = (rect.width() * 0.5).clamp(520.0, 820.0);
+                let mid_w = (rect.width() - left_w).min(460.0);
+                let left = Rect::from_min_size(rect.min, vec2(left_w, rect.height()));
+                let mid = Rect::from_min_size(pos2(left.right() + gap, rect.top()), vec2(mid_w - gap, rect.height()));
+                let right = Rect::from_min_max(pos2(mid.right() + gap, rect.top()), rect.max);
+                ui.painter().rect_filled(rect, CornerRadius::ZERO, t.sep);
+                for r in [left, mid, right] {
+                    ui.painter().rect_filled(r, CornerRadius::ZERO, t.panel);
+                }
+                asks.extend(color_page::within(ui, left, |ui| color_page::primaries(ui, &look, &mut self.color)));
+                asks.extend(color_page::within(ui, mid, |ui| color_page::curves(ui, &look, &mut self.color)));
+                color_page::within(ui, right, |ui| {
+                    chrome::panel_header(ui, &look, "Scopes", None);
+                    chrome::not_built(ui, &look, "The Scopes panel");
+                });
+            });
+        let clips = self.strip_clips();
+        egui::Panel::bottom("color-clips").exact_size(126.0).frame(fill(t.panel)).show(ui, |ui| {
+            let playback = self.timeline_viewer.program.clone();
+            asks.extend(color_page::strip(ui, &look, &clips, &self.color, &mut self.thumbs, playback.as_ref()));
+        });
+        egui::Panel::right("color-nodes")
+            .resizable(true)
+            .default_size(520.0)
+            .min_size(320.0)
+            .frame(fill(t.panel))
+            .show(ui, |ui| asks.extend(color_page::node_editor(ui, &look, &mut self.color)));
+        egui::CentralPanel::default().frame(fill(t.panel)).show(ui, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            self.viewer(ui, rect, Viewer::Timeline);
+            ui.allocate_rect(rect, Sense::hover());
+        });
+        for ask in asks {
+            match ask {
+                color_page::Ask::Adjust(controls, merge) => {
+                    if let Some(clip) = self.color.clip {
+                        let mut params = json!({ "clip": clip, "node": self.color.node + 1, "controls": controls });
+                        if let Some(m) = merge {
+                            params["merge"] = json!(m);
+                        }
+                        self.edit("color.adjust", params);
+                    }
+                }
+                color_page::Ask::Command(id) => self.color_command(id),
+                color_page::Ask::Seek(frame) => self.seek(frame),
+            }
+        }
+    }
+
     /// `--play`: once a frame is on screen, play for the time asked, report, stop, and quit (or
     /// hand over to `--screenshot`).
     fn play_test(&mut self, ctx: &egui::Context) {
@@ -1579,6 +1771,11 @@ impl eframe::App for ResolutionApp {
             });
         if self.page == Page::Deliver {
             self.deliver_page(ui);
+            self.self_test(&ctx);
+            return;
+        }
+        if self.page == Page::Color {
+            self.color_page(ui);
             self.self_test(&ctx);
             return;
         }
@@ -2245,6 +2442,164 @@ mod tests {
         // redo brings an edit back to the list
         assert_eq!(agent.redo().as_deref(), Some("Add Edit"));
         pump(&mut h, "one edit after redo", |a| edits(a) == Some(1) && v1_clips(a) == clips + 1);
+    }
+
+    /// The demo on the Color page, with the grade of the clip under the playhead.
+    fn on_color_page() -> Harness<'static, ResolutionApp> {
+        let mut h = demo();
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Num6);
+        pump(&mut h, "Shift+6 and the clip's grade", |a| a.page == Page::Color && a.color.view.is_some());
+        h
+    }
+
+    /// The clip the Color page is grading, as the timeline shows it.
+    fn graded_clip(a: &ResolutionApp) -> Option<model::Clip> {
+        let id = a.color.clip?;
+        a.timeline.as_ref()?.clips().map(|(_, c)| c).find(|c| c.id == id).cloned()
+    }
+
+    /// A click at a point: press and release within one step (the harness moves its clock a
+    /// quarter second a step, and egui takes a longer press for the start of a drag).
+    fn click_at(h: &mut Harness<'_, ResolutionApp>, at: Pos2) {
+        h.event(egui::Event::PointerMoved(at));
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        h.step();
+        h.step();
+    }
+
+    #[test]
+    fn a_drag_on_a_master_ring_grades_the_clip_as_one_undo_step() {
+        let mut h = on_color_page();
+        assert_eq!(h.state().color.view.as_ref().map(|v| v.grade.nodes.len()), Some(1), "a clip starts with one node");
+        let ring = h.get_by_label("Gain master").rect();
+        drag(&mut h, ring.center(), ring.center() - vec2(60.0, 0.0));
+        pump(&mut h, "the clip graded, darker", |a| {
+            !a.color.dragging
+                && graded_clip(a).is_some_and(|c| c.graded)
+                && a.color.current().is_some_and(|n| n.gain.y < 0.95)
+        });
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        pump(&mut h, "Ctrl+Z takes the whole drag back", |a| {
+            graded_clip(a).is_some_and(|c| !c.graded) && a.color.current().is_some_and(|n| n.gain.y == 1.0)
+        });
+    }
+
+    #[test]
+    fn the_lift_wheel_moves_the_balance_without_changing_brightness() {
+        let mut h = on_color_page();
+        let wheel = h.get_by_label("Lift wheel").rect();
+        drag(&mut h, wheel.center(), wheel.center() + vec2(-24.0, -36.0));
+        pump(&mut h, "the balance moved", |a| !a.color.dragging && graded_clip(a).is_some_and(|c| c.graded));
+        let lift = h.state().color.current().map(|n| n.lift).expect("a node");
+        assert!(lift.r.abs() > 0.005 || lift.b.abs() > 0.005, "{lift:?}");
+        let luma = 0.2126 * lift.r + 0.7152 * lift.g + 0.0722 * lift.b;
+        assert!(luma.abs() < 1e-3, "the balance keeps luma: {lift:?}");
+        assert_eq!(lift.y, 0.0, "the master is untouched");
+    }
+
+    #[test]
+    fn node_keys_add_select_and_disable_nodes() {
+        let mut h = on_color_page();
+        h.key_press_modifiers(Modifiers::ALT, Key::S);
+        pump(&mut h, "Alt+S adds a serial node and selects it", |a| {
+            a.color.view.as_ref().is_some_and(|v| v.grade.nodes.len() == 2) && a.color.node == 1
+        });
+        h.key_press_modifiers(Modifiers::COMMAND, Key::D);
+        pump(&mut h, "Ctrl+D turns node 02 off", |a| {
+            a.color.view.as_ref().is_some_and(|v| !v.grade.nodes[1].enabled && v.grade.nodes[0].enabled)
+        });
+        h.key_press_modifiers(Modifiers::ALT | Modifiers::SHIFT, Key::Semicolon);
+        h.step();
+        assert_eq!(h.state().color.node, 0, "Previous Node");
+        h.key_press_modifiers(Modifiers::ALT | Modifiers::SHIFT, Key::Semicolon);
+        h.step();
+        assert_eq!(h.state().color.node, 1, "and round to the last");
+        click(&mut h, "Node 01");
+        assert_eq!(h.state().color.node, 0);
+    }
+
+    #[test]
+    fn node_keys_do_nothing_on_the_edit_page() {
+        let mut h = demo();
+        // the demo comes with one clip graded in Lumetri already
+        let graded = |a: &ResolutionApp| -> Vec<u64> {
+            a.timeline
+                .as_ref()
+                .map(|t| t.clips().filter(|(_, c)| c.graded).map(|(_, c)| c.id).collect())
+                .unwrap_or_default()
+        };
+        let before = graded(h.state());
+        let revision = h.state().revision;
+        h.key_press_modifiers(Modifiers::ALT, Key::S);
+        for _ in 0..5 {
+            h.step();
+        }
+        assert!(h.state().color.view.is_none());
+        assert_eq!(graded(h.state()), before);
+        assert_eq!(h.state().revision, revision, "no edit was made");
+    }
+
+    #[test]
+    fn a_custom_curve_takes_a_point_where_clicked_and_bends_where_dragged() {
+        let mut h = on_color_page();
+        let plot = h.get_by_label("Custom Curves").rect();
+        click_at(&mut h, plot.center());
+        pump(&mut h, "a point in the middle of the Y curve", |a| {
+            !a.color.dragging && a.color.current().is_some_and(|n| n.curves.y.0.len() == 3)
+        });
+        drag(&mut h, plot.center(), plot.center() - vec2(0.0, 30.0));
+        pump(&mut h, "the point raised", |a| {
+            !a.color.dragging
+                && graded_clip(a).is_some_and(|c| c.graded)
+                && a.color.current().is_some_and(|n| n.curves.y.eval(0.5) > 0.55)
+        });
+        // a drag that starts away from every point makes one there and moves it
+        let quarter = plot.left_bottom() + vec2(plot.width() * 0.25, -plot.height() * 0.25);
+        drag(&mut h, quarter, quarter + vec2(0.0, 20.0));
+        pump(&mut h, "a new point at a quarter, lowered", |a| {
+            !a.color.dragging
+                && a.color.current().is_some_and(|n| n.curves.y.0.len() == 4 && n.curves.y.eval(0.25) < 0.22)
+        });
+    }
+
+    #[test]
+    fn clicking_a_clip_in_the_strip_grades_that_clip() {
+        let mut h = on_color_page();
+        let clips = h.state().strip_clips();
+        assert!(clips.len() > 1);
+        let second = &clips[1];
+        let tile = format!("Clip 02 {}", second.name);
+        assert!(h.get_by_label(&tile).rect().height() > 100.0, "a tile has room for its picture and name");
+        click(&mut h, &tile);
+        let id = second.id;
+        pump(&mut h, "the second clip under the playhead and its grade", |a| {
+            a.color.clip == Some(id) && a.color.view.as_ref().is_some_and(|v| v.clip == id)
+        });
+    }
+
+    #[test]
+    fn an_agents_grade_arrives_as_a_draft_on_the_color_page() {
+        use resolution_engine_api::Engine as _;
+        let (mut h, mut agent, _path) = with_agent("color");
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Num6);
+        pump(&mut h, "the Color page", |a| a.page == Page::Color && a.color.view.is_some());
+        agent.execute("color.adjust", json!({ "node": 1, "controls": { "saturation": 70.0 } })).expect("grade");
+        pump(&mut h, "the draft, graded, on the Color page", |a| {
+            a.draft.is_some() && a.color.current().is_some_and(|n| n.saturation == 70.0)
+        });
+        // the user decides here, without going back to the Edit page
+        click(&mut h, "Reject Draft");
+        pump(&mut h, "the original back, ungraded", |a| {
+            a.draft.is_none() && a.color.current().is_some_and(|n| n.saturation == 50.0)
+        });
     }
 
     #[test]
