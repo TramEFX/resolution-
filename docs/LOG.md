@@ -97,6 +97,7 @@ doc is updated *and* the entry says which section moved.
 | B-035 | 2026-10-14 | color | The GPU renderer drew 8-bit camera video about one code value too red and too blue | fixed |
 | D-036 | 2026-10-14 | color | G1 built: the viewers' frames on Resolution's GPU renderer, grades by their own math | active |
 | D-037 | 2026-10-14 | color | G2, step 1: every frame FilmCraft plans as layers is drawn on the GPU; graded clips known by their pictures | active |
+| D-038 | 2026-10-14 | color | G2, step 2: blend modes, Push and HDR media on the GPU, ported from FilmCraft's compositor | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2196,3 +2197,53 @@ same media on another track with its own grade (0.18).
   falls back, since that clip's picture never reaches a layer).
 - By hand, 2026-10-14: the graded demo in the editor, as measured above; a still mid-dissolve on
   both renderers: mean 0.17, worst 2 code values, no channel leaning.
+
+### D-038 — G2, step 2: blend modes, Push and HDR media on the GPU, ported from FilmCraft's compositor
+**Area:** color · **Status:** active · **Doc:** ARCHITECTURE "The GPU renderer"; `crates/renderer`
+(`render.wgsl`, `push.wgsl`); `crates/filmcraft-adapter/src/gpu.rs`
+
+**Decision:** the renderer takes over the rest of what FilmCraft's GPU compositor draws, with its
+shader code ported (MIT or Apache-2.0, as in D-013 and D-036):
+
+- **The 27 blend modes**, in FilmCraft's order (our own `Blend`; the adapter maps FilmCraft's by
+  index, and a test checks every name matches).
+  - Normal and Dissolve use fixed-function "over"; Dissolve keeps a pixel by FilmCraft's 64-bit
+    pixel hash, reproduced on the GPU.
+  - The other 25 modes copy the canvas under the layer's quad into a backdrop texture first. The
+    shader composites with the W3C formulas on sRGB-encoded straight colour, as FilmCraft's CPU
+    does.
+  - A graded layer blends after its grade.
+- **The Push transition.** A frame becomes a list of steps: runs of layers, and Push steps whose
+  two sides are drawn apart into their own textures. The sides are pushed together as FilmCraft's
+  shader does (eased travel, the CPU camera's card geometry, its shutter's motion blur) and laid
+  over the frame so far.
+- **Colour management of HDR and wide-gamut Y'CbCr** on a Rec. 709 timeline, stage by stage as
+  FilmCraft's `InputTransform` runs it: the curve, HLG's OOTF, the gamut matrix, BT.2390 tone
+  mapping, and desaturation into the working gamut. Also PQ and HLG transfers without it.
+- **A layer with standard effects and colour management** has both run on the CPU for that layer
+  (FilmCraft's `effect_image_with`), as before for effects alone.
+
+Still drawn whole on the CPU: what FilmCraft itself draws there (adjustment layers, transitions
+other than dissolves, dips and Push, HDR timelines), log media (its colour management has no GPU
+form), and a graded clip that has colour management to run before its grade.
+
+**Measured** (this PC):
+- Against FilmCraft's CPU executor (`execute_cpu`) on the same plan, drawn one to one:
+  - each of the 27 blend modes: 99 % of values within 1 code value, mean 0.11 to 0.17. Hard Mix,
+    Darker Color and Lighter Color pick one of two colours per pixel, and a few pixels on the
+    threshold land the other way after half-float rounding (worst 66 to 88), as FilmCraft's own
+    tests note for Hard Mix;
+  - HDR: HLG, PQ, PQ mastered at 4000 cd/m², and BT.2020 SDR, each within 1 code value.
+- The demo's Push between two graded clips, at three moments: mean 0.12 to 0.17, 99 % within 1
+  code value. In the editor a still mid-Push: mean 0.11, worst 2.
+- The graded demo (D-037's project) at a 1440-pixel viewer: all 641 frames on the GPU (13 were on
+  the CPU before); the exact frame on 100 % of refreshes (97.1 %); 38.7 ms a frame (42.4); the
+  longest a frame stayed on screen, 55 ms (796 ms, at the Push). In the editor: 639 of 639 frames
+  on the GPU, 24.0 fps.
+
+**Checked:**
+- Renderer tests: the existing ten, on the reworked renderer (frames as steps; one pass per layer).
+- Adapter tests: the blend modes and HDR media against FilmCraft's CPU, as above; the Push between
+  graded clips against the CPU frame. 187 tests in the workspace.
+- By hand, 2026-10-14: the graded demo in the editor, as measured above; the mid-Push still looks
+  right (both sides, with motion blur).

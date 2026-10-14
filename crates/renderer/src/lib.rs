@@ -2,10 +2,17 @@
 //! Resolution grade applied by the grade's own math, and reads the frame back as 8-bit sRGB.
 //!
 //! A layer is a decoded picture (8-bit sRGB RGBA, linear float RGBA, or planar Y'CbCr of 8 to
-//! 16 bits), how it is placed (an affine map from its pixels to the frame's) and its opacity.
-//! Layers are drawn bottom to top into a premultiplied linear accumulator ("over"), which is
-//! resolved over black. The sampling follows FilmCraft's compositor (`filmcraft-gpu`; MIT or
-//! Apache-2.0): bilinear loads, Y'CbCr decoded per pixel, supersampled when shrinking.
+//! 16 bits), how it is placed (an affine map from its pixels to the frame's), its opacity and its
+//! blend mode. Layers are drawn bottom to top into a premultiplied linear accumulator, which is
+//! resolved over black. The compositing follows FilmCraft's compositor (`filmcraft-gpu`; MIT or
+//! Apache-2.0), whose shader code was ported (LOG D-036, D-038):
+//!
+//! - bilinear loads, Y'CbCr decoded per pixel, supersampled when shrinking;
+//! - colour management of HDR and wide-gamut Y'CbCr ([`Managed`]);
+//! - the 27 blend modes of [`Blend`]: Normal and Dissolve by fixed-function "over"; the others read
+//!   the accumulator under the layer from a copy and composite with the W3C formulas on
+//!   sRGB-encoded colour;
+//! - the Push transition between two layer stacks drawn apart ([`Step::Push`]).
 //!
 //! **The grade stage** runs a layer's [`Grade`] per pixel, as [`Grade::apply`] does: each node's
 //! tone functions (as [`TONE_N`]-point tables), its saturation step, its qualifier's key taken on
@@ -24,8 +31,11 @@ pub const TONE_N: usize = 4096;
 const NODE_FLOATS: usize = 104;
 /// Windows per node the shader takes.
 pub const MAX_WINDOWS: usize = 8;
+/// Numbers in the shader's per-layer uniform (`render.wgsl`'s `U`).
+const UNIFORM_FLOATS: usize = 52;
 
 /// How a layer's pixels are stored.
+#[derive(Clone, Copy)]
 pub enum Pixels<'a> {
     /// Straight-alpha, sRGB-encoded RGBA, 8 bits per channel.
     Rgba8(&'a [u8]),
@@ -37,12 +47,16 @@ pub enum Pixels<'a> {
     Yuv16 { planes: [&'a [u16]; 3], chroma: (u32, u32), bits: u32, alpha: Option<&'a [u16]> },
 }
 
-/// The transfer function of a picture's code values.
+/// The transfer function of a Y'CbCr picture's code values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transfer {
     /// The sRGB curve (also used for Rec. 709 video, as FilmCraft decodes it).
     Srgb,
     Linear,
+    /// SMPTE ST 2084, to linear light where 1 is 100 cd/m².
+    Pq,
+    /// ARIB STD-B67 (HLG), to scene light.
+    Hlg,
 }
 
 /// How a Y'CbCr picture's codes become RGB.
@@ -61,7 +75,111 @@ impl Coding {
     pub const REC709: Coding = Coding { kr: 0.2126, kb: 0.0722, full_range: false, transfer: Transfer::Srgb };
 }
 
+/// How a layer combines with what is under it: the blend modes of Premiere (and FilmCraft), in
+/// FilmCraft's order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blend {
+    Normal,
+    Dissolve,
+    Darken,
+    Multiply,
+    ColorBurn,
+    LinearBurn,
+    DarkerColor,
+    Lighten,
+    Screen,
+    ColorDodge,
+    LinearDodge,
+    LighterColor,
+    Overlay,
+    SoftLight,
+    HardLight,
+    VividLight,
+    LinearLight,
+    PinLight,
+    HardMix,
+    Difference,
+    Exclusion,
+    Subtract,
+    Divide,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl Blend {
+    pub const ALL: [Blend; 27] = [
+        Blend::Normal,
+        Blend::Dissolve,
+        Blend::Darken,
+        Blend::Multiply,
+        Blend::ColorBurn,
+        Blend::LinearBurn,
+        Blend::DarkerColor,
+        Blend::Lighten,
+        Blend::Screen,
+        Blend::ColorDodge,
+        Blend::LinearDodge,
+        Blend::LighterColor,
+        Blend::Overlay,
+        Blend::SoftLight,
+        Blend::HardLight,
+        Blend::VividLight,
+        Blend::LinearLight,
+        Blend::PinLight,
+        Blend::HardMix,
+        Blend::Difference,
+        Blend::Exclusion,
+        Blend::Subtract,
+        Blend::Divide,
+        Blend::Hue,
+        Blend::Saturation,
+        Blend::Color,
+        Blend::Luminosity,
+    ];
+
+    /// The mode's number in the shader (its place in [`Blend::ALL`]).
+    pub fn index(self) -> u32 {
+        Self::ALL.iter().position(|b| *b == self).unwrap_or(0) as u32
+    }
+
+    /// Whether the mode needs the colour under the layer (all but Normal and Dissolve).
+    pub fn reads_destination(self) -> bool {
+        !matches!(self, Blend::Normal | Blend::Dissolve)
+    }
+}
+
+/// The signal curve of colour-managed media.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Curve {
+    Sdr,
+    Linear,
+    /// To working units: cd/m² over the reference white.
+    Pq,
+    Hlg,
+}
+
+/// Colour management of an HDR or wide-gamut Y'CbCr picture into the working space, stage by stage
+/// as FilmCraft's `InputTransform` runs them: the curve, HLG's OOTF, the gamut matrix, BT.2390
+/// tone mapping, and desaturation into the working gamut.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Managed {
+    pub curve: Curve,
+    /// HLG OOTF: luma weights and the scale to working units.
+    pub hlg: Option<([f32; 3], f32)>,
+    /// Into the working primaries, row-major.
+    pub matrix: Option<[[f32; 3]; 3]>,
+    /// Tone mapping (source peak, target peak), cd/m².
+    pub tone: Option<(f32, f32)>,
+    /// Luma weights to desaturate into the working gamut with.
+    pub desaturate: Option<[f32; 3]>,
+    /// The working space's reference white, cd/m².
+    pub reference_white: f32,
+}
+
 /// One layer of a frame.
+#[derive(Clone, Copy)]
 pub struct Layer<'a> {
     pub width: u32,
     pub height: u32,
@@ -71,8 +189,22 @@ pub struct Layer<'a> {
     /// `[a, b, c, d, e, f]`.
     pub matrix: [f64; 6],
     pub opacity: f32,
+    pub blend: Blend,
+    /// Colour management of a Y'CbCr picture beyond its [`Coding`].
+    pub managed: Option<Managed>,
     /// The layer's grade, if it has one.
     pub grade: Option<&'a Grade>,
+}
+
+/// A part of a frame, drawn onto what the parts before it drew.
+#[derive(Clone)]
+pub enum Step<'a> {
+    /// Layers, bottom to top.
+    Layers(Vec<Layer<'a>>),
+    /// The Push transition: each side's layers drawn on their own, pushed together by `progress`
+    /// (0 to 1) towards `direction` (0 down, 1 left, 2 up, 3 right), with motion blur `blur` (0 to
+    /// 1), the result laid over the frame so far.
+    Push { inputs: [Vec<Layer<'a>>; 2], progress: f32, direction: u32, blur: f32 },
 }
 
 const ACCUM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -82,10 +214,19 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     layer_pipeline: wgpu::RenderPipeline,
+    blend_pipeline: wgpu::RenderPipeline,
     resolve_pipeline: wgpu::RenderPipeline,
+    push_pipeline: wgpu::RenderPipeline,
     layer_bgl: wgpu::BindGroupLayout,
     resolve_bgl: wgpu::BindGroupLayout,
+    push_bgl: wgpu::BindGroupLayout,
     dummy: wgpu::TextureView,
+}
+
+/// A texture drawn into.
+struct Target {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
 }
 
 fn tex_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -101,15 +242,11 @@ fn tex_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-fn storage_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+fn buffer_entry(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
         count: None,
     }
 }
@@ -138,32 +275,33 @@ impl Renderer {
             label: Some("resolution-render"),
             source: wgpu::ShaderSource::Wgsl(include_str!("render.wgsl").into()),
         });
+        let push_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("resolution-push"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("push.wgsl").into()),
+        });
+        let read_only = wgpu::BufferBindingType::Storage { read_only: true };
         let layer_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("layer"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                buffer_entry(0, wgpu::BufferBindingType::Uniform),
                 tex_entry(1),
                 tex_entry(2),
                 tex_entry(3),
                 tex_entry(4),
-                storage_entry(5),
-                storage_entry(6),
+                buffer_entry(5, read_only),
+                buffer_entry(6, read_only),
+                tex_entry(7),
             ],
         });
         let resolve_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("resolve"),
             entries: &[tex_entry(0)],
         });
-        let pipeline = |label, bgl: &wgpu::BindGroupLayout, vs, fs, format, blend| {
+        let push_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("push"),
+            entries: &[tex_entry(0), tex_entry(1), buffer_entry(2, wgpu::BufferBindingType::Uniform)],
+        });
+        let pipeline = |label, module, bgl: &wgpu::BindGroupLayout, vs, fs, format, blend| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
                 bind_group_layouts: &[Some(bgl)],
@@ -173,7 +311,7 @@ impl Renderer {
                 label: Some(label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module,
                     entry_point: Some(vs),
                     compilation_options: Default::default(),
                     buffers: &[],
@@ -182,7 +320,7 @@ impl Renderer {
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module,
                     entry_point: Some(fs),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
@@ -191,15 +329,11 @@ impl Renderer {
                 cache: None,
             })
         };
-        let layer_pipeline = pipeline(
-            "layer",
-            &layer_bgl,
-            "vs",
-            "fs",
-            ACCUM_FORMAT,
-            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-        );
-        let resolve_pipeline = pipeline("resolve", &resolve_bgl, "vs_full", "fs_full", OUTPUT_FORMAT, None);
+        let over = Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING);
+        let layer_pipeline = pipeline("layer", &shader, &layer_bgl, "vs", "fs", ACCUM_FORMAT, over);
+        let blend_pipeline = pipeline("blend", &shader, &layer_bgl, "vs", "fs_blend", ACCUM_FORMAT, None);
+        let resolve_pipeline = pipeline("resolve", &shader, &resolve_bgl, "vs_full", "fs_full", OUTPUT_FORMAT, None);
+        let push_pipeline = pipeline("push", &push_shader, &push_bgl, "vs", "fs", ACCUM_FORMAT, over);
         let dummy = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("dummy"),
@@ -212,7 +346,18 @@ impl Renderer {
                 view_formats: &[],
             })
             .create_view(&Default::default());
-        Self { device, queue, layer_pipeline, resolve_pipeline, layer_bgl, resolve_bgl, dummy }
+        Self {
+            device,
+            queue,
+            layer_pipeline,
+            blend_pipeline,
+            resolve_pipeline,
+            push_pipeline,
+            layer_bgl,
+            resolve_bgl,
+            push_bgl,
+            dummy,
+        }
     }
 
     fn texture(&self, w: u32, h: u32, format: wgpu::TextureFormat, bytes: &[u8], bpp: u32) -> wgpu::TextureView {
@@ -238,6 +383,21 @@ impl Renderer {
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
         t.create_view(&Default::default())
+    }
+
+    fn target(&self, (w, h): (u32, u32), format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> Target {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("target"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        Target { texture, view }
     }
 
     fn buffer(&self, usage: wgpu::BufferUsages, data: &[f32]) -> wgpu::Buffer {
@@ -320,81 +480,80 @@ impl Renderer {
     /// The frame of `size` pixels: `layers` drawn bottom to top over black, as straight 8-bit
     /// sRGB RGBA (opaque). `None` when the GPU could not finish it.
     pub fn render(&self, size: (u32, u32), layers: &[Layer<'_>]) -> Option<Vec<u8>> {
+        self.render_steps(size, &[Step::Layers(layers.to_vec())])
+    }
+
+    /// The frame of `size` pixels: `steps` drawn in order over black, as straight 8-bit sRGB RGBA
+    /// (opaque). `None` when the GPU could not finish it.
+    pub fn render_steps(&self, size: (u32, u32), steps: &[Step<'_>]) -> Option<Vec<u8>> {
         let (w, h) = (size.0.max(1), size.1.max(1));
-        let target = |format, usage| {
-            self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("target"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage,
-                view_formats: &[],
-            })
+        let drawn = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let canvas = self.target((w, h), ACCUM_FORMAT, drawn | wgpu::TextureUsages::COPY_SRC);
+        let output =
+            self.target((w, h), OUTPUT_FORMAT, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let layers = |s: &Step<'_>| -> Vec<Blend> {
+            match s {
+                Step::Layers(ls) => ls.iter().map(|l| l.blend).collect(),
+                Step::Push { inputs, .. } => inputs.iter().flatten().map(|l| l.blend).collect(),
+            }
         };
-        let accum = target(ACCUM_FORMAT, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING);
-        let output = target(OUTPUT_FORMAT, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
-        let accum_view = accum.create_view(&Default::default());
-        let output_view = output.create_view(&Default::default());
-        // everything the passes bind, made before they are recorded
-        let groups: Vec<wgpu::BindGroup> = layers
-            .iter()
-            .map(|l| {
-                let (views, kind, code_scale, alpha_scale, chroma) = self.upload(l);
-                let (node_data, tone_data, count) = grade_data(l.grade, (l.width, l.height));
-                let uniforms = uniforms(l, kind, code_scale, alpha_scale, chroma, (w, h), count);
-                let ub = self.buffer(wgpu::BufferUsages::UNIFORM, &uniforms);
-                let nb = self.buffer(wgpu::BufferUsages::STORAGE, &node_data);
-                let tb = self.buffer(wgpu::BufferUsages::STORAGE, &tone_data);
-                let entries = [
-                    wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&views[0]) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&views[1]) },
-                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&views[2]) },
-                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&views[3]) },
-                    wgpu::BindGroupEntry { binding: 5, resource: nb.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 6, resource: tb.as_entire_binding() },
-                ];
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("layer"),
-                    layout: &self.layer_bgl,
-                    entries: &entries,
-                })
-            })
-            .collect();
+        let backdrop = steps.iter().flat_map(layers).any(Blend::reads_destination).then(|| {
+            self.target((w, h), ACCUM_FORMAT, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST)
+        });
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        // everything the passes use is kept until the commands are submitted
+        let mut keep: Vec<wgpu::BindGroup> = Vec::new();
+        let mut inputs_kept: Vec<Target> = Vec::new();
+        clear(&mut enc, &canvas.view);
+        for step in steps {
+            match step {
+                Step::Layers(ls) => self.draw(&mut enc, &canvas, backdrop.as_ref(), ls, (w, h), &mut keep),
+                Step::Push { inputs, progress, direction, blur } => {
+                    let sides = [0, 1].map(|i| {
+                        let t = self.target((w, h), ACCUM_FORMAT, drawn | wgpu::TextureUsages::COPY_SRC);
+                        clear(&mut enc, &t.view);
+                        self.draw(&mut enc, &t, backdrop.as_ref(), &inputs[i], (w, h), &mut keep);
+                        t
+                    });
+                    let p = if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 };
+                    let b = if blur.is_finite() { blur.clamp(0.0, 1.0) } else { 0.0 };
+                    let ub = self.buffer(
+                        wgpu::BufferUsages::UNIFORM,
+                        &[w as f32, h as f32, p, b, *direction as f32, 0.0, 0.0, 0.0],
+                    );
+                    let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("push"),
+                        layout: &self.push_bgl,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&sides[0].view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&sides[1].view),
+                            },
+                            wgpu::BindGroupEntry { binding: 2, resource: ub.as_entire_binding() },
+                        ],
+                    });
+                    {
+                        let mut pass = pass(&mut enc, &canvas.view, wgpu::LoadOp::Load);
+                        pass.set_pipeline(&self.push_pipeline);
+                        pass.set_bind_group(0, &group, &[]);
+                        pass.draw(0..3, 0..1);
+                    }
+                    keep.push(group);
+                    inputs_kept.extend(sides);
+                }
+            }
+        }
         let resolve = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("resolve"),
             layout: &self.resolve_bgl,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&accum_view) }],
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&canvas.view) }],
         });
-        let mut enc = self.device.create_command_encoder(&Default::default());
-        let pass = |enc: &mut wgpu::CommandEncoder, view, clear| {
-            enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            })
-            .forget_lifetime()
-        };
         {
-            let mut p = pass(&mut enc, &accum_view, wgpu::Color::TRANSPARENT);
-            p.set_pipeline(&self.layer_pipeline);
-            for g in &groups {
-                p.set_bind_group(0, g, &[]);
-                p.draw(0..6, 0..1);
-            }
-        }
-        {
-            let mut p = pass(&mut enc, &output_view, wgpu::Color::BLACK);
+            let mut p = pass(&mut enc, &output.view, wgpu::LoadOp::Clear(wgpu::Color::BLACK));
             p.set_pipeline(&self.resolve_pipeline);
             p.set_bind_group(0, &resolve, &[]);
             p.draw(0..3, 0..1);
@@ -408,7 +567,7 @@ impl Renderer {
         });
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &output,
+                texture: &output.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -420,6 +579,7 @@ impl Renderer {
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
         self.queue.submit([enc.finish()]);
+        drop((keep, inputs_kept));
         let slice = buf.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
@@ -439,6 +599,114 @@ impl Renderer {
         buf.unmap();
         Some(out)
     }
+
+    /// Records `layers` drawn onto `target`, bottom to top. A layer whose blend mode reads the
+    /// colour under it first has that region copied into `backdrop`.
+    fn draw(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        target: &Target,
+        backdrop: Option<&Target>,
+        layers: &[Layer<'_>],
+        out: (u32, u32),
+        keep: &mut Vec<wgpu::BindGroup>,
+    ) {
+        for l in layers {
+            let Some(bounds) = quad_bounds(l, out) else { continue };
+            let reads = l.blend.reads_destination().then_some(backdrop).flatten();
+            let (views, kind, code_scale, alpha_scale, chroma) = self.upload(l);
+            let (node_data, tone_data, count) = grade_data(l.grade, (l.width, l.height));
+            let uniforms = uniforms(l, kind, code_scale, alpha_scale, chroma, out, count);
+            let ub = self.buffer(wgpu::BufferUsages::UNIFORM, &uniforms);
+            let nb = self.buffer(wgpu::BufferUsages::STORAGE, &node_data);
+            let tb = self.buffer(wgpu::BufferUsages::STORAGE, &tone_data);
+            let under = reads.map_or(&self.dummy, |b| &b.view);
+            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("layer"),
+                layout: &self.layer_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&views[0]) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&views[1]) },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&views[2]) },
+                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&views[3]) },
+                    wgpu::BindGroupEntry { binding: 5, resource: nb.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 6, resource: tb.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(under) },
+                ],
+            });
+            if let Some(b) = reads {
+                let (x, y, cw, ch) = bounds;
+                let origin = wgpu::Origin3d { x, y, z: 0 };
+                enc.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &target.texture,
+                        mip_level: 0,
+                        origin,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &b.texture,
+                        mip_level: 0,
+                        origin,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::Extent3d { width: cw, height: ch, depth_or_array_layers: 1 },
+                );
+            }
+            {
+                let mut p = pass(enc, &target.view, wgpu::LoadOp::Load);
+                p.set_pipeline(if reads.is_some() { &self.blend_pipeline } else { &self.layer_pipeline });
+                p.set_bind_group(0, &group, &[]);
+                p.draw(0..6, 0..1);
+            }
+            keep.push(group);
+        }
+    }
+}
+
+fn pass(
+    enc: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    load: wgpu::LoadOp<wgpu::Color>,
+) -> wgpu::RenderPass<'static> {
+    enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
+    .forget_lifetime()
+}
+
+fn clear(enc: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    drop(pass(enc, view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)));
+}
+
+/// The frame pixels a layer's quad can touch, as (x, y, width, height), with a pixel's margin;
+/// `None` when it touches none. A matrix that is not finite covers the frame.
+fn quad_bounds(l: &Layer<'_>, (w, h): (u32, u32)) -> Option<(u32, u32, u32, u32)> {
+    let [a, b, c, d, e, f] = l.matrix;
+    let (lw, lh) = (f64::from(l.width), f64::from(l.height));
+    let pts = [(0.0, 0.0), (lw, 0.0), (0.0, lh), (lw, lh)].map(|(x, y)| (a * x + c * y + e, b * x + d * y + f));
+    if pts.iter().any(|p| !p.0.is_finite() || !p.1.is_finite()) {
+        return Some((0, 0, w, h));
+    }
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for (x, y) in pts {
+        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+    }
+    let px = |v: f64, hi: u32| v.clamp(0.0, f64::from(hi)) as u32;
+    let (x0, y0) = (px(x0.floor() - 1.0, w), px(y0.floor() - 1.0, h));
+    let (x1, y1) = (px(x1.ceil() + 1.0, w), px(y1.ceil() + 1.0, h));
+    (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
 }
 
 /// The shader's numbers for a layer (`render.wgsl`'s `U`).
@@ -472,8 +740,10 @@ fn uniforms(
     let transfer = match l.coding.transfer {
         Transfer::Srgb => 0.0,
         Transfer::Linear => 1.0,
+        Transfer::Pq => 2.0,
+        Transfer::Hlg => 3.0,
     };
-    vec![
+    let mut u = vec![
         a as f32,
         b as f32,
         c as f32,
@@ -500,9 +770,36 @@ fn uniforms(
         footprint.max(1.0),
         alpha_scale,
         nodes as f32,
+        l.blend.index() as f32,
         0.0,
-        0.0,
-    ]
+    ];
+    // colour management (q0 to q5), only for Y'CbCr
+    let m = l.managed.filter(|_| kind == 2.0);
+    u.extend(m.map_or([0.0; 24], |m| {
+        let curve = match m.curve {
+            Curve::Sdr => 0.0,
+            Curve::Linear => 1.0,
+            Curve::Pq => 2.0,
+            Curve::Hlg => 3.0,
+        };
+        let on = |v: bool| if v { 1.0 } else { 0.0 };
+        let (hl, hk) = m.hlg.unwrap_or(([0.0; 3], 0.0));
+        let mx = m.matrix.unwrap_or([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        let (sp, dp) = m.tone.unwrap_or((0.0, 0.0));
+        let dl = m.desaturate.unwrap_or([0.0; 3]);
+        #[rustfmt::skip]
+        let q = [
+            1.0, curve, hk, m.reference_white,
+            hl[0], hl[1], hl[2], on(m.matrix.is_some()),
+            mx[0][0], mx[0][1], mx[0][2], on(m.tone.is_some()),
+            mx[1][0], mx[1][1], mx[1][2], sp,
+            mx[2][0], mx[2][1], mx[2][2], dp,
+            dl[0], dl[1], dl[2], on(m.desaturate.is_some()),
+        ];
+        q
+    }));
+    debug_assert_eq!(u.len(), UNIFORM_FLOATS);
+    u
 }
 
 /// A grade as the shader reads it: [`NODE_FLOATS`] numbers per enabled node (tone on, the

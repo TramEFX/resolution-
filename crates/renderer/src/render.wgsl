@@ -2,8 +2,9 @@
 //
 // Layers are drawn as transformed quads into a premultiplied linear accumulator. The source
 // sampling (manual bilinear loads, so any float format works; Y'CbCr decoding; N x N supersampling
-// over the pixel footprint when minifying) follows FilmCraft's compositor (`filmcraft-gpu`,
-// composite.wgsl; MIT or Apache-2.0). The grade stage is Resolution's own: the nodes of
+// over the pixel footprint when minifying), the colour management of HDR and wide-gamut Y'CbCr,
+// and the blend modes follow FilmCraft's compositor (`filmcraft-gpu`, composite.wgsl; MIT or
+// Apache-2.0), whose code they port. The grade stage is Resolution's own: the nodes of
 // `resolution-grade`, run on the display-encoded signal exactly as `Node::apply` runs them, with
 // each node limited by its qualifier's key (on the node's input) and its windows.
 
@@ -11,10 +12,17 @@ struct U {
     m0: vec4<f32>,   // a b c d
     m1: vec4<f32>,   // e f out_w out_h
     src: vec4<f32>,  // src_w src_h chroma_w chroma_h
-    p0: vec4<f32>,   // opacity, kind (0 rgba8 srgb straight, 1 rgba premul linear, 2 yuv), taps, transfer (0 srgb, 1 linear)
+    p0: vec4<f32>,   // opacity, kind (0 rgba8 srgb straight, 1 rgba premul linear, 2 yuv), taps, transfer (0 srgb, 1 linear, 2 pq, 3 hlg)
     p1: vec4<f32>,   // y_off y_scale c_off c_scale (code units)
     p2: vec4<f32>,   // kr kb code_scale footprint
-    p3: vec4<f32>,   // alpha-plane scale (0: none), nodes, unused, unused
+    p3: vec4<f32>,   // alpha-plane scale (0: none), nodes, blend mode (`Blend::index`), unused
+    // Colour management of HDR / wide-gamut Y'CbCr (`Managed`):
+    q0: vec4<f32>,   // on, curve (0 sdr, 1 linear, 2 pq, 3 hlg), HLG OOTF scale (0: none), reference white cd/m²
+    q1: vec4<f32>,   // HLG OOTF luma weights, gamut matrix on
+    q2: vec4<f32>,   // gamut matrix row 0, tone mapping on
+    q3: vec4<f32>,   // gamut matrix row 1, tone-mapping source peak cd/m²
+    q4: vec4<f32>,   // gamut matrix row 2, tone-mapping target peak cd/m²
+    q5: vec4<f32>,   // desaturation luma weights, desaturation on
 };
 
 @group(0) @binding(0) var<uniform> u: U;
@@ -25,6 +33,8 @@ struct U {
 // The grade: NODE_FLOATS numbers per node, and TONE_N samples of each node's three tone functions.
 @group(0) @binding(5) var<storage, read> nodes: array<f32>;
 @group(0) @binding(6) var<storage, read> tones: array<f32>;
+// The accumulator under the layer (blend modes other than Normal and Dissolve only).
+@group(0) @binding(7) var backdrop: texture_2d<f32>;
 
 const TONE_N: u32 = 4096u;
 const NODE_FLOATS: u32 = 104u;
@@ -93,6 +103,104 @@ fn linear_to_srgb(v: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3(0.0031308));
 }
 
+fn pq_eotf(e: vec3<f32>) -> vec3<f32> {
+    let m1 = 0.1593017578125; let m2 = 78.84375; let c1 = 0.8359375; let c2 = 18.8515625; let c3 = 18.6875;
+    let p = pow(max(e, vec3(0.0)), vec3(1.0 / m2));
+    return pow(max(p - c1, vec3(0.0)) / (c2 - c3 * p), vec3(1.0 / m1)) * 100.0;
+}
+
+fn hlg_inv(e: vec3<f32>) -> vec3<f32> {
+    let a = 0.17883277; let b = 0.28466892; let c = 0.55991073;
+    let lo = e * e / 3.0;
+    let hi = (exp((e - c) / a) + b) / 12.0;
+    return select(hi, lo, e <= vec3(0.5));
+}
+
+fn to_linear(v: vec3<f32>) -> vec3<f32> {
+    let t = u32(u.p0.w);
+    if t == 1u { return v; }
+    if t == 2u { return pq_eotf(v); }
+    if t == 3u { return hlg_inv(v); }
+    return srgb_to_linear(clamp(v, vec3(0.0), vec3(1.0)));
+}
+
+// ---- colour management (FilmCraft's `InputTransform`), for `u.q0.x` = 1
+
+// SMPTE ST 2084 on a 0..1 scale (1 = 10 000 cd/m²) and back.
+fn pq1(e: f32) -> f32 {
+    let m1 = 0.1593017578125; let m2 = 78.84375; let c1 = 0.8359375; let c2 = 18.8515625; let c3 = 18.6875;
+    let p = pow(max(e, 0.0), 1.0 / m2);
+    return pow(max(p - c1, 0.0) / (c2 - c3 * p), 1.0 / m1);
+}
+
+fn pq1_inv(y: f32) -> f32 {
+    let m1 = 0.1593017578125; let m2 = 78.84375; let c1 = 0.8359375; let c2 = 18.8515625; let c3 = 18.6875;
+    let p = pow(clamp(y, 0.0, 1.0), m1);
+    return pow((c1 + c2 * p) / (1.0 + c3 * p), m2);
+}
+
+// ITU-R BT.2390 EETF, source peak s to target peak d, in cd/m².
+fn eetf(nits: f32, s: f32, d: f32) -> f32 {
+    if d >= s || nits <= 0.0 { return clamp(nits, 0.0, max(s, d)); }
+    let smax = pq1_inv(s / 10000.0);
+    let e1 = min(pq1_inv(nits / 10000.0) / smax, 1.0);
+    let max_lum = pq1_inv(d / 10000.0) / smax;
+    let ks = 1.5 * max_lum - 0.5;
+    var e2 = e1;
+    if e1 >= ks {
+        let t = (e1 - ks) / (1.0 - ks);
+        let t2 = t * t; let t3 = t2 * t;
+        e2 = (2.0 * t3 - 3.0 * t2 + 1.0) * ks + (t3 - 2.0 * t2 + t) * (1.0 - ks) + (-2.0 * t3 + 3.0 * t2) * max_lum;
+    }
+    return pq1(e2 * smax) * 10000.0;
+}
+
+// Signal to working linear: the curve, HLG's OOTF, the gamut matrix, tone mapping, and
+// desaturation into the working gamut. (FilmCraft's CPU decode tables clamp the signal to 0..1.)
+fn managed(rgb: vec3<f32>) -> vec3<f32> {
+    let v = clamp(rgb, vec3(0.0), vec3(1.0));
+    let curve = u32(u.q0.y);
+    let white = u.q0.w;
+    var c = v;
+    if curve == 0u { c = srgb_to_linear(v); }
+    if curve == 2u { c = vec3(pq1(v.r), pq1(v.g), pq1(v.b)) * (10000.0 / white); }
+    if curve == 3u { c = hlg_inv(v); }
+    if u.q0.z > 0.0 {
+        let ys = max(dot(u.q1.xyz, c), 0.0);
+        var g = 0.0;
+        if ys > 0.0 { g = u.q0.z * pow(ys, 0.2); }
+        c = c * g;
+    }
+    if u.q1.w > 0.5 {
+        c = vec3(dot(u.q2.xyz, c), dot(u.q3.xyz, c), dot(u.q4.xyz, c));
+    }
+    if u.q2.w > 0.5 {
+        let m = max(max(c.r, c.g), c.b);
+        if m > 0.0 {
+            let nits = m * white;
+            var k = 1.0;
+            if nits >= u.q3.w {
+                k = u.q4.w / white / m;
+            } else if nits > 1e-6 {
+                k = eetf(nits, u.q3.w, u.q4.w) / nits;
+            }
+            c = c * k;
+        }
+    }
+    if u.q5.w > 0.5 {
+        let mn = min(min(c.r, c.g), c.b);
+        if mn < 0.0 {
+            let y = dot(u.q5.xyz, c);
+            if y <= 0.0 {
+                c = vec3(0.0);
+            } else {
+                c = max(y + (c - y) * (y / (y - mn)), vec3(0.0));
+            }
+        }
+    }
+    return c;
+}
+
 // An 8-bit sRGB texel with straight alpha, linear and premultiplied.
 fn srgb_texel(c: vec4<f32>) -> vec4<f32> {
     return vec4(srgb_to_linear(clamp(c.rgb, vec3(0.0), vec3(1.0))) * c.a, c.a);
@@ -127,10 +235,8 @@ fn sample(p: vec2<f32>) -> vec4<f32> {
     if u.p3.x > 0.0 {
         a = clamp(load4(tex3, p).r * u.p3.x, 0.0, 1.0);
     }
-    var lin = vec3(R, G, B);
-    if u.p0.w < 0.5 {
-        lin = srgb_to_linear(clamp(lin, vec3(0.0), vec3(1.0)));
-    }
+    var lin = to_linear(vec3(R, G, B));
+    if u.q0.x > 0.5 { lin = managed(vec3(R, G, B)); }
     return vec4(lin * a, a);
 }
 
@@ -321,15 +427,177 @@ fn grade(v_in: vec3<f32>, sp: vec2<f32>) -> vec3<f32> {
     return v;
 }
 
-@fragment
-fn fs(in: VOut) -> @location(0) vec4<f32> {
-    var c = layer_color(in.sp);
+// The layer's premultiplied linear colour at a pixel, graded, opacity applied.
+fn shaded(sp: vec2<f32>) -> vec4<f32> {
+    var c = layer_color(sp);
     if u.p3.y > 0.5 && c.a > 1e-6 {
         let signal = linear_to_srgb(c.rgb / c.a);
-        let graded = grade(signal, in.sp);
+        let graded = grade(signal, sp);
         c = vec4(srgb_to_linear(graded) * c.a, c.a);
     }
     return c * u.p0.x;
+}
+
+// ---- Dissolve: FilmCraft's 64-bit pixel hash (`blend::hash2`), on 32-bit halves (lo, hi)
+
+// The full 64-bit product of two u32.
+fn mul32(a: u32, b: u32) -> vec2<u32> {
+    let a0 = a & 0xffffu; let a1 = a >> 16u; let b0 = b & 0xffffu; let b1 = b >> 16u;
+    let p00 = a0 * b0; let p01 = a0 * b1; let p10 = a1 * b0; let p11 = a1 * b1;
+    let mid = (p00 >> 16u) + (p01 & 0xffffu) + (p10 & 0xffffu);
+    return vec2((mid << 16u) | (p00 & 0xffffu), p11 + (p01 >> 16u) + (p10 >> 16u) + (mid >> 16u));
+}
+
+// A wrapping 64-bit multiply.
+fn mul64(a: vec2<u32>, b: vec2<u32>) -> vec2<u32> {
+    let p = mul32(a.x, b.x);
+    return vec2(p.x, p.y + a.x * b.y + a.y * b.x);
+}
+
+// A 64-bit shift right by 0 < n < 32.
+fn shr64(a: vec2<u32>, n: u32) -> vec2<u32> {
+    return vec2((a.x >> n) | (a.y << (32u - n)), a.y >> n);
+}
+
+fn hash2(x: u32, y: u32) -> f32 {
+    var h = mul64(vec2(x, 0u), vec2(0x7F4A7C15u, 0x9E3779B9u)) ^ mul64(vec2(y, 0u), vec2(0x27D4EB4Fu, 0xC2B2AE3Du));
+    h = h ^ shr64(h, 31u);
+    h = mul64(h, vec2(0x1CE4E5B9u, 0xBF58476Du));
+    h = h ^ shr64(h, 29u);
+    return f32(h.y >> 8u) / 16777216.0;
+}
+
+// Normal and Dissolve: fixed-function premultiplied "over".
+@fragment
+fn fs(in: VOut) -> @location(0) vec4<f32> {
+    let c = shaded(in.sp);
+    if u32(u.p3.z) == 1u {
+        // Dissolve: the pixel is kept with probability alpha, then drawn opaque
+        let sa = c.a;
+        if hash2(u32(in.pos.x), u32(in.pos.y)) >= sa {
+            discard;
+        }
+        return vec4(c.rgb / sa, 1.0);
+    }
+    return c;
+}
+
+// ---- the other blend modes: the W3C Compositing and Blending formulas on straight,
+// sRGB-encoded colour, as FilmCraft's `blend::composite` (no recursion in WGSL, so helpers are
+// split out)
+
+fn screen(b: f32, s: f32) -> f32 { return b + s - b * s; }
+
+fn color_burn(b: f32, s: f32) -> f32 {
+    if b >= 1.0 { return 1.0; }
+    if s <= 0.0 { return 0.0; }
+    return 1.0 - min((1.0 - b) / s, 1.0);
+}
+
+fn color_dodge(b: f32, s: f32) -> f32 {
+    if b <= 0.0 { return 0.0; }
+    if s >= 1.0 { return 1.0; }
+    return min(b / (1.0 - s), 1.0);
+}
+
+fn hard_light(b: f32, s: f32) -> f32 {
+    if s <= 0.5 { return b * 2.0 * s; }
+    return screen(b, 2.0 * s - 1.0);
+}
+
+fn vivid_light(b: f32, s: f32) -> f32 {
+    if s <= 0.5 { return color_burn(b, 2.0 * s); }
+    return color_dodge(b, 2.0 * s - 1.0);
+}
+
+fn sep(mode: u32, b: f32, s: f32) -> f32 {
+    switch mode {
+        case 2u: { return min(b, s); }                       // Darken
+        case 3u: { return b * s; }                           // Multiply
+        case 4u: { return color_burn(b, s); }
+        case 5u: { return max(b + s - 1.0, 0.0); }           // Linear Burn
+        case 7u: { return max(b, s); }                       // Lighten
+        case 8u: { return screen(b, s); }
+        case 9u: { return color_dodge(b, s); }
+        case 10u: { return min(b + s, 1.0); }                // Linear Dodge (Add)
+        case 12u: { return hard_light(s, b); }               // Overlay
+        case 13u: {                                          // Soft Light
+            if s <= 0.5 { return b - (1.0 - 2.0 * s) * b * (1.0 - b); }
+            var d = sqrt(b);
+            if b <= 0.25 { d = ((16.0 * b - 12.0) * b + 4.0) * b; }
+            return b + (2.0 * s - 1.0) * (d - b);
+        }
+        case 14u: { return hard_light(b, s); }
+        case 15u: { return vivid_light(b, s); }
+        case 16u: { return clamp(b + 2.0 * s - 1.0, 0.0, 1.0); } // Linear Light
+        case 17u: {                                          // Pin Light
+            if s <= 0.5 { return min(b, 2.0 * s); }
+            return max(b, 2.0 * s - 1.0);
+        }
+        case 18u: { return select(0.0, 1.0, vivid_light(b, s) >= 0.5); } // Hard Mix
+        case 19u: { return abs(b - s); }                     // Difference
+        case 20u: { return b + s - 2.0 * b * s; }            // Exclusion
+        case 21u: { return max(b - s, 0.0); }                // Subtract
+        case 22u: {                                          // Divide
+            if s <= 0.0 { return 1.0; }
+            return min(b / s, 1.0);
+        }
+        default: { return s; }
+    }
+}
+
+fn lum(c: vec3<f32>) -> f32 { return 0.3 * c.r + 0.59 * c.g + 0.11 * c.b; }
+
+fn clip_color(c: vec3<f32>) -> vec3<f32> {
+    let l = lum(c);
+    let n = min(min(c.r, c.g), c.b);
+    let x = max(max(c.r, c.g), c.b);
+    var o = c;
+    if n < 0.0 { o = l + (o - l) * l / max(l - n, 1e-6); }
+    if x > 1.0 { o = l + (o - l) * (1.0 - l) / max(x - l, 1e-6); }
+    return o;
+}
+
+fn set_lum(c: vec3<f32>, l: f32) -> vec3<f32> { return clip_color(c + (l - lum(c))); }
+
+fn sat(c: vec3<f32>) -> f32 { return max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b); }
+
+fn set_sat(c: vec3<f32>, s: f32) -> vec3<f32> {
+    let mx = max(max(c.r, c.g), c.b);
+    let mn = min(min(c.r, c.g), c.b);
+    if mx - mn <= 1e-6 { return vec3(0.0); }
+    return (c - mn) * s / (mx - mn);
+}
+
+fn blend_rgb(mode: u32, b: vec3<f32>, s: vec3<f32>) -> vec3<f32> {
+    switch mode {
+        case 23u: { return set_lum(set_sat(s, sat(b)), lum(b)); } // Hue
+        case 24u: { return set_lum(set_sat(b, sat(s)), lum(b)); } // Saturation
+        case 25u: { return set_lum(s, lum(b)); }                  // Color
+        case 26u: { return set_lum(b, lum(s)); }                  // Luminosity
+        case 6u: { return select(b, s, lum(s) < lum(b)); }        // Darker Color
+        case 11u: { return select(b, s, lum(s) > lum(b)); }       // Lighter Color
+        default: { return vec3(sep(mode, b.r, s.r), sep(mode, b.g, s.g), sep(mode, b.b, s.b)); }
+    }
+}
+
+// Blend modes that need the colour under the layer: written without fixed-function blending.
+@fragment
+fn fs_blend(in: VOut) -> @location(0) vec4<f32> {
+    let sp = shaded(in.sp);
+    let sa = sp.a;
+    if sa <= 0.0 {
+        discard;
+    }
+    let d = textureLoad(backdrop, vec2<i32>(in.pos.xy), 0);
+    let da = d.a;
+    if da <= 0.0 {
+        return sp + d * (1.0 - sa);
+    }
+    let cs = linear_to_srgb(sp.rgb / sa);
+    let cb = linear_to_srgb(d.rgb / da);
+    let mixed = srgb_to_linear(clamp(blend_rgb(u32(u.p3.z), cb, cs), vec3(0.0), vec3(1.0)));
+    return vec4(sp.rgb * (1.0 - da) + d.rgb * (1.0 - sa) + sa * da * mixed, sa + da - sa * da);
 }
 
 // ---- the resolve: the accumulator over black, into the sRGB output
