@@ -76,8 +76,9 @@ front of its effect stack, so the project opens sensibly in FilmCraft and render
 the metadata and the effects. The compile: the tone functions as R, G and B curves; the saturation
 step and the hue curves as Saturation, Vibrance and Lumetri's HSL curves; a node's windows as
 effect masks in the clip's pixels; a qualified node, key and all, baked into a 33-point LUT in the
-project's LUT library and carried by one Lumetri effect. It cannot carry Denoise and Blur Radius,
-and its baked key is coarse at a hard key edge.
+project's LUT library and carried by one Lumetri effect, and so is a node with Sat vs Lum, which
+Lumetri lacks (D-047). It cannot carry Denoise and Blur Radius, and a baked table is coarse at a
+hard key edge and in dark, saturated colours.
 
 ## The GPU renderer (`crates/renderer`, LOG D-035, D-036)
 
@@ -125,7 +126,8 @@ renderer, and `deliver.render` asks for GPU rendering. Each export worker's rend
 graded copy of the export's project once, then draws every frame as the viewers do, handing it
 back as the linear canvas (`Renderer::render_linear`) the export expects from FilmCraft's CPU
 renderer. Frames it declines, and those FilmCraft draws whole without asking it, render on the CPU
-from the graded copy, with graded sources (D-045).
+from the graded copy, with graded sources (D-045). Each frame's work runs on a thread pool of the
+adapter's own, so an export worker waiting for it takes no other work (B-038).
 
 ## The editor (`apps/resolution-app`)
 

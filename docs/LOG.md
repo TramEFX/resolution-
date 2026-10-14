@@ -107,6 +107,9 @@ doc is updated *and* the entry says which section moved.
 | B-036 | 2026-10-14 | color | The editor stopped when its window was resized while frames rendered (since D-039) | fixed |
 | D-045 | 2026-10-14 | color | Deliver renders the graded copy, so its own CPU frames show grades by their own math | active |
 | D-046 | 2026-10-14 | color | Matte finesse for the qualifier: Denoise, Clean Black, Clean White, Blur Radius; the GPU's grade stage | active |
+| B-037 | 2026-10-14 | color | Since D-044 the colour tests of the Lumetri compile drew their frames on the GPU | fixed |
+| D-047 | 2026-10-14 | color | Sat vs Lum, with a node carrying it baked into a table in the compile | active |
+| B-038 | 2026-10-14 | color | A Deliver render could stop at 0 %: export frames waited for renderers their own threads held | fixed (upstream: unchecked) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2653,3 +2656,96 @@ Luminance: drag a number sideways, double-click it to reset.
 - By hand, 2026-10-14: the Sony clip in the editor, plain key against matte finesse. The plain key
   left hard, broken edges and pink specks on the face and hand; with matte finesse the edges are
   soft and the specks are gone.
+
+### B-037 — Since D-044 the colour tests of the Lumetri compile drew their frames on the GPU
+**Area:** color · **Status:** fixed · **Caught by:** review, confirmed by a mutation check (while
+adding Sat vs Lum, D-047)
+
+**Symptom:** with Hue vs Sat taken out of the compile, the test that the compiled hue curves follow
+the grade's math still passed (0.60 code values off).
+
+**Cause:** `crates/filmcraft-adapter/src/color/tests.rs` takes its frames from
+`Engine::render_frame`. Before D-036 that was FilmCraft's CPU render of the project, the compile.
+Since D-044 it is the viewer's frame, the grade's own math on the GPU renderer. So the six tests
+that render (the grade, the hue curves, Gain 0 and Saturation 0, a window, a qualifier, a qualified
+node's table) checked the GPU path, already covered by the renderer's tests, and nothing checked
+the compile end to end.
+
+**Fix:** the tests' `frame` renders the project through FilmCraft itself
+(`Session::try_render_program_at`), as before D-036. All pass, with the figures measured before
+(the hue curves within 0.73 code values). With Hue vs Sat taken out of the compile, the test now
+fails, 54.6 code values off.
+
+**Lesson:** when a decision moves what a function returns (here D-044, for `render_frame`), check
+the tests that call it for what they meant to test.
+
+### D-047 — Sat vs Lum, with a node carrying it baked into a table in the compile
+**Area:** color · **Status:** active · **Doc:** `crates/grade` (`Curves::sat_lum`, `Node::color`);
+`crates/filmcraft-adapter/src/color.rs` (`baked`); `apps/resolution-app/src/color_page.rs`
+
+**Decision:** the sixth hue curve. D-043 left it out because Lumetri has no such curve, and frames
+off the GPU were then rendered by Lumetri. Since D-044 they are not, so it is built:
+
+- **The math.** By saturation, the lightness: as Hue vs Lum, lightness moves by half the curve's
+  distance from the middle line, read at the pixel's saturation before any hue curve. The two add
+  up. In Resolve's manual it is the inverse of Lum vs Sat: lighter or darker by saturation.
+- **The GPU.** A ninth table per node (`TABLES`), on its own bit of the node's curve flags.
+- **The compile.** A node with Sat vs Lum is baked into a 33-point table, as a qualified node is
+  (D-032): the whole node in one Lumetri effect's input LUT, named "Resolution node" in the
+  project's LUT library. It is coarse: 99 % of pixels within 5.4 code values, against 2.3 for the
+  qualified node of D-032's measurement. The pixels more than 3 off are darker than the frame
+  (mean lightness 0.17 against 0.30), where saturation moves fast between table points. The
+  alternative, leaving the curve out of the compile, would be tens of code values off. The compile
+  is only what FilmCraft and renders without a GPU show.
+- **The page:** Sat vs Lum at the foot of the Curves palette's menu, over grey to full colour,
+  as in Resolve's list.
+
+**Measured:**
+- The renderer against the math, all six hue curves at once with Hue's rotation on noise: within
+  1 code value. With the shader reading Sat vs Lum at the lightness instead, 35.8 off.
+- The compile on the demo frame (Saturation 70 and a Sat vs Lum curve): 99 % within 5.4, worst
+  7.0 code values. Without the table (the node compiled to Lumetri's sections), the test fails:
+  no table is made.
+
+**Checked:** grade test (a full red lightened by a quarter at the curve's top, dull colours and
+grey as they were); the renderer and adapter tests above; UI test: Sat vs Lum chosen from the
+Curves menu and dragged, through the engine. Grades stored before it load and are written back
+as they were (the existing test). 215 tests in the workspace.
+
+### B-038 — A Deliver render could stop at 0 %: export frames waited for renderers their own threads held
+**Area:** color · **Status:** fixed in Resolution; likely upstream too (not checked) · **Caught
+by:** running the tests (the workspace's test run hung for 25 minutes; the Deliver page's UI test
+then failed about one run in five)
+
+**Symptom:** `the_deliver_page_renders_the_timeline_to_a_file` sometimes never finished:
+`Rendering { progress: 0.0 }` after 120 s. Alone it passed. With three other UI tests beside it,
+it failed on runs 1, 5 and 8 of a loop. The same happened on main (built from main and run, it
+hung at once), so this was not D-047's doing. It can have happened since D-042, when
+`ExportFrames` became the export's frame renderer.
+
+**Found with:** temporary probes in `gpu.rs` keeping each thread's last step in memory, dumped
+when the export had made no progress for 30 s (printing every step changed the timing so much
+that 40 runs passed). At the stop, four export threads were inside FilmCraft's decode of the same
+demo clip, and the other twelve had finished a frame and gone no further.
+
+**Cause:** FilmCraft's export draws 16 frames at a time on rayon's global pool. Each frame takes
+one of four frame renderers (ours, `ExportFrames`) and waits on a condition variable when all are
+taken. A frame holding a renderer decodes its pictures, and the demo's generated clips render with
+`par_chunks_mut`. A rayon worker waiting for its own parallel work runs other queued work
+meanwhile, and that can be another of the export's frames. That frame then waits for a renderer,
+one of them held further up the same thread, so the outer frame can never finish. Once all four
+holders are caught this way, no renderer comes back. Other work on the global pool (the other
+tests' renders here, the viewers' in the editor) makes it likelier, since it changes which work is
+queued where.
+
+**Fix:** `ExportFrames` runs each frame's work on a thread pool of its own (`apart` in `gpu.rs`).
+The export's worker waits for it on a plain thread join, which takes no other work. A panic is
+passed back, so FilmCraft's export still retires its renderers when one panics. With the fix, the
+same four tests passed 60 runs in 60.
+
+**Upstream:** FilmCraft's own GPU frame renderer takes the same pool, and probably decodes inside
+it too, so its exports could stop the same way. Not checked yet. A report would need Truman's
+approval first.
+
+**Not done:** a test that brings this about every time. The Deliver UI test catches it about one
+run in five, beside other tests.

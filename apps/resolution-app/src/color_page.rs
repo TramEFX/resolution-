@@ -399,16 +399,18 @@ pub enum CurveMode {
     HueLum,
     LumSat,
     SatSat,
+    SatLum,
 }
 
 impl CurveMode {
-    pub const ALL: [CurveMode; 6] = [
+    pub const ALL: [CurveMode; 7] = [
         CurveMode::Custom,
         CurveMode::HueHue,
         CurveMode::HueSat,
         CurveMode::HueLum,
         CurveMode::LumSat,
         CurveMode::SatSat,
+        CurveMode::SatLum,
     ];
 
     pub fn name(self) -> &'static str {
@@ -419,6 +421,7 @@ impl CurveMode {
             CurveMode::HueLum => "Hue vs Lum",
             CurveMode::LumSat => "Lum vs Sat",
             CurveMode::SatSat => "Sat vs Sat",
+            CurveMode::SatLum => "Sat vs Lum",
         }
     }
 
@@ -432,6 +435,7 @@ impl CurveMode {
             CurveMode::HueLum => Some(("hue_lum", true)),
             CurveMode::LumSat => Some(("lum_sat", false)),
             CurveMode::SatSat => Some(("sat_sat", false)),
+            CurveMode::SatLum => Some(("sat_lum", false)),
         }
     }
 }
@@ -442,7 +446,8 @@ fn hsl_curve_of<'a>(n: &'a Node, key: &str) -> &'a HslCurve {
         "hue_sat" => &n.curves.hue_sat,
         "hue_lum" => &n.curves.hue_lum,
         "lum_sat" => &n.curves.lum_sat,
-        _ => &n.curves.sat_sat,
+        "sat_sat" => &n.curves.sat_sat,
+        _ => &n.curves.sat_lum,
     }
 }
 
@@ -609,11 +614,11 @@ pub fn curves(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     asks
 }
 
-/// A hue curve (Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat or Sat vs Sat): the middle line
-/// changes nothing; above it more (hue turned one way, more saturation or lightness), below it
-/// less. Click to add a point on the curve, drag one to move it (a drag elsewhere makes one and
-/// moves it), right-click one to remove it. Along the bottom, what the curve is over: the colour
-/// wheel from red, black to white, or grey to full colour.
+/// A hue curve (Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat or Sat vs Lum): the
+/// middle line changes nothing; above it more (hue turned one way, more saturation or lightness),
+/// below it less. Click to add a point on the curve, drag one to move it (a drag elsewhere makes
+/// one and moves it), right-click one to remove it. Along the bottom, what the curve is over: the
+/// colour wheel from red, black to white, or grey to full colour.
 fn hsl_curve(
     ui: &mut Ui,
     look: &Look,
@@ -644,7 +649,7 @@ fn hsl_curve(
         let u = (i as f32 + 0.5) / steps as f32;
         let c = match key {
             "lum_sat" => [u, u, u],
-            "sat_sat" => hsl_to_rgb([0.0, u, 0.5]),
+            "sat_sat" | "sat_lum" => hsl_to_rgb([0.0, u, 0.5]),
             _ => hsl_to_rgb([u, 1.0, 0.5]),
         };
         let x0 = strip.left() + strip.width() * i as f32 / steps as f32;

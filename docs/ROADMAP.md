@@ -100,9 +100,9 @@ read, never copied into the repo.
 - [x] Windows: Linear and Circle, as FilmCraft effect masks, with an on-screen control (D-031)
 - [x] Qualifiers: an HSL key limiting the whole node (D-032, D-033): a real key on the GPU (D-036,
       D-044), baked into a 3D LUT in the Lumetri compile
-- [x] Hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat (D-043)
-- [ ] Sat vs Lum (no longer blocked: Lumetri need not carry it since D-044); picking a hue curve's
-      points from the viewer
+- [x] Hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat (D-043), Sat vs Lum
+      (D-047)
+- [ ] Picking a hue curve's points from the viewer
 - [x] Matte finesse: Denoise, Clean Black, Clean White, Blur Radius (D-046)
 - [ ] More matte finesse (Black and White Clip, In/Out Ratio, Morph), Highlight view, RGB and Luma
       qualifier modes

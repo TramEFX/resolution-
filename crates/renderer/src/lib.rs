@@ -37,9 +37,9 @@ use resolution_grade::{Grade, Shape};
 pub const TONE_N: usize = 4096;
 /// Numbers per node in the shader's node table (`render.wgsl`).
 const NODE_FLOATS: usize = 104;
-/// Tables per node, of [`TONE_N`] samples each: the three tone functions, then the five hue
+/// Tables per node, of [`TONE_N`] samples each: the three tone functions, then the six hue
 /// curves in `resolution_grade::HSL_CURVES`' order.
-const TABLES: usize = 8;
+const TABLES: usize = 9;
 /// Windows per node the shader takes.
 pub const MAX_WINDOWS: usize = 8;
 /// The most samples a side the shader takes over a shrunk pixel's footprint: up to 32× smaller,

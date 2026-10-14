@@ -205,7 +205,7 @@ fn the_grade_matches_its_own_math() {
     assert!(e <= 1.0, "the GPU strays from the grade's math by {e} code values");
 }
 
-/// The hue curves (LOG D-043), all five at once with Hue's rotation, on noise.
+/// The hue curves (LOG D-043, D-047), all six at once with Hue's rotation, on noise.
 #[test]
 fn the_hue_curves_match_their_own_math() {
     let Some(r) = renderer() else { return };
@@ -217,7 +217,8 @@ fn the_hue_curves_match_their_own_math() {
             "hue_sat": [[0.05, 0.2], [0.4, 0.7], [0.75, 0.5]],
             "hue_lum": [[0.1, 0.6], [0.6, 0.35]],
             "lum_sat": [[0.0, 0.3], [0.5, 0.55], [1.0, 0.4]],
-            "sat_sat": [[0.2, 0.5], [0.9, 0.8]]
+            "sat_sat": [[0.2, 0.5], [0.9, 0.8]],
+            "sat_lum": [[0.1, 0.45], [0.8, 0.3]]
         }
     }));
     let g = Grade { nodes: vec![n] };

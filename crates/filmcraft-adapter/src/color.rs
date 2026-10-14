@@ -14,8 +14,9 @@
 //!
 //! A qualified node (LOG D-032) cannot be a curve and a saturation: Lumetri cannot limit them to a
 //! colour key. It becomes one Lumetri effect whose input LUT is the node itself, key and all,
-//! baked into a 33-point 3D LUT kept in the project's LUT library (`resolution-<hash>`). LUTs no
-//! clip uses any more are dropped at the next grade edit.
+//! baked into a 33-point 3D LUT kept in the project's LUT library (`resolution-<hash>`). So does a
+//! node with Sat vs Lum, a curve Lumetri lacks (LOG D-047). LUTs no clip uses any more are dropped
+//! at the next grade edit.
 //!
 //! A node's windows (LOG D-031) become effect masks on its Lumetri effects, in the clip's pixels:
 //! a Circle window an ellipse, a Linear window a rectangle, turned, with its softness as the
@@ -181,16 +182,16 @@ impl FilmCraftEngine {
     ) -> Result<Option<String>> {
         let json = serde_json::to_string(grade).map_err(|e| EngineError::Engine(e.to_string()))?;
         let effects = compile(grade, self.clip_size(seq, clip));
-        // the tables of the grade's qualified nodes, made only when the project lacks them
+        // the tables of the grade's baked nodes, made only when the project lacks them
         let have: Vec<String> = self.session.project.luts.iter().map(|l| l.id.clone()).collect();
         let luts: Vec<ProjectLut> = grade
             .nodes
             .iter()
-            .filter(|n| n.enabled && n.keyed().is_some() && !n.is_neutral())
+            .filter(|n| n.enabled && baked(n) && !n.is_neutral())
             .filter(|n| !have.contains(&lut_id(n)))
             .map(|n| ProjectLut {
                 id: lut_id(n),
-                name: "Resolution qualified node".into(),
+                name: if n.keyed().is_some() { "Resolution qualified node" } else { "Resolution node" }.into(),
                 source_path: None,
                 format: "cube".into(),
                 text: cube(n).into(),
@@ -298,7 +299,7 @@ pub(crate) fn compile(grade: &Grade, size: (u32, u32)) -> Vec<EffectInstance> {
         let masks: Vec<Mask> =
             n.windows.iter().filter(|w| w.enabled).enumerate().map(|(i, w)| mask(w, size, i)).collect();
         let start = out.len();
-        if n.keyed().is_some() {
+        if baked(n) {
             // the whole node, key and all, as the effect's input LUT
             if !n.is_neutral() {
                 let mut e = off();
@@ -377,7 +378,13 @@ fn hsl_points(f: impl Fn(f32) -> f32, periodic: bool) -> Vec<[f32; 2]> {
         .collect()
 }
 
-/// The id of the LUT that carries qualified node `n`: a hash of what the table depends on (not
+/// Whether node `n` compiles to a baked table rather than Lumetri's sections: a qualified node
+/// (LOG D-032), or one with Sat vs Lum, which Lumetri has no curve for (D-047).
+fn baked(n: &Node) -> bool {
+    n.keyed().is_some() || !n.curves.sat_lum.is_identity()
+}
+
+/// The id of the LUT that carries baked node `n` ([`baked`]): a hash of what the table depends on (not
 /// its windows or label, which do not change it), so moving a window keeps the table.
 fn lut_id(n: &Node) -> String {
     let mut table = n.clone();
@@ -403,7 +410,7 @@ fn cube(n: &Node) -> String {
     s
 }
 
-/// Drop the qualified-node LUTs that no clip of any timeline uses.
+/// Drop the baked nodes' LUTs that no clip of any timeline uses.
 fn prune_luts(p: &mut Project) {
     let used: std::collections::BTreeSet<String> = p
         .items

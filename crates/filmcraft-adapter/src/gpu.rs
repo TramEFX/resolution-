@@ -516,8 +516,28 @@ impl FrameRenderer for ExportFrames {
             self.graded = Some((id, graded));
         }
         let (_, graded) = self.graded.as_ref()?;
-        graded.render_linear(seq, t, opts, sources)
+        apart(|| graded.render_linear(seq, t, opts, sources))
     }
+}
+
+/// Runs `f`, an export frame's work, on a thread pool of its own, the export's worker waiting
+/// for it without taking other work meanwhile (LOG B-038). FilmCraft's export draws its frames on
+/// rayon's global pool, each frame taking one of a few frame renderers and waiting for one when
+/// all are taken. A worker that holds a renderer and waits for parallel work of its own (decoding,
+/// an effect) runs other queued work meanwhile, which can be another of the export's frames: that
+/// frame waits for a renderer, among them the one held further up the same thread. Once every
+/// renderer is held so, the export stops.
+fn apart<R: Send>(f: impl FnOnce() -> R + Send) -> R {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    let pool =
+        POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().thread_name(|i| format!("export-frame-{i}")).build().ok());
+    let Some(pool) = pool else { return f() };
+    // a plain thread waiting on a plain join takes no other work
+    std::thread::scope(|s| match s.spawn(|| pool.install(f)).join() {
+        Ok(r) => r,
+        // FilmCraft's export retires its renderers when one panics
+        Err(panic) => std::panic::resume_unwind(panic),
+    })
 }
 
 /// A Push transition's direction (0 down, 1 left, 2 up, 3 right) and motion blur (0 to 1), as
