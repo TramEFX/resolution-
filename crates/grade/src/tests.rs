@@ -399,3 +399,94 @@ fn hue_curves_are_tidied_and_grades_stored_before_them_still_load() {
     assert!(g.is_neutral());
     assert_eq!(serde_json::to_string(&g).unwrap(), old, "written back as it was");
 }
+
+// ---- the qualifier's matte finesse (LOG D-046)
+
+/// A qualifier keying saturated reds hard (greys, whose hue reads as red, are below its
+/// saturation), nothing else.
+fn reds() -> Qualifier {
+    Qualifier {
+        hue_width: 10.0,
+        hue_soft: 0.0,
+        sat_low: 30.0,
+        sat_high: 100.0,
+        sat_low_soft: 0.0,
+        sat_high_soft: 0.0,
+        lum_on: false,
+        ..Qualifier::picked([0.8, 0.1, 0.1])
+    }
+}
+
+#[test]
+fn clean_black_and_clean_white_stretch_the_key() {
+    let q = Qualifier { clean_black: 40.0, clean_white: 40.0, ..reds() };
+    // black point 0.2, white point 0.8
+    assert!(close(q.clean(0.15), 0.0, 1e-6) && close(q.clean(0.85), 1.0, 1e-6));
+    assert!(close(q.clean(0.5), 0.5, 1e-6) && close(q.clean(0.35), 0.25, 1e-6));
+    assert_eq!(reds().clean(0.3), 0.3, "none set: the key as it was");
+    assert!(!q.is_spatial(), "levels need no neighbours");
+}
+
+#[test]
+fn denoise_takes_out_a_lone_keyed_pixel() {
+    // grey everywhere but one red pixel: keyed alone, gone after one pass of medians
+    let (w, h) = (9, 9);
+    let mut px = vec![[0.5, 0.5, 0.5]; w * h];
+    px[4 * w + 4] = [0.8, 0.1, 0.1];
+    assert_eq!(reds().matte(&px, w, h)[4 * w + 4], 1.0);
+    let q = Qualifier { denoise: 10.0, ..reds() };
+    assert_eq!(q.denoise_passes(w), 1);
+    assert!(q.matte(&px, w, h).iter().all(|k| *k == 0.0), "the speck is gone");
+    // a keyed block survives
+    for y in 2..7 {
+        for x in 2..7 {
+            px[y * w + x] = [0.8, 0.1, 0.1];
+        }
+    }
+    assert_eq!(q.matte(&px, w, h)[4 * w + 4], 1.0, "the block's middle is still keyed");
+}
+
+#[test]
+fn blur_radius_softens_the_key_in_proportion_to_the_picture() {
+    // red on the left half, grey on the right: a hard edge, softened either side of it
+    let edge = |w: usize| -> Vec<[f32; 3]> {
+        (0..w * 4).map(|i| if i % w < w / 2 { [0.8, 0.1, 0.1] } else { [0.5, 0.5, 0.5] }).collect()
+    };
+    let q = Qualifier { blur: 50.0, ..reds() };
+    for w in [768usize, 1536] {
+        let k = q.matte(&edge(w), w, 4);
+        let sigma = q.blur_sigma(w);
+        assert!(close(sigma, w as f32 / 384.0, 1e-5));
+        assert!(close(k[w / 2 - 1] + k[w / 2], 1.0, 0.02), "the edge's two sides add to one");
+        // a standard deviation into the grey, about 16 % keyed, at either width
+        let x = w / 2 + sigma.round() as usize;
+        assert!((0.08..0.25).contains(&k[x]), "{w} wide: {}", k[x]);
+        assert!(k[2] > 0.999 && k[w - 3] < 0.001, "far from the edge as keyed");
+    }
+}
+
+#[test]
+fn a_picture_without_spatial_mattes_is_graded_pixel_by_pixel() {
+    let mut n = Node::default();
+    n.patch(&json!({ "gain": {"y": 0.6}, "qualifier": Qualifier { clean_black: 20.0, ..Qualifier::picked([0.8, 0.4, 0.2]) } }))
+        .unwrap();
+    let g = Grade { nodes: vec![n] };
+    let mut px: Vec<[f32; 3]> = (0..64).map(|i| [i as f32 / 63.0, 0.4, 1.0 - i as f32 / 63.0]).collect();
+    let want: Vec<[f32; 3]> = px.iter().map(|p| g.apply(*p)).collect();
+    g.apply_image(&mut px, 8, 8);
+    assert_eq!(px, want);
+}
+
+#[test]
+fn qualifiers_stored_before_matte_finesse_still_load() {
+    let q = reds();
+    let text = serde_json::to_string(&q).unwrap();
+    assert!(!text.contains("blur") && !text.contains("denoise"), "none set: none written");
+    let back: Qualifier = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, q);
+    let mut n = Node::default();
+    n.patch(&json!({ "qualifier": { "blur": 250.0, "denoise": -3.0 } })).unwrap_err();
+    n.patch(&json!({ "qualifier": Qualifier { blur: 250.0, denoise: -3.0, ..reds() } })).unwrap();
+    let q = n.qualifier.unwrap();
+    assert_eq!((q.blur, q.denoise), (100.0, 0.0), "held to 0..100");
+}

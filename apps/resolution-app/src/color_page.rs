@@ -1562,6 +1562,14 @@ const SECTIONS: [Section; 3] = [
     ),
 ];
 
+/// Matte Finesse (LOG D-046): the key cleaned, in this order.
+const MATTE: [QualifierField; 4] = [
+    QualifierField { name: "Denoise", get: |q| q.denoise, set: |q, v| q.denoise = v },
+    QualifierField { name: "Clean Black", get: |q| q.clean_black, set: |q, v| q.clean_black = v },
+    QualifierField { name: "Clean White", get: |q| q.clean_white, set: |q, v| q.clean_white = v },
+    QualifierField { name: "Blur Radius", get: |q| q.blur, set: |q, v| q.blur = v },
+];
+
 /// A small on/off button.
 fn toggle(ui: &mut Ui, look: &Look, rect: Rect, label: &str, accessible: &str, on: bool) -> bool {
     let t = look.theme;
@@ -1584,7 +1592,7 @@ fn toggle(ui: &mut Ui, look: &Look, rect: Rect, label: &str, accessible: &str, o
 
 /// The Qualifier palette: the current node's HSL key. With none, Add Qualifier (or click the
 /// viewer to pick a colour); with one, On, Invert and Remove, then the Hue, Saturation and
-/// Luminance ranges, each section switched on or off.
+/// Luminance ranges, each section switched on or off, and Matte Finesse.
 pub fn qualifier(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let mut asks = Vec::new();
     let t = look.theme;
@@ -1622,14 +1630,23 @@ pub fn qualifier(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     });
     ui.add_space(6.0);
     let area = ui.available_rect_before_wrap();
-    let col_w = (area.width() - 16.0) / 3.0;
+    let col_w = (area.width() - 16.0) / 4.0;
     let row_h = 24.0;
     let fresh = Qualifier::default();
-    for (c, (title, is_on, flip, fields)) in SECTIONS.iter().enumerate() {
+    let matte = ("Matte Finesse", &MATTE[..]);
+    let columns = SECTIONS.iter().map(|(title, _, _, fields)| (*title, &fields[..])).chain([matte]);
+    for (c, (title, fields)) in columns.enumerate() {
         let x = area.left() + 8.0 + col_w * c as f32;
         let head = Rect::from_min_size(pos2(x, area.top()), vec2(col_w, row_h)).shrink2(vec2(3.0, 2.0));
-        if toggle(ui, look, head, title, &format!("{title} Range"), is_on(&q)) {
-            flip(&mut nq);
+        match SECTIONS.get(c) {
+            Some((_, is_on, flip, _)) => {
+                if toggle(ui, look, head, title, &format!("{title} Range"), is_on(&q)) {
+                    flip(&mut nq);
+                }
+            }
+            None => {
+                ui.painter().text(head.center(), Align2::CENTER_CENTER, title, look.small(), t.dim);
+            }
         }
         for (k, f) in fields.iter().enumerate() {
             let cell = Rect::from_min_size(pos2(x, area.top() + row_h * (k + 1) as f32), vec2(col_w, row_h))

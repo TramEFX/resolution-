@@ -100,7 +100,9 @@ read, never copied into the repo.
 - [x] Qualifiers: an HSL key limiting the whole node, baked into a 3D LUT for now (D-032, D-033)
 - [x] Hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat (D-043)
 - [ ] Sat vs Lum; picking a hue curve's points from the viewer
-- [ ] Matte finesse (key denoise and blur), Highlight view, RGB and Luma qualifier modes
+- [x] Matte finesse: Denoise, Clean Black, Clean White, Blur Radius (D-046)
+- [ ] More matte finesse (Black and White Clip, In/Out Ratio, Morph), Highlight view, RGB and Luma
+      qualifier modes
 - [ ] Polygon, Curve and Gradient windows; window handles on screen; tracking
 - [ ] Parallel and layer nodes
 - [ ] **Our own GPU renderer** (D-035, Truman's choice), replacing the Lumetri compile for grades:

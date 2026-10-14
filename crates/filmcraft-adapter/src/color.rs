@@ -381,6 +381,10 @@ fn lut_id(n: &Node) -> String {
     let mut table = n.clone();
     table.windows.clear();
     table.label.clear();
+    // nor Denoise and Blur Radius, which a table cannot hold (LOG D-046)
+    if let Some(q) = &mut table.qualifier {
+        (q.denoise, q.blur) = (0.0, 0.0);
+    }
     let text = serde_json::to_string(&table).unwrap_or_default();
     // FNV-1a
     let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));

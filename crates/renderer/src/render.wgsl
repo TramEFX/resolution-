@@ -23,6 +23,9 @@ struct U {
     q3: vec4<f32>,   // gamut matrix row 1, tone-mapping source peak cd/m²
     q4: vec4<f32>,   // gamut matrix row 2, tone-mapping target peak cd/m²
     q5: vec4<f32>,   // desaturation luma weights, desaturation on
+    // The grade stage (LOG D-046): the node, the axis (0 across, 1 down), Blur Radius's sigma in
+    // working pixels, and whether the node's matte comes from the mask (1).
+    g0: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> u: U;
@@ -415,48 +418,151 @@ fn coverage(n: u32, sp: vec2<f32>) -> f32 {
     return acc;
 }
 
+// Clean Black and Clean White on a key value (`Qualifier::clean`).
+fn clean(n: u32, k: f32) -> f32 {
+    let b = nf(n, 22u);
+    let wc = nf(n, 23u);
+    if b <= 0.0 && wc <= 0.0 {
+        return k;
+    }
+    return clamp((k - b) / max(1.0 - wc - b, 1e-3), 0.0, 1.0);
+}
+
+// Node n's correction of a pixel's signal, before its key and windows (`Node::tone`, then
+// `Node::color`).
+fn node_color(n: u32, inp: vec3<f32>) -> vec3<f32> {
+    var o = inp;
+    if nf(n, 0u) > 0.5 {
+        o = vec3(tone(n, 0u, o.r), tone(n, 1u, o.g), tone(n, 2u, o.b));
+    }
+    let amount = nf(n, 1u);
+    let boost = nf(n, 2u);
+    let turns = nf(n, 3u);
+    let curves = u32(nf(n, 21u));
+    if abs(amount - 1.0) > 1e-6 || abs(boost) > 1e-6 {
+        let l = luma(o);
+        let spread = clamp(max(max(o.r, o.g), o.b) - min(min(o.r, o.g), o.b), 0.0, 1.0);
+        let s = amount * (1.0 + boost * (1.0 - spread));
+        o = clamp(vec3(l) + (o - vec3(l)) * s, vec3(0.0), vec3(1.0));
+    }
+    // Hue's rotation and the hue curves together, each curve read where the pixel was
+    // (`Node::color`)
+    if abs(turns) > 1e-6 || curves != 0u {
+        let h0 = rgb_to_hsl(o);
+        var hue = h0.x + turns;
+        if (curves & 1u) != 0u { hue += round_curve(n, 0u, h0.x) - 0.5; }
+        var gain = 1.0;
+        if (curves & 2u) != 0u { gain *= 2.0 * round_curve(n, 1u, h0.x); }
+        if (curves & 8u) != 0u { gain *= 2.0 * held_curve(n, 3u, h0.z); }
+        if (curves & 16u) != 0u { gain *= 2.0 * held_curve(n, 4u, h0.y); }
+        var light = h0.z;
+        if (curves & 4u) != 0u { light = clamp(light + (round_curve(n, 2u, h0.x) - 0.5) * 0.5, 0.0, 1.0); }
+        o = clamp(hsl_to_rgb(vec3(fract(hue), clamp(h0.y * gain, 0.0, 1.0), light)), vec3(0.0), vec3(1.0));
+    }
+    return o;
+}
+
 // The grade on one pixel's signal (0..1), at source position sp (`Grade::apply`, node by node).
 fn grade(v_in: vec3<f32>, sp: vec2<f32>) -> vec3<f32> {
     var v = clamp(v_in, vec3(0.0), vec3(1.0));
     let count = u32(u.p3.y);
     for (var n = 0u; n < count; n++) {
         let inp = v;
-        var o = inp;
-        if nf(n, 0u) > 0.5 {
-            o = vec3(tone(n, 0u, o.r), tone(n, 1u, o.g), tone(n, 2u, o.b));
-        }
-        let amount = nf(n, 1u);
-        let boost = nf(n, 2u);
-        let turns = nf(n, 3u);
-        let curves = u32(nf(n, 21u));
-        if abs(amount - 1.0) > 1e-6 || abs(boost) > 1e-6 {
-            let l = luma(o);
-            let spread = clamp(max(max(o.r, o.g), o.b) - min(min(o.r, o.g), o.b), 0.0, 1.0);
-            let s = amount * (1.0 + boost * (1.0 - spread));
-            o = clamp(vec3(l) + (o - vec3(l)) * s, vec3(0.0), vec3(1.0));
-        }
-        // Hue's rotation and the hue curves together, each curve read where the pixel was
-        // (`Node::color`)
-        if abs(turns) > 1e-6 || curves != 0u {
-            let h0 = rgb_to_hsl(o);
-            var hue = h0.x + turns;
-            if (curves & 1u) != 0u { hue += round_curve(n, 0u, h0.x) - 0.5; }
-            var gain = 1.0;
-            if (curves & 2u) != 0u { gain *= 2.0 * round_curve(n, 1u, h0.x); }
-            if (curves & 8u) != 0u { gain *= 2.0 * held_curve(n, 3u, h0.z); }
-            if (curves & 16u) != 0u { gain *= 2.0 * held_curve(n, 4u, h0.y); }
-            var light = h0.z;
-            if (curves & 4u) != 0u { light = clamp(light + (round_curve(n, 2u, h0.x) - 0.5) * 0.5, 0.0, 1.0); }
-            o = clamp(hsl_to_rgb(vec3(fract(hue), clamp(h0.y * gain, 0.0, 1.0), light)), vec3(0.0), vec3(1.0));
-        }
+        let o = node_color(n, inp);
         var k = 1.0;
         if nf(n, 4u) > 0.5 {
-            k = key(n, inp);
+            k = clean(n, key(n, inp));
         }
         k *= coverage(n, sp);
         v = inp + (o - inp) * k;
     }
     return v;
+}
+
+// ---- the grade stage (LOG D-046): a layer whose qualifiers clean their key over the picture
+// is graded first at a working size, into textures of straight, display-encoded colour (tex0),
+// each node's matte in a mask (tex1), pass by pass. Per-pixel passes draw a full-screen
+// triangle (`vs_full`); positions are working pixels.
+
+fn texel(t: texture_2d<f32>, p: vec2<i32>) -> vec4<f32> {
+    let d = vec2<i32>(textureDimensions(t));
+    return textureLoad(t, clamp(p, vec2(0), d - 1), 0);
+}
+
+// The layer drawn at the working size: its colour, straight and display-encoded.
+@fragment
+fn fs_signal(in: VOut) -> @location(0) vec4<f32> {
+    let c = layer_color(in.sp);
+    if c.a <= 1e-6 {
+        return vec4(0.0);
+    }
+    return vec4(clamp(linear_to_srgb(c.rgb / c.a), vec3(0.0), vec3(1.0)), c.a);
+}
+
+// The node's key of each pixel.
+@fragment
+fn fs_key(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let s = texel(tex0, vec2<i32>(pos.xy));
+    return vec4(key(u32(u.g0.x), s.rgb), 0.0, 0.0, 1.0);
+}
+
+// Denoise: the median of each mask value and its two neighbours across or down.
+@fragment
+fn fs_median(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(pos.xy);
+    var d = vec2(1, 0);
+    if u.g0.y > 0.5 { d = vec2(0, 1); }
+    let a = texel(tex1, p - d).r;
+    let b = texel(tex1, p).r;
+    let c = texel(tex1, p + d).r;
+    return vec4(max(min(a, b), min(max(a, b), c)), 0.0, 0.0, 1.0);
+}
+
+// Clean Black and Clean White on the mask.
+@fragment
+fn fs_clean(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4(clean(u32(u.g0.x), texel(tex1, vec2<i32>(pos.xy)).r), 0.0, 0.0, 1.0);
+}
+
+// Blur Radius: the mask convolved across or down with a Gaussian to three sigmas
+// (`resolution_grade::gaussian`).
+@fragment
+fn fs_blur(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(pos.xy);
+    var d = vec2(1, 0);
+    if u.g0.y > 0.5 { d = vec2(0, 1); }
+    let sigma = u.g0.z;
+    let r = max(i32(ceil(3.0 * sigma)), 1);
+    var total = 1.0;
+    var acc = texel(tex1, p).r;
+    for (var i = 1; i <= r; i++) {
+        let w = exp(-f32(i * i) / (2.0 * sigma * sigma));
+        acc += w * (texel(tex1, p - d * i).r + texel(tex1, p + d * i).r);
+        total += 2.0 * w;
+    }
+    return vec4(acc / total, 0.0, 0.0, 1.0);
+}
+
+// The node on each pixel: its correction blended by its matte (from the mask, or keyed here) and
+// its windows, at the pixel's place in the layer's own pixels.
+@fragment
+fn fs_node(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(pos.xy);
+    let s = texel(tex0, p);
+    let n = u32(u.g0.x);
+    let inp = clamp(s.rgb, vec3(0.0), vec3(1.0));
+    let o = node_color(n, inp);
+    var k = 1.0;
+    if nf(n, 4u) > 0.5 {
+        if u.g0.w > 0.5 {
+            k = texel(tex1, p).r;
+        } else {
+            k = clean(n, key(n, inp));
+        }
+    }
+    let dims = vec2<f32>(textureDimensions(tex0));
+    k *= coverage(n, pos.xy * u.src.xy / dims);
+    return vec4(inp + (o - inp) * k, s.a);
 }
 
 // The layer's premultiplied linear colour at a pixel, graded, opacity applied.
