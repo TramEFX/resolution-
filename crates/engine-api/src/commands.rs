@@ -64,7 +64,8 @@ pub enum Risk {
 }
 
 /// Vocabulary commands that only read.
-const READ: &[&str] = &["project.inspect", "timeline.inspect", "source.inspect", "deliver.jobs", "color.inspect"];
+const READ: &[&str] =
+    &["project.inspect", "timeline.inspect", "source.inspect", "deliver.jobs", "color.inspect", "scopes.read"];
 /// Vocabulary commands that write files or replace the open project.
 const DESTRUCTIVE: &[&str] = &["project.open", "project.save", "project.saveAs", "deliver.render"];
 
@@ -271,6 +272,8 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("color.resetAll", "Reset All Grades and Nodes", Color, r#"{"clip"?: id}"#),
     c("color.previousNode", "Previous Node", Color, ""),
     c("color.nextNode", "Next Node", Color, ""),
+    // the video scopes as numbers, so agents can check a grade without looking (LOG D-030)
+    c("scopes.read", "Read Video Scopes", Color, ""),
 ];
 
 pub fn find(id: &str) -> Option<&'static CommandSpec> {

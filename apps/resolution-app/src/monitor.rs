@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
-use resolution_engine_api::Playback;
+use resolution_engine_api::{Frame, Playback};
 use resolution_playback::{AudioLost, AudioOut, AudioStats, FrameKey, FrameServer, Step, Transport, ahead};
 use serde_json::json;
 
@@ -81,6 +81,8 @@ pub struct Monitor {
     pub frame: Option<TextureHandle>,
     /// The frame in `frame`.
     pub shown: Option<FrameKey>,
+    /// The picture in `frame`, for the scopes.
+    pub picture: Option<Arc<Frame>>,
     /// Longest side, in pixels, of the frames asked for: the viewer's size on screen.
     pub view_side: u32,
     pub transport: Transport,
@@ -106,6 +108,7 @@ impl Monitor {
             frames,
             frame: None,
             shown: None,
+            picture: None,
             view_side: 960,
             transport: Transport::default(),
             pending_seek: None,
@@ -282,6 +285,7 @@ impl Monitor {
                     None => self.frame = Some(ctx.load_texture(self.texture, image, TextureOptions::LINEAR)),
                 }
                 self.shown = Some(k);
+                self.picture = Some(f);
                 if self.transport.is_playing() && !self.transport.in_preroll() {
                     self.meter.frame_shown(now);
                 }

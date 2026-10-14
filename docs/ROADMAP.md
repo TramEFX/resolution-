@@ -94,7 +94,8 @@ read, never copied into the repo.
       Curves, Resolve's node keys (D-029)
 - [ ] The rest of the Color page's first look: Gallery, Mini-Timeline, Bars and Log modes, Shadows,
       Highlights, Midtone Detail, Lum Mix
-- [ ] Scopes from `filmcraft-scopes`
+- [x] Scopes from `filmcraft-scopes`: Waveform, Parade, Vectorscope, Histogram on the Color page;
+      `scopes.read` for agents (D-030)
 - [ ] Parallel and layer nodes, qualifiers, windows
 - [ ] GPU colour pipeline: our playback on FilmCraft's GPU frame plans, and Lumetri's curves on
       the GPU upstream (D-028 measured CPU grading)
