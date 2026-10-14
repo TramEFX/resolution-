@@ -2,20 +2,22 @@
 //!
 //! ```text
 //! resolution-app [--demo | --project <path.fcproj>] [--import <file>]… [--seek <seconds>]
-//!                [--mute] [--software-decode] [--theme <name>] [--source <clip>] [--play <s>]
-//!                [--screenshot <out.png>]
+//!                [--mute] [--software-decode] [--theme <name>] [--source <clip>] [--page <name>]
+//!                [--play <s>] [--screenshot <out.png>]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
 //! (LOG D-014). `--theme` switches to a colour theme (midnight, ember, mint, rose, charcoal;
 //! LOG D-018), which is then kept, as if chosen in Workspace > Theme. `--source` opens a Media
-//! Pool clip, by name, in the source viewer. Self-tests: `--play` plays for that long once a frame
-//! is on screen, prints what was shown and heard, and quits; `--screenshot` saves the window as a
-//! PNG once a frame is on screen (after the play test, with both) and quits.
+//! Pool clip, by name, in the source viewer; `--page` starts on a page (`deliver`). Self-tests:
+//! `--play` plays for that long once a frame is on screen, prints what was shown and heard, and
+//! quits; `--screenshot` saves the window as a PNG once a frame is on screen (after the play test,
+//! with both) and quits.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod chrome;
+mod deliver;
 mod icons;
 mod keys;
 mod model;
@@ -26,7 +28,7 @@ mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--theme <name>] [--source <clip>] [--play <s>] [--screenshot <out.png>]";
+                     [--software-decode] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>]";
 
 fn options() -> Result<(app::Options, bool), String> {
     let mut o = app::Options::default();
@@ -44,6 +46,7 @@ fn options() -> Result<(app::Options, bool), String> {
             "--software-decode" => software_decode = true,
             "--theme" => o.theme = Some(value("--theme")?),
             "--source" => o.source = Some(value("--source")?),
+            "--page" => o.page = Some(value("--page")?),
             "--screenshot" => o.screenshot = Some(value("--screenshot")?.into()),
             other => return Err(format!("unknown argument `{other}`")),
         }

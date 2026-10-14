@@ -64,9 +64,9 @@ pub enum Risk {
 }
 
 /// Vocabulary commands that only read.
-const READ: &[&str] = &["project.inspect", "timeline.inspect", "source.inspect"];
+const READ: &[&str] = &["project.inspect", "timeline.inspect", "source.inspect", "deliver.jobs"];
 /// Vocabulary commands that write files or replace the open project.
-const DESTRUCTIVE: &[&str] = &["project.open", "project.save", "project.saveAs"];
+const DESTRUCTIVE: &[&str] = &["project.open", "project.save", "project.saveAs", "deliver.render"];
 
 /// The risk of a vocabulary command (`None` for ids outside the vocabulary).
 pub fn risk(id: &str) -> Option<Risk> {
@@ -234,6 +234,15 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("view.zoomIn", "Zoom In", Edit, ""),
     c("view.zoomOut", "Zoom Out", Edit, ""),
     c("view.zoomToFit", "Zoom to Fit", Edit, ""),
+    // the Deliver page: render the timeline to a file (an engine job; poll `deliver.jobs`)
+    c(
+        "deliver.render",
+        "Render",
+        Deliver,
+        r#"{"path": string, "preset"?: string, "range"?: "entire"|"inOut", "format"?: string, "width"?: int, "height"?: int}"#,
+    ),
+    c("deliver.jobs", "Render Jobs", Deliver, "query; returns every render job: progress, seconds left, result"),
+    c("deliver.cancel", "Stop Render", Deliver, r#"{"job": id}"#),
 ];
 
 pub fn find(id: &str) -> Option<&'static CommandSpec> {

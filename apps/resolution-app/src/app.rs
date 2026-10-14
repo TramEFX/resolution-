@@ -25,6 +25,7 @@ use resolution_playback::AudioOut;
 use serde_json::json;
 
 use crate::chrome::{self, State};
+use crate::deliver::{self, Deliver};
 use crate::icons::Icon;
 use crate::model::{self, Kind, MediaItem, SourceClip, Timeline};
 use crate::monitor::{Monitor, Sound};
@@ -60,6 +61,8 @@ pub struct Options {
     pub theme: Option<String>,
     /// A Media Pool clip (by name) to open in the source viewer once the project is loaded.
     pub source: Option<String>,
+    /// The page to start on (`--page deliver`).
+    pub page: Option<String>,
 }
 
 /// Commands that run at the frame on screen without stopping playback.
@@ -145,6 +148,7 @@ pub struct ResolutionApp {
     active: Viewer,
     sound: Sound,
     waveforms: Waveforms,
+    deliver: Deliver,
     clock: Instant,
     play_test: Option<PlayTest>,
     /// Where the timeline is zoomed and scrolled.
@@ -187,7 +191,11 @@ impl ResolutionApp {
             worker,
             keymap: Keymap::resolve(),
             look,
-            page: Page::Edit,
+            page: options
+                .page
+                .as_deref()
+                .and_then(|n| Page::ALL.into_iter().find(|p| p.name() == n))
+                .unwrap_or(Page::Edit),
             workspace: Workspace::default(),
             mode: EditMode::Selection,
             project_name: None,
@@ -202,6 +210,7 @@ impl ResolutionApp {
                 let ctx = cc.egui_ctx.clone();
                 Waveforms::new(move || ctx.request_repaint())
             },
+            deliver: Deliver::new(),
             clock: Instant::now(),
             play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
             nav: timeline_ui::Nav::default(),
@@ -275,6 +284,29 @@ impl ResolutionApp {
     fn apply(&mut self, reply: Reply) {
         match reply {
             Reply::Ran { id, result } => {
+                // renders report on the Deliver page, not as "done"
+                match id.as_str() {
+                    "deliver.render" => {
+                        let job = result.and_then(|o| {
+                            o.result["job"].as_u64().ok_or_else(|| "the engine started no job".to_string())
+                        });
+                        if let Err(e) = &job {
+                            self.say(format!("Render failed: {e}"), true);
+                        }
+                        self.deliver.started(job);
+                        return;
+                    }
+                    "deliver.jobs" => {
+                        if let Ok(out) = result {
+                            for path in self.deliver.update(&out.result) {
+                                self.say(format!("Rendered {}", path.display()), false);
+                            }
+                        }
+                        return;
+                    }
+                    "deliver.cancel" => return,
+                    _ => {}
+                }
                 match id.as_str() {
                     "playhead.set" => self.timeline_viewer.seek_answered(),
                     "source.seek" => self.source_viewer.seek_answered(),
@@ -613,6 +645,10 @@ impl ResolutionApp {
         let rect = ui.max_rect();
         let name = self.project_name.as_deref().unwrap_or("Untitled Project");
         ui.painter().text(rect.center(), Align2::CENTER_CENTER, name, look.medium(), look.theme.text);
+        // the panel buttons belong to the Edit page
+        if self.page != Page::Edit {
+            return;
+        }
         let w = self.workspace;
         let mut run: Option<&'static str> = None;
         ui.horizontal_centered(|ui| {
@@ -1270,6 +1306,85 @@ impl ResolutionApp {
         });
     }
 
+    /// Renders: start the next queued one when Render All is on, and follow the running one.
+    fn deliver_tick(&mut self, ctx: &egui::Context) {
+        if let Some(i) = self.deliver.next() {
+            self.deliver.queue[i].status = deliver::Status::Starting;
+            self.worker.run("deliver.render", self.deliver.queue[i].params());
+        }
+        if self.deliver.busy() {
+            let now = self.clock.elapsed().as_secs_f64();
+            if now - self.deliver.last_poll > 0.4 {
+                self.deliver.last_poll = now;
+                self.worker.run("deliver.jobs", json!({}));
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+    }
+
+    /// The Deliver page: render settings on the left, the timeline viewer, the render queue on
+    /// the right, the timeline below (for In and Out).
+    fn deliver_page(&mut self, ui: &mut Ui) {
+        let look = self.look;
+        let t = look.theme;
+        let fill = |c: Color32| Frame::new().fill(c);
+        // a shorter timeline than the Edit page's: here it is for In and Out
+        egui::Panel::bottom("deliver-timeline")
+            .resizable(true)
+            .default_size(220.0)
+            .min_size(180.0)
+            .frame(fill(t.panel))
+            .show(ui, |ui| self.timeline_panel(ui));
+        let timeline = self.timeline.as_ref().map(|t| t.name.clone());
+        let has_marks = self.timeline.as_ref().is_some_and(|t| t.mark_in.is_some() || t.mark_out.is_some());
+        let mut asks = Vec::new();
+        egui::Panel::left("deliver-settings")
+            .resizable(true)
+            .default_size(300.0)
+            .min_size(240.0)
+            .frame(fill(t.panel))
+            .show(ui, |ui| {
+                asks.extend(deliver::settings(ui, &look, &mut self.deliver, timeline.as_deref(), has_marks))
+            });
+        egui::Panel::right("deliver-queue")
+            .resizable(true)
+            .default_size(320.0)
+            .min_size(240.0)
+            .frame(fill(t.panel))
+            .show(ui, |ui| asks.extend(deliver::queue(ui, &look, &self.deliver)));
+        egui::CentralPanel::default().frame(fill(t.panel)).show(ui, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            self.viewer(ui, rect, Viewer::Timeline);
+            ui.allocate_rect(rect, Sense::hover());
+        });
+        for ask in asks {
+            match ask {
+                deliver::Ask::Browse => {
+                    if let Some(dir) = rfd::FileDialog::new().set_directory(&self.deliver.folder).pick_folder() {
+                        self.deliver.folder = dir;
+                    }
+                }
+                deliver::Ask::Add => {
+                    if let Some(name) = &timeline {
+                        let text = format!("Queued {}", self.deliver.add(name).path.display());
+                        self.say(text, false);
+                    }
+                }
+                deliver::Ask::RenderAll => self.deliver.running = true,
+                deliver::Ask::Stop(i) => {
+                    if let Some(job) = self.deliver.queue.get(i).and_then(|j| j.job) {
+                        self.worker.run("deliver.cancel", json!({ "job": job }));
+                    }
+                }
+                deliver::Ask::Remove(i) => {
+                    if i < self.deliver.queue.len() {
+                        self.deliver.queue.remove(i);
+                    }
+                }
+            }
+        }
+    }
+
     /// `--play`: once a frame is on screen, play for the time asked, report, stop, and quit (or
     /// hand over to `--screenshot`).
     fn play_test(&mut self, ctx: &egui::Context) {
@@ -1373,6 +1488,7 @@ impl eframe::App for ResolutionApp {
         }
         self.read_keys(&ctx);
         self.advance_viewers(&ctx);
+        self.deliver_tick(&ctx);
 
         let look = self.look;
         let t = look.theme;
@@ -1399,6 +1515,11 @@ impl eframe::App for ResolutionApp {
                     });
                 });
             });
+        if self.page == Page::Deliver {
+            self.deliver_page(ui);
+            self.self_test(&ctx);
+            return;
+        }
         if self.page != Page::Edit {
             egui::CentralPanel::default().frame(fill(t.panel)).show(ui, |ui| {
                 ui.centered_and_justified(|ui| {
@@ -1906,6 +2027,47 @@ mod tests {
         let t = h.state().timeline.clone().expect("new timeline");
         assert_eq!((t.width, t.height, t.rate), (before.width, before.height, before.rate));
         assert!(t.video.iter().chain(&t.audio).all(|tr| tr.clips.is_empty()), "it starts empty");
+    }
+
+    #[test]
+    fn the_deliver_page_renders_the_timeline_to_a_file() {
+        let mut h = demo();
+        let dir = std::env::temp_dir().join(format!("resolution-render-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("render folder");
+        // two seconds: In at the first frame, Out at the 48th
+        for (id, params) in [
+            ("playhead.set", json!({ "frame": 0 })),
+            ("mark.in", json!({})),
+            ("playhead.set", json!({ "frame": 47 })),
+            ("mark.out", json!({})),
+        ] {
+            h.state().worker.run(id, params);
+        }
+        pump(&mut h, "In and Out on the timeline", |a| a.timeline.as_ref().is_some_and(|t| t.mark_out.is_some()));
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Num8);
+        pump(&mut h, "the Deliver page", |a| a.page == Page::Deliver);
+        {
+            let d = &mut h.state_mut().deliver;
+            d.folder = dir.clone();
+            d.name = "two seconds".into();
+        }
+        click(&mut h, "In/Out Range");
+        assert!(h.state().deliver.in_out);
+        click(&mut h, "Add to Render Queue");
+        assert_eq!(h.state().deliver.queue.len(), 1);
+        click(&mut h, "Render All");
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !matches!(h.state().deliver.queue[0].status, deliver::Status::Done | deliver::Status::Failed(_)) {
+            assert!(Instant::now() < deadline, "the render did not finish: {:?}", h.state().deliver.queue[0].status);
+            h.step();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(h.state().deliver.queue[0].status, deliver::Status::Done);
+        let file = dir.join("two seconds.mp4");
+        let size = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+        assert!(size > 1000, "{} is {size} bytes", file.display());
+        assert!(!h.state().deliver.running);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

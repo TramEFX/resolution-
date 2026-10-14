@@ -69,7 +69,8 @@ read, never copied into the repo.
       scrolling (D-023); audio waveforms (D-022); markers on the ruler; New Timeline (D-024).
       F11 (replace) and F12 (place on top) remain, under the edit types below.
 - [ ] **Step 2's bar:** Truman cuts a one-minute piece from the Sony and Samsung clips
-- [ ] **Step 3:** minimal Deliver page: an H.264 preset and a render queue (`file.exportMedia`)
+- [x] **Step 3:** minimal Deliver page: presets, a render queue and Render All over the engine's
+      export (`deliver.render`, D-025)
 - [ ] Resolve edit types the engine lacks: place on top, ripple overwrite, fit to fill,
       append at end, replace; Trim mode semantics; dynamic trim
 - [ ] Faster playback where it is slow: GPU compositing for effects-heavy timelines, proxies for
