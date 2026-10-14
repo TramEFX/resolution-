@@ -68,7 +68,8 @@ FilmCraft undo step holding both the metadata and the effects. A node's windows 
 its Lumetri effects, in the clip's pixels (LOG D-031). A qualified node, key and all, is baked into a
 33-point LUT in the project's LUT library and carried by one Lumetri effect (D-032, D-033). Lumetri runs these on the CPU. The
 viewers instead draw graded frames on Resolution's own GPU renderer, with the grade's own math and
-real key masks (next section); frame renders and Deliver use the compile until G3 (D-035).
+real key masks (next section), and so does Deliver (D-042); frame renders for agents and the frames
+the GPU declines use the compile.
 
 ## The GPU renderer (`crates/renderer`, LOG D-035, D-036)
 
@@ -100,6 +101,12 @@ for frames left there (`RenderHints::gpu`): a `Frame` then carries the renderer'
 (`Frame::gpu`, an opaque `GpuPicture`) instead of pixels, and the viewer draws it as an egui
 native texture without a copy back to memory (D-039). Anything wanting the pixels (the scopes,
 the qualifier's picker) reads them back with `Frame::pixels`.
+
+Deliver uses it too (D-042): the adapter registers `ExportFrames` as FilmCraft's export frame
+renderer, and `deliver.render` asks for GPU rendering. Each export worker's renderer makes the
+graded copy of the export's project once, then draws every frame as the viewers do, handing it
+back as the linear canvas (`Renderer::render_linear`) the export expects from FilmCraft's CPU
+renderer. Frames it declines render on the CPU, from the project with its compiled grades.
 
 ## The editor (`apps/resolution-app`)
 
