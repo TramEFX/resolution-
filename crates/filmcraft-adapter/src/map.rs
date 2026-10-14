@@ -125,6 +125,9 @@ pub const MAP: &[(&str, Target)] = &[
     ("view.zoomIn", Ui),
     ("view.zoomOut", Ui),
     ("view.zoomToFit", Ui),
+    ("deliver.render", Engine("file.exportMedia")),
+    ("deliver.jobs", Engine("jobs.list")),
+    ("deliver.cancel", Engine("jobs.cancel")),
 ];
 
 pub fn target(id: &str) -> Option<Target> {

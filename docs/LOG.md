@@ -72,6 +72,7 @@ doc is updated *and* the entry says which section moved.
 | D-022 | 2026-10-13 | ui | Waveforms come from `Playback::peaks`, read on a background thread | active |
 | D-023 | 2026-10-13 | ui | Timeline navigation follows Resolve's wheel and scroll-bar controls; the view pages to the playhead | active |
 | D-024 | 2026-10-13 | ui | New Timeline (Ctrl+N) starts empty in the open timeline's format; the source viewer shows the media's own timecode | active |
+| D-025 | 2026-10-13 | ui | A minimal Deliver page: presets, a render queue the app keeps, renders as engine export jobs | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1234,3 +1235,41 @@ viewer shows it.
 **Checked:** a UI test presses Ctrl+N: one more timeline, open, empty, the same format. A model
 test reads the start timecode. A screenshot of the Sony clip in the source viewer reads
 02:01:12:00.
+
+### D-025 — A minimal Deliver page: presets, a render queue the app keeps, renders as engine export jobs
+**Area:** ui · **Status:** active · **Doc:** ROADMAP step 3; `apps/resolution-app/src/deliver.rs`
+
+**Decision:** the Deliver page follows Resolve's layout.
+- **Left:** Render Settings.
+  - Six presets, each mapped to one of FilmCraft's: Match Source (H.264), H.264 1080p,
+    H.264 2160p 4K, YouTube 1080p, Vertical 1080 × 1920, ProRes 422 HQ.
+  - A file name, defaulting to the timeline's name, and a location, defaulting to the user's
+    Videos folder.
+  - Entire Timeline or In/Out Range, then Add to Render Queue.
+- **Middle:** the timeline viewer.
+- **Right:** the Render Queue, with a progress bar and time left for each job, and Render All.
+- **Below:** a shorter timeline, for In and Out.
+
+Three vocabulary ids pass straight to FilmCraft:
+- `deliver.render` is `file.exportMedia`. It is destructive, because it writes a file, so agents
+  must acknowledge it.
+- `deliver.jobs` is `jobs.list`, a read.
+- `deliver.cancel` is `jobs.cancel`.
+
+The queue lives in the app. FilmCraft has a queue type but no commands for it. Render All starts
+one job at a time and polls `deliver.jobs` every 0.4 s while one runs. A name already on disk or
+already queued gets a number, so nothing is overwritten.
+
+**Why:** an edit must end in a file before the bar test means anything. FilmCraft already
+renders well (H.264, ProRes, DNxHR and more, with background jobs and progress), so this page is
+UI over it.
+
+**Checked:**
+- A UI test marks two seconds of the demo, switches to Deliver with Shift+8, chooses In/Out,
+  adds, renders and finds the file.
+- The same two seconds rendered over MCP (`deliver.render` with `wait`) and checked with
+  ffprobe: H.264 1920×1080 at 23.976, exactly 48 frames, AAC 48 kHz stereo, 2.005 s.
+- A screenshot of the page.
+
+**Not yet:** custom settings (codec, size, bitrate), audio-only renders, and keeping the queue
+in the project. Resolve also has per-job thumbnails and a render-time readout.
