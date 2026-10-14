@@ -80,7 +80,7 @@ doc is updated *and* the entry says which section moved.
 | B-027 | 2026-10-13 | engine | `timeline.duplicate` put the copy at the top of the project; Resolve puts it in the original's bin | fixed |
 | B-028 | 2026-10-13 | ui | An agent's edit was lost, though reported made, when its draft failed after the copy | fixed |
 | D-027 | 2026-10-13 | ui | An agent's edits go to a draft of the timeline, which only the user accepts or rejects | active |
-| D-028 | 2026-10-14 | color | Grades are Resolution's own node model, compiled to FilmCraft Lumetri effects on each clip | active |
+| D-028 | 2026-10-14 | color | Grades are Resolution's own node model, compiled to FilmCraft Lumetri effects on each clip | active (the compile: for FilmCraft and renders without a GPU since D-044) |
 | B-029 | 2026-10-14 | color | `color.inspect` showed 0.30000001192092896 for a control set to 0.3 | fixed |
 | D-029 | 2026-10-14 | ui | The Color page: viewer, Node Editor, clip strip, Primaries wheels and Custom Curves in Resolve's places | active |
 | B-030 | 2026-10-14 | ui | The Color page's clip strip drew its tiles one text line tall: no pictures, no names | fixed |
@@ -89,14 +89,14 @@ doc is updated *and* the entry says which section moved.
 | D-030 | 2026-10-14 | color | Video scopes: drawn by the engine from the frame the viewer shows; read as numbers by agents | active |
 | B-033 | 2026-10-14 | ui | The Color page's palettes shrank a few points every frame, down to their minimum | fixed |
 | D-031 | 2026-10-14 | color | Windows: Linear and Circle windows on a node, compiled to FilmCraft effect masks | active |
-| D-032 | 2026-10-14 | color | Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal | active (built: D-033) |
-| D-033 | 2026-10-14 | color | The qualifier as built: Resolve's HSL ranges, a qualified node baked into a 33-point project LUT | active |
+| D-032 | 2026-10-14 | color | Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal | done (built: D-033; real keys: D-036, D-044) |
+| D-033 | 2026-10-14 | color | The qualifier as built: Resolve's HSL ranges, a qualified node baked into a 33-point project LUT | active (the LUT: the compile's only since D-044) |
 | D-034 | 2026-10-14 | tools | An action journal: every command, who sent it, how long it took and how it ended, for finding failures and freezes | planned |
-| D-035 | 2026-10-14 | color | Our own GPU renderer: the viewer's frames, with Resolution's grade math run exactly on the GPU | active (G1 built: D-036) |
+| D-035 | 2026-10-14 | color | Our own GPU renderer: the viewer's frames, with Resolution's grade math run exactly on the GPU | active (G1 to G3 built: D-036 to D-042) |
 | B-034 | 2026-10-14 | color | The GPU renderer blended 8-bit sRGB pixels before decoding them: enlarged pictures went dark between pixels | fixed |
 | B-035 | 2026-10-14 | color | The GPU renderer drew 8-bit camera video about one code value too red and too blue | fixed |
 | D-036 | 2026-10-14 | color | G1 built: the viewers' frames on Resolution's GPU renderer, grades by their own math | active |
-| D-037 | 2026-10-14 | color | G2, step 1: every frame FilmCraft plans as layers is drawn on the GPU; graded clips known by their pictures | active |
+| D-037 | 2026-10-14 | color | G2, step 1: every frame FilmCraft plans as layers is drawn on the GPU; graded clips known by their pictures | active (Lumetri kept on clips with other effects: replaced by D-044) |
 | D-038 | 2026-10-14 | color | G2, step 2: blend modes, Push and HDR media on the GPU, ported from FilmCraft's compositor | active |
 | D-039 | 2026-10-14 | color | G2, step 3: the viewers show the renderer's frames on the GPU, without a copy back | off for now (B-036) |
 | D-040 | 2026-10-14 | color | G2, step 4: a shrunk picture averages all its pixels; chroma read as sited left | active |

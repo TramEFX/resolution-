@@ -1,4 +1,4 @@
-//! The viewers' frames, and Deliver's, on Resolution's GPU renderer (LOG D-035 to D-044).
+//! The viewers' frames, and Deliver's, on Resolution's GPU renderer (LOG D-035 to D-045).
 //!
 //! Each playback snapshot keeps a copy of its timeline in which every graded clip has its
 //! grade's Lumetri effects taken off and points at a stand-in media item of its own: a copy of its
@@ -20,7 +20,7 @@
 //! math; everything else as FilmCraft planned it (solids for dips, captions, titles and clips
 //! FilmCraft rendered on the CPU, pictures with their opacity, blend mode and colour management;
 //! Push transitions between their two sides). A layer carrying FilmCraft's standard effects has
-//! them run on the CPU for that layer alone (their GPU port is a later step of G2).
+//! them run on the CPU for that layer alone (their GPU port waits for an Effects panel, D-041).
 //!
 //! The whole frame is drawn by FilmCraft's CPU renderer from the copy, every graded clip's
 //! pictures graded at their source ([`Graded::render_cpu`]), when:

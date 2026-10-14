@@ -74,8 +74,9 @@ read, never copied into the repo.
       export (`deliver.render`, D-025)
 - [ ] Resolve edit types the engine lacks: place on top, ripple overwrite, fit to fill,
       append at end, replace; Trim mode semantics; dynamic trim
-- [ ] Faster playback where it is slow: GPU compositing for effects-heavy timelines, proxies for
-      footage too slow to decode (D-013 "Known limits")
+- [ ] Faster playback where it is slow: frames are composited on the GPU since D-036 to D-038;
+      standard effects on the GPU (D-041), proxies for footage too slow to decode (D-013 "Known
+      limits")
 - [ ] Proxies / optimized media workflow with Resolve's naming
 
 ## M3 — Agents in the editor (step 4)
@@ -97,9 +98,11 @@ read, never copied into the repo.
 - [x] Scopes from `filmcraft-scopes`: Waveform, Parade, Vectorscope, Histogram on the Color page;
       `scopes.read` for agents (D-030)
 - [x] Windows: Linear and Circle, as FilmCraft effect masks, with an on-screen control (D-031)
-- [x] Qualifiers: an HSL key limiting the whole node, baked into a 3D LUT for now (D-032, D-033)
+- [x] Qualifiers: an HSL key limiting the whole node (D-032, D-033): a real key on the GPU (D-036,
+      D-044), baked into a 3D LUT in the Lumetri compile
 - [x] Hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat (D-043)
-- [ ] Sat vs Lum; picking a hue curve's points from the viewer
+- [ ] Sat vs Lum (no longer blocked: Lumetri need not carry it since D-044); picking a hue curve's
+      points from the viewer
 - [x] Matte finesse: Denoise, Clean Black, Clean White, Blur Radius (D-046)
 - [ ] More matte finesse (Black and White Clip, In/Out Ratio, Morph), Highlight view, RGB and Luma
       qualifier modes
@@ -109,17 +112,21 @@ read, never copied into the repo.
   - [x] G1: the viewers' frames on the GPU, with the grade stage (tone, saturation, real key masks,
         windows) exact to `crates/grade`; FilmCraft's CPU renderer for what it does not cover yet
         (D-036; graded 4K plays at 24 fps on the GPU where the CPU managed 14)
-  - [x] G2: the rest of the viewers' frames on the GPU, and to the screen without a copy back
+  - [x] G2: the rest of the viewers' frames on the GPU (to the screen without a copy back: off)
     - [x] Dissolves, dips, titles, captions and clips FilmCraft renders itself; graded clips known
           by their pictures (D-037)
     - [x] Blend modes, Push, colour management of HDR and wide-gamut media (D-038)
     - [ ] Standard effects on the GPU: waits for an Effects panel (D-041); they run on the CPU per
           layer meanwhile
-    - [x] Frames to the screen without a copy back (D-039)
+    - [ ] Frames to the screen without a copy back (D-039): built, then turned off since it
+          crashed the editor on a resize (B-036); needs the GPU work on the UI thread
     - [x] Chroma siting; shrinking by more than 4× (D-040)
   - [x] G3: Deliver through the same renderer, so viewer and file are identical (D-042; 2 to 3×
         faster on graded 4K)
-  - [ ] Later: parallel and layer nodes, matte finesse, no clamping between nodes
+  - [x] Grades by their own math on every path, graded at their source where FilmCraft draws a
+        frame itself; the compile only for FilmCraft and renders without a GPU (D-044, D-045)
+  - [x] A grade stage for mattes that need a pixel's neighbours (D-046)
+  - [ ] Later: parallel and layer nodes, no clamping between nodes
 
 ## M5 — Cut page and Media page
 

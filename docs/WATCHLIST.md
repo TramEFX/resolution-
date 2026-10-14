@@ -34,6 +34,7 @@ Full register (20 items, with evidence) in the research report. The ones that bi
   decode swappable (FFmpeg/GStreamer backend as a fallback).
 - **Playback lives in the UI crate**, so a new front end must rebuild or extract it.
 - **CPU-bound colour, keys, masks and export.** A Resolve-class Color page is our own GPU work.
+  → Built: Resolution's own GPU renderer, for the viewers and Deliver (LOG D-035 to D-046).
 - **Security:** custom parsers for untrusted media, a TCP control port, light fuzzing.
   → Continuous fuzzing; loopback + token on every port.
 - **Bus factor ≈ 1; ~93% of commits AI co-authored.** → Be ready to own the engine outright
