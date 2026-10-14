@@ -2640,6 +2640,23 @@ mod tests {
     }
 
     #[test]
+    fn sat_vs_lum_is_on_the_curves_menu() {
+        let mut h = on_color_page();
+        click(&mut h, "Custom ▾");
+        click(&mut h, "Sat vs Lum");
+        pump(&mut h, "the Sat vs Lum curve", |a| a.color.curve_mode == crate::color_page::CurveMode::SatLum);
+        let plot = h.get_by_label("Sat vs Lum curve").rect();
+        // a drag down at the saturated end darkens the most saturated colours
+        let full = pos2(plot.left() + plot.width() * 0.95, plot.center().y);
+        drag(&mut h, full, full + vec2(0.0, plot.height() * 0.3));
+        pump(&mut h, "saturated colours darker, through the engine", |a| {
+            !a.color.dragging
+                && graded_clip(a).is_some_and(|c| c.graded)
+                && a.color.current().is_some_and(|n| n.curves.sat_lum.eval(0.95, false) < 0.35)
+        });
+    }
+
+    #[test]
     fn clicking_a_clip_in_the_strip_grades_that_clip() {
         let mut h = on_color_page();
         let clips = h.state().strip_clips();

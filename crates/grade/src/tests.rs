@@ -374,6 +374,23 @@ fn lum_vs_sat_and_sat_vs_sat_follow_lightness_and_saturation() {
 }
 
 #[test]
+fn sat_vs_lum_lightens_by_saturation() {
+    // the most saturated colours lightened by the most Sat vs Lum gives; dull ones as they were
+    let n = node(json!({ "curves": { "sat_lum": [[0.0, 0.5], [0.5, 0.5], [0.9, 1.0]] } }));
+    assert!(!n.is_neutral());
+    let red = n.apply([1.0, 0.0, 0.0]);
+    let out = hsl(red);
+    assert!(close(out[2], 0.75, 1e-3), "a full red lightened by a quarter: {red:?}");
+    // (hue in turns: 0.99999994 is red too)
+    let turn = out[0].rem_euclid(1.0);
+    assert!(close(out[1], 1.0, 1e-3) && turn.min(1.0 - turn) < 1e-3, "and still a full red: {out:?}");
+    for dull in [[0.6, 0.4, 0.4], [0.5, 0.5, 0.5]] {
+        let o = n.apply(dull);
+        assert!((0..3).all(|k| close(o[k], dull[k], 1e-4)), "{dull:?} as it was: {o:?}");
+    }
+}
+
+#[test]
 fn hue_rotation_and_hue_vs_hue_add_up_as_one_turn() {
     let rotated = node(json!({ "hue": 60.0 }));
     let both = node(json!({ "hue": 60.0, "curves": { "hue_hue": [[0.0, 0.6], [0.5, 0.6]] } }));

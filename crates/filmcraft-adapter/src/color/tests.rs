@@ -16,10 +16,14 @@ fn node(controls: Value) -> Node {
     n
 }
 
-/// The frame at the playhead, `side` pixels on its long side.
+/// The frame at the playhead, `side` pixels on its long side, as FilmCraft renders the project
+/// itself: through the grades compiled to Lumetri, which these tests are about. `render_frame`
+/// draws the grade's own math instead (LOG D-044, B-037).
 fn frame(e: &FilmCraftEngine, side: u32) -> Vec<[f32; 3]> {
-    let f = e.render_frame(None, side).unwrap();
-    f.rgba.chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect()
+    let s = &e.session.active_sequence().unwrap().settings;
+    let scale = (side as f32 / s.width.max(s.height) as f32).min(1.0);
+    let img = e.session.try_render_program_at(scale, e.session.playhead()).unwrap();
+    img.over_black_rgba8().chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect()
 }
 
 fn adjust(e: &mut FilmCraftEngine, controls: Value) -> Outcome {
@@ -119,6 +123,37 @@ fn the_rendered_frame_follows_the_hue_curves() {
     // Sat vs Sat's end, not Lumetri's join between its ends)
     assert!(p99 <= 1.0 && worst <= 1.5, "99% {p99}, worst {worst}");
     assert!(before.iter().zip(&after).any(|(b, a)| (b[0] - a[0]).abs() > 0.02), "the grade changed the picture");
+}
+
+/// Sat vs Lum (LOG D-047), which Lumetri has no curve for: the node is baked into a table, as a
+/// qualified node is, and FilmCraft's render follows the math.
+#[test]
+fn sat_vs_lum_is_baked_into_a_table() {
+    let mut e = demo();
+    let before = frame(&e, 1920);
+    let controls = json!({"saturation": 70.0, "curves": {"sat_lum": [[0.1, 0.5], [0.6, 0.3], [1.0, 0.2]]}});
+    adjust(&mut e, controls.clone());
+    let n = node(controls);
+    assert_eq!(compile(&Grade { nodes: vec![n.clone()] }, (1920, 1080)).len(), 1, "one effect: the table");
+    let luts: Vec<&ProjectLut> = e.session.project.luts.iter().filter(|l| l.id.starts_with(LUT_PREFIX)).collect();
+    assert_eq!(luts.len(), 1, "one table in the project");
+    assert_eq!(luts[0].name, "Resolution node");
+    let after = frame(&e, 1920);
+    let mut off: Vec<f32> = before
+        .iter()
+        .zip(&after)
+        .map(|(b, a)| {
+            let want = n.apply(*b);
+            (0..3).map(|k| (want[k] - a[k]).abs()).fold(0.0, f32::max) * 255.0
+        })
+        .collect();
+    off.sort_by(f32::total_cmp);
+    let (p99, worst) = (off[off.len() * 99 / 100], off[off.len() - 1]);
+    eprintln!("Sat vs Lum through its table: 99% within {p99:.2}, worst {worst:.2} code values");
+    // measured 2026-10-14: 99 % within 5.4, worst 7.0, a table being coarse where saturation moves
+    // fast: the pixels more than 3 off are darker than the frame (lightness 0.17 against 0.30)
+    assert!(p99 <= 6.0 && worst <= 8.0, "99% {p99}, worst {worst}");
+    assert!(before.iter().zip(&after).any(|(b, a)| (b[0] - a[0]).abs() > 0.05), "the grade changed the picture");
 }
 
 #[test]

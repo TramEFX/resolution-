@@ -42,8 +42,8 @@ struct U {
 const TONE_N: u32 = 4096u;
 const NODE_FLOATS: u32 = 104u;
 // Tables per node: three tone functions, then the hue curves (Hue vs Hue, Hue vs Sat, Hue vs Lum,
-// Lum vs Sat, Sat vs Sat).
-const TABLES: u32 = 8u;
+// Lum vs Sat, Sat vs Sat, Sat vs Lum).
+const TABLES: u32 = 9u;
 
 struct VOut {
     @builtin(position) pos: vec4<f32>,
@@ -289,7 +289,7 @@ fn round_curve(n: u32, c: u32, x: f32) -> f32 {
     return mix(tones[base + i], tones[base + j], p - floor(p));
 }
 
-// Lum vs Sat (`c` 3) or Sat vs Sat (4) of node `n` at `x`: sampled end to end.
+// Lum vs Sat (`c` 3), Sat vs Sat (4) or Sat vs Lum (5) of node `n` at `x`: sampled end to end.
 fn held_curve(n: u32, c: u32, x: f32) -> f32 {
     return tone(n, 3u + c, x);
 }
@@ -456,7 +456,9 @@ fn node_color(n: u32, inp: vec3<f32>) -> vec3<f32> {
         if (curves & 8u) != 0u { gain *= 2.0 * held_curve(n, 3u, h0.z); }
         if (curves & 16u) != 0u { gain *= 2.0 * held_curve(n, 4u, h0.y); }
         var light = h0.z;
-        if (curves & 4u) != 0u { light = clamp(light + (round_curve(n, 2u, h0.x) - 0.5) * 0.5, 0.0, 1.0); }
+        if (curves & 4u) != 0u { light += (round_curve(n, 2u, h0.x) - 0.5) * 0.5; }
+        if (curves & 32u) != 0u { light += (held_curve(n, 5u, h0.y) - 0.5) * 0.5; }
+        light = clamp(light, 0.0, 1.0);
         o = clamp(hsl_to_rgb(vec3(fract(hue), clamp(h0.y * gain, 0.0, 1.0), light)), vec3(0.0), vec3(1.0));
     }
     return o;

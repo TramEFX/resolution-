@@ -286,7 +286,8 @@ impl Node {
     ///   turn);
     /// - saturation is multiplied by twice each of Hue vs Sat, Lum vs Sat and Sat vs Sat (the
     ///   middle line is ×1, the top ×2, the bottom grey);
-    /// - lightness moves by half of Hue vs Lum's distance from the middle line.
+    /// - lightness moves by half of Hue vs Lum's distance from the middle line, and by half of
+    ///   Sat vs Lum's (LOG D-047).
     pub fn color(&self, rgb: [f32; 3]) -> [f32; 3] {
         let s = self.saturation();
         let mut v = s.boosted(rgb);
@@ -295,7 +296,7 @@ impl Node {
             let [h0, s0, l0] = rgb_to_hsl(v);
             let hue = (h0 + s.hue_turns + c.hue_hue.eval(h0, true) - 0.5).rem_euclid(1.0);
             let gain = 8.0 * c.hue_sat.eval(h0, true) * c.lum_sat.eval(l0, false) * c.sat_sat.eval(s0, false);
-            let light = l0 + (c.hue_lum.eval(h0, true) - 0.5) * 0.5;
+            let light = l0 + (c.hue_lum.eval(h0, true) - 0.5) * 0.5 + (c.sat_lum.eval(s0, false) - 0.5) * 0.5;
             v = hsl_to_rgb([hue, (s0 * gain).clamp(0.0, 1.0), light.clamp(0.0, 1.0)]).map(|q| q.clamp(0.0, 1.0));
         }
         v
@@ -761,11 +762,20 @@ pub struct Curves {
     /// Sat vs Sat: by saturation, the saturation.
     #[serde(default, skip_serializing_if = "HslCurve::is_empty")]
     pub sat_sat: HslCurve,
+    /// Sat vs Lum: by saturation, the lightness (LOG D-047).
+    #[serde(default, skip_serializing_if = "HslCurve::is_empty")]
+    pub sat_lum: HslCurve,
 }
 
 /// The hue curves' JSON names, in order, and whether each runs round the colour wheel.
-pub const HSL_CURVES: [(&str, bool); 5] =
-    [("hue_hue", true), ("hue_sat", true), ("hue_lum", true), ("lum_sat", false), ("sat_sat", false)];
+pub const HSL_CURVES: [(&str, bool); 6] = [
+    ("hue_hue", true),
+    ("hue_sat", true),
+    ("hue_lum", true),
+    ("lum_sat", false),
+    ("sat_sat", false),
+    ("sat_lum", false),
+];
 
 impl Curves {
     /// Whether the Custom Curves are all the identity (the hue curves aside).
@@ -779,23 +789,25 @@ impl Curves {
     }
 
     /// The hue curves in [`HSL_CURVES`]' order, each with whether it runs round the wheel.
-    pub fn hsl(&self) -> [(&HslCurve, bool); 5] {
+    pub fn hsl(&self) -> [(&HslCurve, bool); 6] {
         [
             (&self.hue_hue, true),
             (&self.hue_sat, true),
             (&self.hue_lum, true),
             (&self.lum_sat, false),
             (&self.sat_sat, false),
+            (&self.sat_lum, false),
         ]
     }
 
-    fn hsl_mut(&mut self) -> [(&mut HslCurve, bool); 5] {
+    fn hsl_mut(&mut self) -> [(&mut HslCurve, bool); 6] {
         [
             (&mut self.hue_hue, true),
             (&mut self.hue_sat, true),
             (&mut self.hue_lum, true),
             (&mut self.lum_sat, false),
             (&mut self.sat_sat, false),
+            (&mut self.sat_lum, false),
         ]
     }
 
