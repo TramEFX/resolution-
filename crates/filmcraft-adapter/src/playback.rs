@@ -152,7 +152,7 @@ impl Playback for Snapshot {
         let gpu = in_frame_pool(|| {
             cancel::with_cancel(&hints.cancel, || {
                 cancel::with_catch_up(catch_up, || {
-                    cancel::with_draft(hints.draft, || self.graded.render(self.seq, t, opts, &provider))
+                    cancel::with_draft(hints.draft, || self.graded.render(self.seq, t, opts, &provider, hints.gpu))
                 })
             })
         });
@@ -169,7 +169,7 @@ impl Playback for Snapshot {
                     })
                 });
                 crate::gpu::counted_cpu_frame();
-                Frame { width: img.w as u32, height: img.h as u32, rgba: img.over_black_rgba8() }
+                Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8())
             }
         };
         // a cancelled render may be missing layers whose decoder gave up
@@ -326,7 +326,7 @@ impl Playback for SourceSnapshot {
             return Err(EngineError::Engine("cancelled".into()));
         }
         let img = img.ok_or_else(|| EngineError::Engine("the source clip has no picture".into()))?;
-        Ok(Frame { width: img.w as u32, height: img.h as u32, rgba: img.over_black_rgba8() })
+        Ok(Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8()))
     }
 
     fn mixer(&self, sample_rate: u32) -> Mixer {

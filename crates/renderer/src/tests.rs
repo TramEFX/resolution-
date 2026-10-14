@@ -278,3 +278,16 @@ fn an_enlarged_picture_blends_its_pixels_in_linear_light() {
     let out = r.render((4, 1), &[l]).unwrap();
     assert!(out[5] <= 1 && out[9] <= 1, "{out:?}");
 }
+
+#[test]
+fn a_frame_left_on_the_gpu_reads_back_as_rendered() {
+    let Some(r) = renderer() else { return };
+    let px = noise(32 * 16);
+    let mut l = rgba_layer(32, 16, &px, None);
+    l.matrix = [0.75, 0.0, 0.0, 0.75, 1.5, 0.5];
+    let rendered = r.render((24, 12), &[l]).unwrap();
+    let picture = r.draw_steps((24, 12), &[Step::Layers(vec![l])]);
+    assert_eq!(picture.size(), (24, 12));
+    assert_eq!(picture.read(), Some(&rendered[..]), "the same frame");
+    assert_eq!(picture.read(), Some(&rendered[..]), "read once, kept");
+}

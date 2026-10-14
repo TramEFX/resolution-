@@ -29,7 +29,7 @@ use crate::color_page::{self, ColorPage, ScopeView, Thumbs};
 use crate::deliver::{self, Deliver};
 use crate::icons::Icon;
 use crate::model::{self, GradeView, Kind, MediaItem, SourceClip, Timeline};
-use crate::monitor::{Monitor, Sound};
+use crate::monitor::{Monitor, Shown, Sound};
 use crate::theme::{self, Look, Theme};
 use crate::timeline_ui::{self, Action};
 use crate::waveforms::Waveforms;
@@ -213,7 +213,7 @@ impl ResolutionApp {
                 }
             }
         });
-        Self {
+        let mut app = Self {
             worker,
             keymap: Keymap::resolve(),
             look,
@@ -270,7 +270,16 @@ impl ResolutionApp {
             seek_after_load: options.seek,
             source_after_load: options.source,
             screenshot: options.screenshot.map(|p| (p, 0)),
+        };
+        // the GPU renderer on egui's own device: the viewers' frames go to the screen without a
+        // copy back to memory (LOG D-039)
+        if let Some(rs) = cc.wgpu_render_state.clone()
+            && resolution_filmcraft_adapter::use_gpu_device(rs.device.clone(), rs.queue.clone())
+        {
+            app.timeline_viewer.draw_on_gpu(rs.clone());
+            app.source_viewer.draw_on_gpu(rs);
         }
+        app
     }
 
     fn say(&mut self, text: impl Into<String>, error: bool) {
@@ -1719,7 +1728,16 @@ impl ResolutionApp {
             st.failed
         );
         let (gpu, cpu) = resolution_filmcraft_adapter::frame_counts();
-        eprintln!("  renderer: {gpu} timeline frames drawn on the GPU, {cpu} on the CPU (LOG D-036)");
+        eprintln!(
+            "  renderer: {gpu} timeline frames drawn on the GPU, {cpu} on the CPU (LOG D-036); {:.1} ms a frame job ({:.1} getting source pictures); the last frame shown {}",
+            st.job_ms / st.jobs.max(1) as f64,
+            st.decode_ms / st.jobs.max(1) as f64,
+            if matches!(m.frame, Some(Shown::OnGpu { .. })) {
+                "straight from the GPU (D-039)"
+            } else {
+                "from its pixels"
+            }
+        );
         eprintln!(
             "  sound: device {:?}, {} Hz, {} channels; clock from {}; {} device callbacks, {} underruns, {} frames of silence",
             audio.and_then(AudioOut::device),

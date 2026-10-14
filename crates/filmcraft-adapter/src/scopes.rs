@@ -28,10 +28,12 @@ pub struct FilmCraftScopes;
 impl Scopes for FilmCraftScopes {
     fn draw(&self, frame: &Frame, kind: ScopeKind) -> Frame {
         let (w, h) = (frame.width as usize, frame.height as usize);
-        if w == 0 || h == 0 || frame.rgba.len() < w * h * 4 {
-            return Frame { width: 0, height: 0, rgba: Vec::new() };
+        // (a frame left on the GPU is read back here, on the scopes' thread)
+        let px = frame.pixels();
+        if w == 0 || h == 0 || px.len() < w * h * 4 {
+            return Frame::new(0, 0, Vec::new());
         }
-        let s = Signal::from_rgba8(w, h, &frame.rgba);
+        let s = Signal::from_rgba8(w, h, &px);
         let p = Params::default();
         let (width, height, rgba) = match kind {
             ScopeKind::Waveform => {
@@ -49,7 +51,7 @@ impl Scopes for FilmCraftScopes {
             ScopeKind::Vectorscope => sc::paint::vectorscope(&sc::vectorscope_yuv(&s, &p), [1.0; 3], 1.0, true),
             ScopeKind::Histogram => histogram(&sc::histogram(&s, &p)),
         };
-        Frame { width: width as u32, height: height as u32, rgba }
+        Frame::new(width as u32, height as u32, rgba)
     }
 }
 
@@ -111,7 +113,7 @@ mod tests {
     /// A flat-colour frame.
     fn flat(rgb: [u8; 3]) -> Frame {
         let (w, h) = (64u32, 36u32);
-        Frame { width: w, height: h, rgba: (0..w * h).flat_map(|_| [rgb[0], rgb[1], rgb[2], 255]).collect() }
+        Frame::new(w, h, (0..w * h).flat_map(|_| [rgb[0], rgb[1], rgb[2], 255]).collect())
     }
 
     /// Rows (from the bottom) and columns that hold anything.
@@ -190,7 +192,7 @@ mod tests {
 
     #[test]
     fn an_empty_frame_draws_nothing() {
-        let f = FilmCraftScopes.draw(&Frame { width: 0, height: 0, rgba: Vec::new() }, ScopeKind::Waveform);
+        let f = FilmCraftScopes.draw(&Frame::new(0, 0, Vec::new()), ScopeKind::Waveform);
         assert_eq!((f.width, f.height), (0, 0));
     }
 }
