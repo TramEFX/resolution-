@@ -3473,6 +3473,7 @@ dependencies = [
  "filmcraft-audio-dsp",
  "filmcraft-engine",
  "filmcraft-frame",
+ "filmcraft-geom",
  "filmcraft-media",
  "filmcraft-platform",
  "filmcraft-scopes",

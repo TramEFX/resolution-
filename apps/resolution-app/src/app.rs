@@ -158,6 +158,8 @@ pub struct ResolutionApp {
     thumbs: Thumbs,
     /// The Color page's Scopes panel (LOG D-030).
     scope_view: ScopeView,
+    /// Where the timeline viewer drew its picture last frame (the Color page's window outlines).
+    picture_rect: Option<Rect>,
     /// An agent's draft, from the latest batch (LOG D-027).
     draft: Option<crate::worker::Draft>,
     /// Agents reach this editor through it while it is open; dropping it closes the link.
@@ -246,6 +248,7 @@ impl ResolutionApp {
                 let ctx = cc.egui_ctx.clone();
                 ScopeView::new(scopes, move || ctx.request_repaint())
             },
+            picture_rect: None,
             clock: Instant::now(),
             play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
             nav: timeline_ui::Nav::default(),
@@ -1086,6 +1089,7 @@ impl ResolutionApp {
             }),
         };
         let painter = ui.painter_at(rect);
+        let mut picture_rect = None;
         painter.rect_filled(rect, CornerRadius::ZERO, t.panel);
         painter.rect_filled(header, CornerRadius::ZERO, t.head);
         painter.line_segment([header.left_bottom(), header.right_bottom()], look.sep_stroke());
@@ -1137,6 +1141,7 @@ impl ResolutionApp {
                     let scale = (picture.width() / size.x).min(picture.height() / size.y).max(0.01);
                     let img = Rect::from_center_size(picture.center(), size * scale);
                     painter.image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                    picture_rect = Some(img);
                 }
                 // the scrub bar: the whole clip or timeline, its In and Out, the playhead
                 let line = Rect::from_center_size(scrub.center(), vec2(scrub.width(), 2.0));
@@ -1184,6 +1189,9 @@ impl ResolutionApp {
         }
         // Frames at the viewer's size on screen, in 240 px steps so resizing does not re-render
         // on every repaint.
+        if which == Viewer::Timeline {
+            self.picture_rect = picture_rect;
+        }
         let px = picture.width().max(picture.height()) * ui.ctx().pixels_per_point();
         let side = ((px / 240.0).ceil() as u32 * 240).clamp(480, 3840);
         let (m, sound, worker) = self.viewer_mut(which);
@@ -1609,7 +1617,10 @@ impl ResolutionApp {
                     ui.painter().rect_filled(r, CornerRadius::ZERO, t.panel);
                 }
                 asks.extend(color_page::within(ui, left, |ui| color_page::primaries(ui, &look, &mut self.color)));
-                asks.extend(color_page::within(ui, mid, |ui| color_page::curves(ui, &look, &mut self.color)));
+                asks.extend(color_page::within(ui, mid, |ui| match self.color.palette {
+                    color_page::Palette::Curves => color_page::curves(ui, &look, &mut self.color),
+                    color_page::Palette::Window => color_page::windows(ui, &look, &mut self.color),
+                }));
                 color_page::within(ui, right, |ui| color_page::scopes_panel(ui, &look, &mut self.scope_view));
                 // the whole panel is used: a resizable panel shrinks to what its contents take
                 ui.allocate_rect(rect, Sense::hover());
@@ -1629,6 +1640,13 @@ impl ResolutionApp {
             let rect = ui.available_rect_before_wrap();
             self.viewer(ui, rect, Viewer::Timeline);
             ui.allocate_rect(rect, Sense::hover());
+            // the windows' outlines while the Window palette is open
+            if self.color.palette == color_page::Palette::Window
+                && let (Some(pic), Some(tl)) = (self.picture_rect, &self.timeline)
+            {
+                let frame = (tl.width, tl.height);
+                asks.extend(color_page::window_overlay(ui, &look, pic, frame, &mut self.color));
+            }
         });
         for ask in asks {
             match ask {
@@ -2637,6 +2655,32 @@ mod tests {
                 && a.scope_view.drawn == Some(resolution_engine_api::ScopeKind::Parade)
                 && !a.color.dragging
         });
+    }
+
+    #[test]
+    fn a_circle_window_is_added_moved_softened_and_deleted() {
+        let mut h = on_color_page();
+        click(&mut h, "Window palette");
+        click(&mut h, "Add Circle");
+        let windows = |a: &ResolutionApp| a.color.current().map(|n| n.windows.clone()).unwrap_or_default();
+        pump(&mut h, "a circle window on node 01, from the engine", |a| {
+            !a.color.dragging && a.color.asked.is_some() && windows(a).len() == 1
+        });
+        // the outline in the viewer: drag from the picture's middle (inside the circle) to the right
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
+        h.step();
+        let osc = h.get_by_label("Window on-screen control").rect();
+        drag(&mut h, osc.center(), osc.center() + vec2(60.0, 0.0));
+        pump(&mut h, "the circle moved right", |a| {
+            !a.color.dragging && windows(a).first().is_some_and(|w| w.center[0] > 0.52)
+        });
+        let softness = h.get_by_label("Softness").rect();
+        drag(&mut h, softness.center(), softness.center() + vec2(40.0, 0.0));
+        pump(&mut h, "a softer edge", |a| !a.color.dragging && windows(a).first().is_some_and(|w| w.softness > 0.025));
+        click(&mut h, "Window 1 Invert");
+        pump(&mut h, "inverted", |a| windows(a).first().is_some_and(|w| w.invert));
+        click(&mut h, "Delete Window 1");
+        pump(&mut h, "no windows", |a| windows(a).is_empty() && !a.color.dragging);
     }
 
     #[test]

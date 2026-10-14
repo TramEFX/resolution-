@@ -88,6 +88,8 @@ doc is updated *and* the entry says which section moved.
 | B-032 | 2026-10-14 | build | `target/` grew to 28 GB and filled the disk: Cargo keeps every engine pin's build | fixed |
 | D-030 | 2026-10-14 | color | Video scopes: drawn by the engine from the frame the viewer shows; read as numbers by agents | active |
 | B-033 | 2026-10-14 | ui | The Color page's palettes shrank a few points every frame, down to their minimum | fixed |
+| D-031 | 2026-10-14 | color | Windows: Linear and Circle windows on a node, compiled to FilmCraft effect masks | active |
+| D-032 | 2026-10-14 | color | Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1763,3 +1765,81 @@ timing.
 **Fix:** the panel's contents allocate its whole rectangle. The curve test now checks that the
 plot keeps its place for ten frames. The Edit and Deliver pages' panels were checked the same way
 and hold still.
+
+### D-031 — Windows: Linear and Circle windows on a node, compiled to FilmCraft effect masks
+**Area:** color · **Status:** active · **Doc:** ARCHITECTURE "Colour grades"; `crates/grade` (`Window`); `crates/filmcraft-adapter/src/color.rs`; `apps/resolution-app/src/color_page.rs`
+
+**Decision:** a node's correction can be limited to windows, as in Resolve's Window palette.
+
+- **The model** (`crates/grade`): a node holds a list of windows. Each has a shape (Linear: a
+  rectangle; Circle: an ellipse), on/off, invert, centre, size, rotation (degrees clockwise),
+  softness and opacity.
+  - Positions are fractions of the clip's picture.
+  - Sizes are fractions of the picture's width on both axes, so equal numbers draw a circle or a
+    square on any picture.
+  - Enabled windows add up. With none enabled, the node applies everywhere.
+  - Grades stored before windows existed load with none (the field defaults, and a node without
+    windows is stored without it). Resetting a node clears its windows.
+- **The engine side:** each enabled window becomes a FilmCraft effect mask on all of its node's
+  Lumetri effects, in the clip's pixels (`Project::source_size`; the timeline's size when the
+  media has none).
+  - A Circle window is an ellipse path, a Linear one a rectangle, turned about the centre.
+  - Softness is the mask's feather; opacity and invert carry over; masks combine by adding.
+  - `color.inspect` now also gives the clip picture's size.
+- **The page:** the centre palettes are chosen in their title strip (Curves, Window), as Resolve's
+  palette bar chooses them. The Window palette:
+  - Add Linear and Add Circle;
+  - a row per window: choose it, turn it on or off, invert it, delete it;
+  - the chosen window's Pan, Tilt, Size, Aspect, Rotate, Softness and Opacity. Drag a number
+    sideways to change it; double-click it to reset it.
+- **On-screen control:** while the Window palette is open, the viewer shows the node's window
+  outlines, the chosen one in the accent colour. Drag inside one to move it (and choose it).
+  Each drag is one undo step, as elsewhere on the page.
+
+**Limits:**
+- No Polygon, Curve or Gradient windows; no handles to resize or turn a window on screen; no
+  tracking (FilmCraft's masks have a tracker, not used yet).
+- The outline assumes the clip fills the frame as placed by default (fitted and centred). A clip
+  moved or scaled in the Inspector draws its outline in the wrong place; the mask itself is right.
+- A node of two Lumetri effects (tone, then saturation) masks each. In the soft edge the result is
+  close to, not exactly, the node's result blended once.
+- Pan, Tilt, Size and Aspect are percentages of the picture, not Resolve's own scales.
+
+**Checked:**
+- Grade tests: grades stored without windows load; windows are set whole and held to their
+  ranges; an unknown shape is refused; reset clears them.
+- Adapter tests:
+  - A full-size render of the demo with Gain 0 inside a centred circle: black inside, untouched
+    outside, and round, not squashed to the frame's height. Inverted, the reverse.
+  - A Linear window turned a quarter clockwise puts its corners where the arithmetic says.
+- A UI test: Window palette, Add Circle, drag the on-screen control (the circle moves), drag
+  Softness, Invert, Delete, each through the engine.
+- By hand, 2026-10-14, on the Sony clip: an agent set Gamma 0.45 and Gain 1.3 inside a soft
+  circle. The capture showed a soft bright disc where the circle was, and the rest unchanged.
+- Wrong turn: my expected corner for the turned rectangle was wrong (348 instead of 156). The
+  code was right; the test's arithmetic was fixed.
+
+### D-032 — Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal
+**Area:** color · **Status:** active (to build) · **Doc:** ROADMAP M4
+
+**Decision (Truman, 2026-10-14):** in Resolve a qualifier (an HSL key) limits a node's whole
+correction: Lift, Gamma, Gain and curves apply inside the key. FilmCraft cannot do that directly:
+
+- its masks are shapes only;
+- Lumetri's own key (HSL Secondary) allows only Temperature, Tint, Saturation and Hue inside it.
+
+The options put to Truman:
+
+1. **Bake a qualified node into a 3D LUT stored in the project.** A key depends only on a pixel's
+   colour, so the node's correction blended by its key is a colour function, and a LUT holds it.
+   FilmCraft applies LUTs with tetrahedral interpolation. Every control works inside the key.
+   The costs: about 1 MB of project file per qualified node at 33 points, and no key clean-up
+   (denoise, blur), since a LUT sees one pixel at a time.
+2. **Lumetri's HSL Secondary:** small files and key clean-up, but no Lift, Gamma, Gain or curves
+   inside the key.
+3. **Real key masks in our own GPU renderer:** wait for the GPU grading step, where the key can
+   mask the whole node as in Resolve.
+
+Truman: **3 is the goal; build 1 now.** The grade stays Resolution's own model (D-028), and the
+LUT is only how today's compile carries a qualified node. When the GPU renderer arrives,
+qualifiers move to real key masks and the LUTs go away, with no grade lost.

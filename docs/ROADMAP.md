@@ -96,9 +96,13 @@ read, never copied into the repo.
       Highlights, Midtone Detail, Lum Mix
 - [x] Scopes from `filmcraft-scopes`: Waveform, Parade, Vectorscope, Histogram on the Color page;
       `scopes.read` for agents (D-030)
-- [ ] Parallel and layer nodes, qualifiers, windows
+- [x] Windows: Linear and Circle, as FilmCraft effect masks, with an on-screen control (D-031)
+- [ ] Qualifiers: an HSL key limiting the whole node, baked into a 3D LUT for now (D-032)
+- [ ] Polygon, Curve and Gradient windows; window handles on screen; tracking
+- [ ] Parallel and layer nodes
 - [ ] GPU colour pipeline: our playback on FilmCraft's GPU frame plans, and Lumetri's curves on
-      the GPU upstream (D-028 measured CPU grading)
+      the GPU upstream (D-028 measured CPU grading). **The goal for qualifiers** (D-032): real key
+      masks over the whole node in our own renderer, replacing the baked LUTs
 
 ## M5 — Cut page and Media page
 

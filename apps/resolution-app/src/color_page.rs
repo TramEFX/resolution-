@@ -17,7 +17,7 @@ use egui::{
     TextureOptions, Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
 };
 use resolution_engine_api::{Frame, PARADE_GAP, Playback, RenderHints, ScopeKind, Scopes, VECTORSCOPE_EXTENT};
-use resolution_grade::{Curve, Node, Wheel};
+use resolution_grade::{Curve, Node, Shape as WindowShape, Wheel, Window};
 use serde_json::{Map, Value, json};
 
 use crate::chrome;
@@ -50,6 +50,12 @@ pub struct ColorPage {
     drags: u64,
     /// The curve point being dragged (an index into the curve's knots).
     curve_point: Option<usize>,
+    /// The centre palette showing.
+    pub palette: Palette,
+    /// The window chosen in the Window palette (an index into the current node's windows).
+    pub window: usize,
+    /// The on-screen control is moving the chosen window.
+    moving_window: bool,
     /// Per clip, the revision at which its grade last changed: when its thumbnail is due again.
     pub stamps: HashMap<u64, u64>,
 }
@@ -82,6 +88,7 @@ impl ColorPage {
     fn end_drag(&mut self) {
         self.dragging = false;
         self.curve_point = None;
+        self.moving_window = false;
         self.asked = None;
     }
 
@@ -228,26 +235,14 @@ fn fields(
     page: &mut ColorPage,
     asks: &mut Vec<Ask>,
 ) {
-    let t = look.theme;
     let w = row.width() / specs.len() as f32;
     let default = Node::default();
     for (k, spec) in specs.iter().enumerate() {
         let cell = Rect::from_min_size(pos2(row.left() + w * k as f32, row.top()), vec2(w, row.height()))
             .shrink2(vec2(6.0, 2.0));
         let value = field_value(node, spec.key);
-        let r = ui.interact(cell, ui.id().with(("field", spec.key)), Sense::click_and_drag());
-        name(&r, WidgetType::DragValue, spec.name);
-        let painter = ui.painter();
-        painter.rect_filled(cell, look.radius(), if r.hovered() || r.dragged() { t.hover } else { t.field });
-        painter.text(cell.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, spec.name, look.small(), t.dim);
         let changed = (value - field_value(&default, spec.key)).abs() > 1e-6;
-        painter.text(
-            cell.right_center() - vec2(8.0, 0.0),
-            Align2::RIGHT_CENTER,
-            format!("{value:.*}", spec.decimals),
-            look.mono(12.0),
-            if changed { t.accent } else { t.text },
-        );
+        let r = number(ui, look, cell, spec.name, &format!("{value:.*}", spec.decimals), changed);
         if r.drag_started() {
             page.begin_drag();
         }
@@ -260,6 +255,25 @@ fn fields(
             page.end_drag();
         }
     }
+}
+
+/// A number control: its name and value in a field. Drag it sideways to change it; double-click
+/// it to reset it (the caller does both).
+fn number(ui: &mut Ui, look: &Look, cell: Rect, label: &str, value: &str, changed: bool) -> Response {
+    let t = look.theme;
+    let r = ui.interact(cell, ui.id().with(("number", label)), Sense::click_and_drag());
+    name(&r, WidgetType::DragValue, label);
+    let painter = ui.painter();
+    painter.rect_filled(cell, look.radius(), if r.hovered() || r.dragged() { t.hover } else { t.field });
+    painter.text(cell.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, label, look.small(), t.dim);
+    painter.text(
+        cell.right_center() - vec2(8.0, 0.0),
+        Align2::RIGHT_CENTER,
+        value,
+        look.mono(12.0),
+        if changed { t.accent } else { t.text },
+    );
+    r
 }
 
 /// The colour a point on a wheel moves the balance towards (direction only).
@@ -388,7 +402,7 @@ const CHANNELS: [(&str, &str); 4] = [("Y", "y"), ("R", "r"), ("G", "g"), ("B", "
 pub fn curves(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let mut asks = Vec::new();
     let t = look.theme;
-    let header = chrome::panel_header(ui, look, "Curves - Custom", None);
+    let header = palette_header(ui, look, page);
     let Some(node) = page.current().cloned() else { return asks };
     // the channel buttons, in the title strip
     let mut x = header.right() - 10.0;
@@ -975,4 +989,319 @@ pub fn scopes_panel(ui: &mut Ui, look: &Look, view: &mut ScopeView) {
             t.dim,
         );
     }
+}
+
+// ---- the centre palettes and the Window palette ----
+
+/// The centre palettes, chosen in their title strip as Resolve's palette bar chooses them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Palette {
+    #[default]
+    Curves,
+    Window,
+}
+
+/// The centre palettes' title strip: the palettes' names, the one showing bright.
+fn palette_header(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Rect {
+    let t = look.theme;
+    let header = chrome::panel_header(ui, look, "", None);
+    let mut x = header.left() + 4.0;
+    for (p, label) in [(Palette::Curves, "Curves"), (Palette::Window, "Window")] {
+        let w = ui.painter().layout_no_wrap(label.into(), look.medium(), t.text).size().x + 16.0;
+        let b = Rect::from_min_max(pos2(x, header.top()), pos2(x + w, header.bottom()));
+        x += w;
+        let r = ui.interact(b, ui.id().with(("palette", label)), Sense::click());
+        name(&r, WidgetType::Button, &format!("{label} palette"));
+        let on = page.palette == p;
+        ui.painter().text(b.center(), Align2::CENTER_CENTER, label, look.medium(), if on { t.text } else { t.dim });
+        if on {
+            ui.painter().line_segment(
+                [pos2(b.left() + 6.0, b.bottom() - 2.0), pos2(b.right() - 6.0, b.bottom() - 2.0)],
+                Stroke::new(2.0, t.accent),
+            );
+        }
+        if r.clicked() {
+            page.palette = p;
+        }
+    }
+    header
+}
+
+/// A window number in the Window palette.
+struct WindowField {
+    name: &'static str,
+    get: fn(&Window) -> f32,
+    set: fn(&mut Window, f32),
+    step: f32,
+    decimals: usize,
+}
+
+/// Pan and Tilt in percent of the picture (50 is the middle; Tilt rises upwards); Size is the
+/// width in percent of the picture's width, Aspect the height to the width (50 is round or
+/// square); Rotate in degrees clockwise; Softness in percent of the picture's width.
+const WINDOW_FIELDS: [WindowField; 7] = [
+    WindowField {
+        name: "Pan",
+        get: |w| w.center[0] * 100.0,
+        set: |w, v| w.center[0] = v / 100.0,
+        step: 0.1,
+        decimals: 1,
+    },
+    WindowField {
+        name: "Tilt",
+        get: |w| (1.0 - w.center[1]) * 100.0,
+        set: |w, v| w.center[1] = 1.0 - v / 100.0,
+        step: 0.1,
+        decimals: 1,
+    },
+    WindowField {
+        name: "Size",
+        get: |w| w.size[0] * 100.0,
+        set: |w, v| {
+            let aspect = w.size[1] / w.size[0].max(1e-4);
+            w.size[0] = (v / 100.0).max(0.002);
+            w.size[1] = w.size[0] * aspect;
+        },
+        step: 0.2,
+        decimals: 1,
+    },
+    WindowField {
+        name: "Aspect",
+        get: |w| 50.0 * w.size[1] / w.size[0].max(1e-4),
+        set: |w, v| w.size[1] = w.size[0] * (v / 50.0).max(0.01),
+        step: 0.2,
+        decimals: 1,
+    },
+    WindowField { name: "Rotate", get: |w| w.rotation, set: |w, v| w.rotation = v, step: 0.5, decimals: 1 },
+    WindowField {
+        name: "Softness",
+        get: |w| w.softness * 100.0,
+        set: |w, v| w.softness = v / 100.0,
+        step: 0.05,
+        decimals: 2,
+    },
+    WindowField { name: "Opacity", get: |w| w.opacity, set: |w, v| w.opacity = v, step: 0.5, decimals: 1 },
+];
+
+fn shape_name(s: WindowShape) -> &'static str {
+    match s {
+        WindowShape::Linear => "Linear",
+        WindowShape::Circle => "Circle",
+    }
+}
+
+/// The Window palette: add a Linear or Circle window to the current node; each window's row
+/// chooses it and turns it on or off, inverts or deletes it; the chosen window's numbers below.
+/// The viewer shows the windows' outlines while this palette is open.
+pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
+    let mut asks = Vec::new();
+    let t = look.theme;
+    palette_header(ui, look, page);
+    let Some(node) = page.current().cloned() else { return asks };
+    let mut wins = node.windows.clone();
+    page.window = page.window.min(wins.len().saturating_sub(1));
+    let set = |page: &mut ColorPage, asks: &mut Vec<Ask>, wins: &[Window]| {
+        page.adjust(asks, json!({ "windows": wins }));
+    };
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        for shape in [WindowShape::Linear, WindowShape::Circle] {
+            if chrome::text_button(ui, look, &format!("Add {}", shape_name(shape)), true).clicked() {
+                wins.push(Window::new(shape));
+                page.window = wins.len() - 1;
+                set(page, &mut asks, &wins);
+            }
+        }
+    });
+    ui.add_space(4.0);
+    let mut changed = false;
+    let mut delete = None;
+    for (i, w) in wins.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            let label = format!("Window {}", i + 1);
+            let (rect, r) = ui.allocate_exact_size(vec2(110.0, look.skin.button), Sense::click());
+            name(&r, WidgetType::Button, &label);
+            let chosen = page.window == i;
+            ui.painter().rect_filled(
+                rect,
+                look.radius(),
+                if chosen {
+                    t.active_bg
+                } else if r.hovered() {
+                    t.hover
+                } else {
+                    t.field
+                },
+            );
+            ui.painter().text(
+                rect.left_center() + vec2(8.0, 0.0),
+                Align2::LEFT_CENTER,
+                format!("{} {}", shape_name(w.shape), i + 1),
+                look.small(),
+                if chosen { t.accent } else { t.text },
+            );
+            if r.clicked() {
+                page.window = i;
+            }
+            for (text, on, what) in [("On", w.enabled, 0), ("Invert", w.invert, 1)] {
+                let (b, r) = ui.allocate_exact_size(vec2(52.0, look.skin.button), Sense::click());
+                name(&r, WidgetType::Button, &format!("{label} {text}"));
+                ui.painter().rect_filled(
+                    b,
+                    look.radius(),
+                    if on {
+                        t.active_bg
+                    } else if r.hovered() {
+                        t.hover
+                    } else {
+                        t.field
+                    },
+                );
+                ui.painter().text(
+                    b.center(),
+                    Align2::CENTER_CENTER,
+                    text,
+                    look.small(),
+                    if on { t.accent } else { t.dim },
+                );
+                if r.clicked() {
+                    if what == 0 {
+                        w.enabled = !w.enabled;
+                    } else {
+                        w.invert = !w.invert;
+                    }
+                    changed = true;
+                }
+            }
+            if chrome::text_button(ui, look, &format!("Delete {label}"), true).clicked() {
+                delete = Some(i);
+            }
+        });
+    }
+    if let Some(i) = delete {
+        wins.remove(i);
+        page.window = page.window.min(wins.len().saturating_sub(1));
+        changed = true;
+    }
+    if changed {
+        set(page, &mut asks, &wins);
+    }
+    // the chosen window's numbers, two rows of four
+    if let Some(w) = wins.get(page.window).copied() {
+        ui.add_space(6.0);
+        let area = ui.available_rect_before_wrap();
+        let row_h = 26.0;
+        let cell_w = (area.width() - 16.0) / 4.0;
+        let fresh = Window::new(w.shape);
+        for (k, f) in WINDOW_FIELDS.iter().enumerate() {
+            let (row, col) = (k / 4, k % 4);
+            let cell = Rect::from_min_size(
+                pos2(area.left() + 8.0 + cell_w * col as f32, area.top() + row_h * row as f32),
+                vec2(cell_w, row_h),
+            )
+            .shrink2(vec2(3.0, 2.0));
+            let v = (f.get)(&w);
+            let r = number(ui, look, cell, f.name, &format!("{v:.*}", f.decimals), (v - (f.get)(&fresh)).abs() > 1e-4);
+            if r.drag_started() {
+                page.begin_drag();
+            }
+            let mut nw = w;
+            if r.double_clicked() {
+                (f.set)(&mut nw, (f.get)(&fresh));
+            } else if r.dragged() && r.drag_delta().x != 0.0 {
+                (f.set)(&mut nw, v + r.drag_delta().x * f.step);
+            }
+            if nw != w {
+                wins[page.window] = nw;
+                set(page, &mut asks, &wins);
+            }
+            if r.drag_stopped() {
+                page.end_drag();
+            }
+        }
+        ui.allocate_rect(Rect::from_min_size(area.min, vec2(area.width(), row_h * 2.0)), Sense::hover());
+    }
+    asks
+}
+
+/// Where a clip's picture sits on screen: the timeline's frame drawn in `screen`, and a clip of
+/// `clip` pixels fitted into the frame and centred, as clips are placed by default.
+fn clip_on_screen(screen: Rect, frame: (u32, u32), clip: (u32, u32)) -> Rect {
+    let (fw, fh) = (frame.0.max(1) as f32, frame.1.max(1) as f32);
+    let (cw, ch) = (clip.0.max(1) as f32, clip.1.max(1) as f32);
+    let fit = (fw / cw).min(fh / ch);
+    let k = screen.width() / fw;
+    Rect::from_center_size(screen.center(), vec2(cw * fit * k, ch * fit * k))
+}
+
+/// A window's outline on screen, for a clip picture drawn in `pic`.
+fn outline(w: &Window, pic: Rect) -> Vec<Pos2> {
+    let c = pic.min + vec2(w.center[0] * pic.width(), w.center[1] * pic.height());
+    let (rx, ry) = (w.size[0] * pic.width() / 2.0, w.size[1] * pic.width() / 2.0);
+    let (sin, cos) = w.rotation.to_radians().sin_cos();
+    let turn = |x: f32, y: f32| c + vec2(x * cos - y * sin, x * sin + y * cos);
+    match w.shape {
+        WindowShape::Circle => {
+            (0..72).map(|i| i as f32 / 72.0 * TAU).map(|a| turn(rx * a.cos(), ry * a.sin())).collect()
+        }
+        WindowShape::Linear => vec![turn(-rx, -ry), turn(rx, -ry), turn(rx, ry), turn(-rx, ry)],
+    }
+}
+
+/// Whether `p` is inside the closed outline `poly`.
+fn inside(poly: &[Pos2], p: Pos2) -> bool {
+    let mut odd = false;
+    for i in 0..poly.len() {
+        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            odd = !odd;
+        }
+    }
+    odd
+}
+
+/// The windows' on-screen control over the viewer's picture `screen` (the timeline's frame of
+/// `frame` pixels): each window's outline, the chosen one bright. Drag inside a window to move it
+/// (and choose it).
+pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32), page: &mut ColorPage) -> Vec<Ask> {
+    let mut asks = Vec::new();
+    let Some(view) = page.view.clone() else { return asks };
+    let Some(node) = view.grade.nodes.get(page.node) else { return asks };
+    let pic = clip_on_screen(screen, frame, view.size);
+    let painter = ui.painter_at(screen);
+    let outlines: Vec<Vec<Pos2>> = node.windows.iter().map(|w| outline(w, pic)).collect();
+    for (i, o) in outlines.iter().enumerate() {
+        let chosen = i == page.window;
+        let colour = if chosen { look.theme.accent } else { Color32::from_white_alpha(150) };
+        painter.add(Shape::closed_line(o.clone(), Stroke::new(if chosen { 2.0 } else { 1.0 }, colour)));
+    }
+    let r = ui.interact(screen, ui.id().with("window osc"), Sense::drag());
+    name(&r, WidgetType::Other, "Window on-screen control");
+    if r.drag_started()
+        && let Some(p) = r.interact_pointer_pos()
+    {
+        // the chosen window first, then the others, top one last drawn
+        let hit = std::iter::once(page.window)
+            .chain((0..outlines.len()).rev())
+            .find(|&i| outlines.get(i).is_some_and(|o| inside(o, p)));
+        if let Some(i) = hit {
+            page.window = i;
+            page.begin_drag();
+            page.moving_window = true;
+        }
+    }
+    if page.moving_window && r.dragged() && r.drag_delta() != egui::Vec2::ZERO {
+        let mut wins = node.windows.clone();
+        if let Some(w) = wins.get_mut(page.window) {
+            w.center[0] += r.drag_delta().x / pic.width();
+            w.center[1] += r.drag_delta().y / pic.height();
+            page.adjust(&mut asks, json!({ "windows": wins }));
+        }
+    }
+    if r.drag_stopped() && page.moving_window {
+        page.end_drag();
+    }
+    asks
 }
