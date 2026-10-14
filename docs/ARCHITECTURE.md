@@ -48,12 +48,24 @@
 |---|---|
 | `Engine(id)` | Same behaviour in FilmCraft |
 | `Approx(id, note)` | Close FilmCraft command; the note records how it differs from Resolve |
-| `Adapter` | Implemented in the adapter (undo/redo) |
+| `Adapter` | Implemented in the adapter: undo/redo, inspecting, commands on the project selection, the Color page's grades |
 | `Ui` | Owned by the Resolution front end: pages, zoom, edit modes, playback (FilmCraft keeps these in its egui crate) |
 | `Missing(note)` | No FilmCraft equivalent yet: Resolution work or an upstream PR |
 
 Its tests are the upstream-drift gate: every vocabulary id must be mapped, and every FilmCraft id
 we map to must still exist at the pinned revision.
+
+## Colour grades (`crates/grade`, LOG D-028)
+
+A clip's grade is Resolution's own type: serial corrector nodes, each with the Primaries
+palette's controls and the Custom Curves, in Resolve's units. The math is ours and written down in
+`crates/grade`: a node is a tone function per channel and then a saturation step. The adapter
+(`color.rs`) keeps each grade as JSON in the timeline's metadata (`resolution.grade.<clip id>`)
+and compiles it onto the clip as Lumetri Color effects at the front of its effect stack: the tone
+functions as R, G and B curves, the saturation step as Saturation, Vibrance and a Hue vs Hue
+curve. So every renderer (playback, frame renders, Deliver) shows the grade, and each edit is one
+FilmCraft undo step holding both the metadata and the effects. Lumetri runs these on the CPU; GPU
+grading is a later step.
 
 ## The editor (`apps/resolution-app`)
 

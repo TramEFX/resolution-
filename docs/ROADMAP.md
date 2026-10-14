@@ -88,8 +88,13 @@ read, never copied into the repo.
 
 ## M4 — Color page, first slice (step 5)
 
-- [ ] Node graph (serial, parallel, layer), primaries wheels, curves, qualifiers, windows
-- [ ] GPU colour pipeline (FilmCraft's Lumetri path is CPU); scopes from `filmcraft-scopes`
+- [x] Grades in Resolution's own types, compiled to Lumetri on each clip: serial nodes, the
+      Primaries controls and Custom Curves, and the `color.*` vocabulary (D-028)
+- [ ] The Color page: viewer, node editor, clip thumbnails, Primaries wheels, Curves
+- [ ] Scopes from `filmcraft-scopes`
+- [ ] Parallel and layer nodes, qualifiers, windows
+- [ ] GPU colour pipeline: our playback on FilmCraft's GPU frame plans, and Lumetri's curves on
+      the GPU upstream (D-028 measured CPU grading)
 
 ## M5 — Cut page and Media page
 

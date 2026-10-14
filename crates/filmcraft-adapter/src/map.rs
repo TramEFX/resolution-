@@ -10,8 +10,8 @@ pub enum Target {
     Engine(&'static str),
     /// A close but not identical FilmCraft command; the note says how it differs from Resolve.
     Approx(&'static str, &'static str),
-    /// Handled by the adapter itself (undo, redo, inspecting, and commands FilmCraft runs on its
-    /// project selection).
+    /// Handled by the adapter itself (undo, redo, inspecting, commands FilmCraft runs on its
+    /// project selection, and the Color page's grades).
     Adapter,
     /// Owned by the front end: page switching, panels, timeline zoom, edit modes and playback. FilmCraft
     /// keeps these in its egui crate, which we replace; Resolution's UI implements them.
@@ -23,6 +23,20 @@ pub enum Target {
 use Target::*;
 
 pub const MAP: &[(&str, Target)] = &[
+    // the Color page: grades in Resolution's own types, compiled to Lumetri (LOG D-028)
+    ("color.inspect", Adapter),
+    ("color.adjust", Adapter),
+    ("color.addSerialNode", Adapter),
+    ("color.addNodeBefore", Adapter),
+    ("color.appendNode", Adapter),
+    ("color.deleteNode", Adapter),
+    ("color.toggleNodes", Adapter),
+    ("color.toggleAllNodes", Adapter),
+    ("color.resetNode", Adapter),
+    ("color.resetGradesKeepNodes", Adapter),
+    ("color.resetAll", Adapter),
+    ("color.previousNode", Ui),
+    ("color.nextNode", Ui),
     ("page.media", Ui),
     ("page.cut", Ui),
     ("page.edit", Ui),

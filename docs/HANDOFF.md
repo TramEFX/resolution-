@@ -17,7 +17,10 @@ cargo run -p resolution-cli -- run project.inspect
 ```
 
 Measured on Windows 11 (Rust 1.99, 2026-10-09): the first `cargo test` took 3 min 12 s, and
-`target/` held 3.0 GB after tests and clippy.
+`target/` held 3.0 GB after tests and clippy. It grows with every engine sync and rebuild: on
+2026-10-14 it held 28 GB and filled the disk (the linker failed with LNK1180). Deleting
+`target/debug/incremental` freed about 5 GB; `cargo clean` frees it all, at the cost of a full
+rebuild. Setting `CARGO_INCREMENTAL=0` keeps the incremental cache from coming back.
 
 Cargo fetches the engine from the private mirror with your normal git credentials
 (`.cargo/config.toml` sets `git-fetch-with-cli`). If it fails with an authentication error, make
@@ -80,9 +83,9 @@ Only you can accept or reject a draft; agents cannot.
 |---|---|
 | Engine | FilmCraft **main at `cee1feb`** (2026-10-13, after v0.7.2; not a release tag) via the private mirror, pinned at `sync/fc-20261013` (`29d01cf`), synced 2026-10-13 (LOG D-015) |
 | Mirror CI | **Red outside our graph** for the pin: run [38413841087](https://github.com/TramEFX/resolution-filmcraft/actions/runs/38413841087) (2026-10-13, Linux, ~53 min) on the sync point: 3,473 tests passed, 3 failed, 44 ignored; fmt, clippy, layers, assets, wasm ok. The three failures are in FilmCraft's UI crate and desktop app, which Resolution doesn't use (LOG B-020); the pin was taken anyway (D-015). The mixer speed test stays outside the gate (LOG B-007) |
-| Engine boundary | `engine-api` trait + vocabulary (101 Resolve-named commands; 67 run headless on FilmCraft today, 28 are front-end, 6 not yet supported), FilmCraft adapter, drift test |
+| Engine boundary | `engine-api` trait + vocabulary (114 Resolve-named commands; 78 run headless on FilmCraft today, 30 are front-end, 6 not yet supported), FilmCraft adapter, drift test |
 | Keymap | Resolve defaults as data (`keymaps/resolve.toml`); **not yet verified** against a real Resolve install |
-| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 113 tests across the workspace (passing on Windows, 2026-10-13), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
+| MCP | 10 tools: search by page/Resolve key, run with risk tiers and dry runs, atomic batches, checkpoints, render frame. 138 tests across the workspace (passing on Windows, 2026-10-14), 5 of them end to end over MCP stdio against the built binary (`apps/resolution-cli/tests/mcp_stdio.rs`) |
 | GPU parity, real hardware | Local, 2026-10-12, at the previous pin (`2ba0629`): FilmCraft's 33 golden tests pass, the 4 GPU-vs-CPU ones on an AMD Radeon RX 9070 XT through Vulkan (the adapter wgpu's default request picks, checked with a probe). CI covers the same tests on software Vulkan (LOG B-005) |
 | UI | **Edit page in the Black Box look** (`apps/resolution-app`, LOG D-012, D-016, D-018): interface toolbar showing and hiding panels in Resolve's fixed places, Media Pool, Index, source and timeline viewers side by side (scrub bars, transport, Mark In/Out; keys act on the active one, Q switches), Inspector, timeline toolbar (modes, insert/overwrite, snapping, linked selection, marker, zoom), track headers (destination control, lock, sync lock, auto track selector, show, solo, mute), markers on the ruler, waveforms on audio clips, scrolling and zooming as in Resolve (wheel, Alt or Ctrl with the wheel, scroll bars, middle-drag), editing with the mouse in Resolve's Selection, Trim and Blade modes (move, resize, roll, ripple, slip, slide, blade) with snapping, page bar; a minimal Deliver page (six presets, render queue, Render All; renders checked with ffprobe); five colour themes; Geist type and our own icons. Effects, Sound Library, Metadata and Mixer slots are empty. Agents edit the open timeline through the agent link, into a draft the user accepts or rejects (D-026, D-027). 47 tests, including UI tests that press keys, click buttons, drag clips, roll the wheel, render a file and drive the editor as an agent |
 | Playback | **Real time, with sound** (`crates/playback`, LOG D-013): frames rendered ahead, sound mixed ahead, the audio device as the clock, GPU video decoding (D-014). Measured on this PC: phone 4K30, Sony α7R II 4K 23.976 (100 Mbit/s) and 1080p60 H.264 play at full rate with no dropouts, the sound sample-exact against ffmpeg and checked by ear (2026-10-13); a sideways (portrait) phone 4K clip at full rate too since the 2026-10-13 engine sync; 4K60 HEVC at about 50 fps on the GPU (B-013, fixed upstream); CPU-heavy composites at about 13 fps; footage decoded in software at a few to 10 fps (B-017 no longer freezes it) |
@@ -97,7 +100,8 @@ Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
 D-016). Shared look and layout, then the Edit page up to the one-minute-edit bar, then a minimal
 Deliver page, then agents in the editor, then the Color page. Steps 1 to 4 are built (D-018 to
 D-027); the bar itself, Truman cutting a one-minute piece from the Sony and Samsung clips, has not
-been tried yet. Next is step 5, the Color page. For what Resolve does, read the installed 21.1 Reference Manual (`scripts/resolve-manual.py`
+been tried yet. Step 5, the Color page, is under way: grades and the `color.*` vocabulary are built
+(D-028); the page itself (viewer, node editor, clip thumbnails, Primaries wheels, Curves) is next. For what Resolve does, read the installed 21.1 Reference Manual (`scripts/resolve-manual.py`
 extracts it for searching; LOG D-017), then try it in the local install.
 
 Alongside, pick any:
