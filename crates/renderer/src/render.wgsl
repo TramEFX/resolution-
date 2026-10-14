@@ -610,8 +610,9 @@ fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     return vec4(p[vi], 0.0, 1.0);
 }
 
+// sRGB-encoded into a plain 8-bit target (what egui takes as a native texture)
 @fragment
 fn fs_full(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let c = textureLoad(accum, vec2<i32>(pos.xy), 0);
-    return vec4(c.rgb, 1.0);
+    let c = clamp(textureLoad(accum, vec2<i32>(pos.xy), 0).rgb, vec3(0.0), vec3(1.0));
+    return vec4(linear_to_srgb(c), 1.0);
 }

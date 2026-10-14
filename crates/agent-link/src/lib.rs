@@ -282,11 +282,7 @@ impl Engine for RemoteEngine {
         let rgba = base64::engine::general_purpose::STANDARD
             .decode(v["rgba"].as_str().unwrap_or_default())
             .map_err(|e| EngineError::Engine(format!("bad frame from the editor: {e}")))?;
-        Ok(Frame {
-            width: v["width"].as_u64().unwrap_or(0) as u32,
-            height: v["height"].as_u64().unwrap_or(0) as u32,
-            rgba,
-        })
+        Ok(Frame::new(v["width"].as_u64().unwrap_or(0) as u32, v["height"].as_u64().unwrap_or(0) as u32, rgba))
     }
 
     fn drain_events(&mut self) -> Vec<EngineEvent> {

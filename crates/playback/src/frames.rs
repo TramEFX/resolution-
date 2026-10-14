@@ -126,9 +126,9 @@ impl Cache {
 
     fn insert(&mut self, k: FrameKey, f: Arc<Frame>) {
         self.clock += 1;
-        self.bytes += f.rgba.len();
+        self.bytes += f.bytes();
         if let Some((old, _)) = self.map.insert(k, (f, self.clock)) {
-            self.bytes -= old.rgba.len();
+            self.bytes -= old.bytes();
         }
         while self.bytes > self.budget && self.map.len() > 1 {
             let Some(oldest) =
@@ -137,7 +137,7 @@ impl Cache {
                 break;
             };
             if let Some((f, _)) = self.map.remove(&oldest) {
-                self.bytes -= f.rgba.len();
+                self.bytes -= f.bytes();
             }
         }
     }
@@ -160,6 +160,8 @@ struct Shared {
     stats: Mutex<FrameStats>,
     notify: Mutex<Option<Notify>>,
     quit: AtomicBool,
+    /// Frames may be left on the GPU ([`FrameServer::keep_frames_on_gpu`]).
+    gpu: AtomicBool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -184,6 +186,7 @@ impl FrameServer {
             stats: Mutex::new(FrameStats::default()),
             notify: Mutex::new(None),
             quit: AtomicBool::new(false),
+            gpu: AtomicBool::new(false),
         });
         let threads = (0..workers.max(1))
             .filter_map(|i| {
@@ -197,6 +200,11 @@ impl FrameServer {
     /// The number of frame workers: two. FilmCraft's renderer already spreads one frame over every
     /// core, so more workers only compete for them: on a 16-thread machine 1 to 3 workers played
     /// every measured clip as well as 6 (LOG D-013; FilmCraft uses 2 to 6).
+    /// Asks for frames left on the renderer's GPU device, for a viewer drawing on it (LOG D-039).
+    pub fn keep_frames_on_gpu(&self, on: bool) {
+        self.shared.gpu.store(on, Ordering::Relaxed);
+    }
+
     pub fn default_workers() -> usize {
         2
     }
@@ -423,6 +431,7 @@ fn worker(sh: &Shared) {
             cancel: job.cancel.clone(),
             catch_up: job.catch_up,
             draft: job.key.draft,
+            gpu: sh.gpu.load(Ordering::Relaxed),
             ..Default::default()
         };
         // A panic while decoding one frame (bad media, a decoder bug) must not take the worker

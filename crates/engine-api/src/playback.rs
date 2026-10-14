@@ -67,6 +67,9 @@ pub struct RenderHints {
     /// Filled in by the renderer: nanoseconds spent getting source pictures (decoding, waiting
     /// for a decoder). Tells footage too slow to decode apart from effects too slow to render.
     pub decode_ns: Arc<AtomicU64>,
+    /// The caller shows frames on the renderer's GPU device: a frame drawn there may be left
+    /// there ([`crate::Frame::gpu`]) instead of read back (LOG D-039).
+    pub gpu: bool,
 }
 
 /// Sound from the timeline: `mix(start, buffer, channels)` writes interleaved frames into

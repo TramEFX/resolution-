@@ -98,6 +98,7 @@ doc is updated *and* the entry says which section moved.
 | D-036 | 2026-10-14 | color | G1 built: the viewers' frames on Resolution's GPU renderer, grades by their own math | active |
 | D-037 | 2026-10-14 | color | G2, step 1: every frame FilmCraft plans as layers is drawn on the GPU; graded clips known by their pictures | active |
 | D-038 | 2026-10-14 | color | G2, step 2: blend modes, Push and HDR media on the GPU, ported from FilmCraft's compositor | active |
+| D-039 | 2026-10-14 | color | G2, step 3: the viewers show the renderer's frames on the GPU, without a copy back | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2247,3 +2248,53 @@ form), and a graded clip that has colour management to run before its grade.
   graded clips against the CPU frame. 187 tests in the workspace.
 - By hand, 2026-10-14: the graded demo in the editor, as measured above; the mid-Push still looks
   right (both sides, with motion blur).
+
+### D-039 — G2, step 3: the viewers show the renderer's frames on the GPU, without a copy back
+**Area:** color · **Status:** active · **Doc:** ARCHITECTURE "The GPU renderer";
+`crates/engine-api` (`Frame::gpu`, `RenderHints::gpu`); `crates/renderer` (`Picture`);
+`apps/resolution-app/src/monitor.rs`
+
+**Decision:** the editor puts the GPU renderer on egui's own wgpu device at start-up. Playback's
+frames are then left on the GPU and drawn by egui from the renderer's texture, instead of being
+read back to memory and uploaded again.
+
+- **The engine API:**
+  - `Frame` may carry `gpu`, a frame on the GPU, with `rgba` empty;
+  - `Frame::pixels()` gives the pixels either way, reading a GPU frame back once when asked;
+  - a front end asks for GPU frames with `RenderHints::gpu`.
+
+  The texture crosses the API as an opaque `GpuPicture` (with wgpu, a `TextureView`), so
+  `engine-api` takes no GPU library. Only the playback frame server asks, and only for viewers
+  that show GPU frames. Frame renders for agents and thumbnails still come as pixels.
+- **The renderer:**
+  - `draw_steps` submits the frame and returns a `Picture` without waiting;
+  - the output is `Rgba8Unorm`, sRGB-encoded by the resolve shader (as FilmCraft's compositor
+    does), since egui's renderer takes native textures in that form;
+  - `pub use wgpu`, so callers name the same device type.
+- **The adapter:** `use_gpu_device(device, queue)` makes the program's renderer on that device;
+  it works only before the renderer is first wanted.
+- **The editor:** a viewer registers the frame's texture with egui's wgpu renderer and swaps it
+  for each new frame. The scopes and the qualifier's picker read the frame back
+  (`Frame::pixels`), on the scopes' thread or at the click. The frame cache counts a GPU frame by
+  its size. Without a wgpu device (the UI tests) or with `--cpu-render`, frames come as pixels as
+  before.
+
+**Measured** (the graded Sony clip, `--play 8`, the editor's default viewer, two runs each):
+
+| | Read back (step 2) | Left on the GPU |
+|---|---|---|
+| A frame's job | 7.9–8.0 ms (5.0–5.1 of it decoding) | 6.8–6.9 ms (4.8–4.9 decoding) |
+| On screen | 23.9 fps | 23.9 fps |
+
+About 1.1 ms a frame, and the upload on the UI thread is gone. The `--play` report now gives
+the average frame job and whether the last frame was shown straight from the GPU. The CPU path in
+the same run: 49.5 ms a frame.
+
+**Checked:**
+- Renderer test: a frame left on the GPU reads back exactly as a rendered one, and only once.
+- 188 tests in the workspace.
+- By hand, 2026-10-14:
+  - the editor's report says the frames were shown straight from the GPU;
+  - a screenshot of the graded Sony frame shown this way against the CPU renderer's: mean 0.40,
+    99 % within 1 code value, no channel leaning (the colours are not encoded twice);
+  - the Color page's waveform, drawn from a frame read back, matches what it showed before.

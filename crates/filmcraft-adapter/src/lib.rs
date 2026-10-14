@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use filmcraft_engine::time::Tick;
 use filmcraft_engine::{EngineError as FcError, Event, FsServices, Session};
-pub use gpu::{frame_counts, use_gpu_renderer};
+pub use gpu::{frame_counts, use_gpu_device, use_gpu_renderer};
 use map::Target;
 pub use playback::use_hardware_decoders;
 use resolution_engine_api::{CommandInfo, Engine, EngineError, EngineEvent, Frame, Outcome, Playback, Result, Risk};
@@ -254,7 +254,7 @@ impl Engine for FilmCraftEngine {
         let scale = (max_side.max(1) as f32 / w.max(h).max(1) as f32).min(1.0);
         let t = at_seconds.map_or_else(|| self.session.playhead(), Tick::from_seconds_f64);
         let img = self.session.try_render_program_at(scale, t).map_err(|e| EngineError::Engine(e.to_string()))?;
-        Ok(Frame { width: img.w as u32, height: img.h as u32, rgba: img.over_black_rgba8() })
+        Ok(Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8()))
     }
 
     fn playback(&self) -> Option<Arc<dyn Playback>> {

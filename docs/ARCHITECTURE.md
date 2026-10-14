@@ -95,6 +95,12 @@ layers, other transitions, HDR timelines) are drawn by FilmCraft's CPU renderer 
 project. `--cpu-render` turns the GPU renderer off,
 and `frame_counts()` says how many frames each drew.
 
+The editor puts the renderer on egui's own wgpu device (`use_gpu_device`), and its viewers ask
+for frames left there (`RenderHints::gpu`): a `Frame` then carries the renderer's texture
+(`Frame::gpu`, an opaque `GpuPicture`) instead of pixels, and the viewer draws it as an egui
+native texture without a copy back to memory (D-039). Anything wanting the pixels (the scopes,
+the qualifier's picker) reads them back with `Frame::pixels`.
+
 ## The editor (`apps/resolution-app`)
 
 An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP server:

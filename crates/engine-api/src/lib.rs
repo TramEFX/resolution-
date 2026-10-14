@@ -9,6 +9,8 @@ pub mod commands;
 pub mod playback;
 pub mod scopes;
 
+use std::any::Any;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -69,7 +71,40 @@ pub struct Outcome {
 pub struct Frame {
     pub width: u32,
     pub height: u32,
+    /// The pixels; empty for a frame left on the GPU (`gpu`): [`Frame::pixels`] reads either.
     pub rgba: Vec<u8>,
+    /// The frame as the renderer left it on the GPU, for a front end drawing on the same device
+    /// to show without a copy (LOG D-039). Only given when asked for ([`RenderHints::gpu`]).
+    pub gpu: Option<Arc<dyn GpuPicture>>,
+}
+
+impl Frame {
+    pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Self {
+        Self { width, height, rgba, gpu: None }
+    }
+
+    /// The pixels, straight 8-bit sRGB RGBA: [`Frame::rgba`], or read back from the GPU (once,
+    /// waiting for it). Empty when the GPU could not be read.
+    pub fn pixels(&self) -> Cow<'_, [u8]> {
+        match &self.gpu {
+            Some(g) if self.rgba.is_empty() => Cow::Owned(g.read().unwrap_or_default()),
+            _ => Cow::Borrowed(&self.rgba),
+        }
+    }
+
+    /// The memory the frame holds, on the GPU or not.
+    pub fn bytes(&self) -> usize {
+        self.rgba.len().max(if self.gpu.is_some() { self.width as usize * self.height as usize * 4 } else { 0 })
+    }
+}
+
+/// A frame on the GPU (LOG D-039).
+pub trait GpuPicture: Send + Sync + std::fmt::Debug {
+    /// The texture, as the renderer's GPU library has it (with wgpu: a `wgpu::TextureView` of
+    /// format `Rgba8Unorm` holding sRGB-encoded colour, the form egui's renderer takes).
+    fn texture(&self) -> &(dyn Any + Send + Sync);
+    /// The pixels, read back (waits for the GPU).
+    fn read(&self) -> Option<Vec<u8>>;
 }
 
 /// Things the UI and agents should react to.

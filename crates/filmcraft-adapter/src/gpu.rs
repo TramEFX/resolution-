@@ -30,6 +30,7 @@
 //! copy: the grade comes first in its effect stack, so FilmCraft renders that clip on the CPU,
 //! graded, and the GPU draws it like any pre-rendered layer.
 
+use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -41,9 +42,9 @@ use filmcraft_engine::render::{RenderOptions, SourceProvider};
 use filmcraft_engine::time::Tick;
 use filmcraft_frame::{AudioBuffer, Chroma, PixelData, VideoFrame};
 use filmcraft_media::{FrameRequest, MediaInfo, MediaSource, SharedSource, cancel};
-use resolution_engine_api::Frame;
+use resolution_engine_api::{Frame, GpuPicture};
 use resolution_grade::Grade;
-use resolution_renderer::{Blend, Coding, Curve, Layer, Managed, Pixels, Renderer, Step, Transfer};
+use resolution_renderer::{Blend, Coding, Curve, Layer, Managed, Picture, Pixels, Renderer, Step, Transfer};
 
 static GPU_FRAMES: AtomicU64 = AtomicU64::new(0);
 static CPU_FRAMES: AtomicU64 = AtomicU64::new(0);
@@ -65,10 +66,41 @@ pub(crate) fn counted_cpu_frame() {
     CPU_FRAMES.fetch_add(1, Ordering::Relaxed);
 }
 
+static RENDERER: OnceLock<Option<Mutex<Renderer>>> = OnceLock::new();
+/// The renderer is on the front end's device ([`use_gpu_device`]).
+static SHARED: AtomicBool = AtomicBool::new(false);
+
 /// The renderer, one for the program, made when first wanted; `None` without a GPU.
 fn renderer() -> Option<&'static Mutex<Renderer>> {
-    static R: OnceLock<Option<Mutex<Renderer>>> = OnceLock::new();
-    R.get_or_init(|| Renderer::new().map(Mutex::new)).as_ref()
+    RENDERER.get_or_init(|| Renderer::new().map(Mutex::new)).as_ref()
+}
+
+/// Puts the GPU renderer on the front end's own device, so frames asked for with
+/// `RenderHints::gpu` can be left there for it to draw (LOG D-039). Only before the renderer is
+/// first wanted: `false` when it already exists elsewhere.
+pub fn use_gpu_device(device: resolution_renderer::wgpu::Device, queue: resolution_renderer::wgpu::Queue) -> bool {
+    let mut ours = false;
+    RENDERER.get_or_init(|| {
+        ours = true;
+        Some(Mutex::new(Renderer::on(device, queue)))
+    });
+    if ours {
+        SHARED.store(true, Ordering::Relaxed);
+    }
+    ours
+}
+
+/// A frame left on the GPU, as the engine API hands it over.
+#[derive(Debug)]
+struct OnGpu(Picture);
+
+impl GpuPicture for OnGpu {
+    fn texture(&self) -> &(dyn Any + Send + Sync) {
+        self.0.view()
+    }
+    fn read(&self) -> Option<Vec<u8>> {
+        self.0.read().map(<[u8]>::to_vec)
+    }
 }
 
 /// Pictures decoded for stand-ins, each with its clip.
@@ -131,13 +163,15 @@ impl Graded {
     }
 
     /// The frame at `t` of timeline `seq`, drawn on the GPU, or `None` when the GPU renderer does
-    /// not cover it (see the module notes) or there is no GPU.
+    /// not cover it (see the module notes) or there is no GPU. With `keep`, the frame is left on
+    /// the GPU when the renderer shares the front end's device.
     pub(crate) fn render(
         &self,
         seq: ItemId,
         t: Tick,
         opts: RenderOptions,
         sources: &dyn SourceProvider,
+        keep: bool,
     ) -> Option<Frame> {
         if !GPU_ON.load(Ordering::Relaxed) {
             return None;
@@ -156,7 +190,7 @@ impl Graded {
         let (_, _, parts) = parts(&plan)?;
         let layers: Vec<&PlanLayer> = parts.iter().flat_map(Part::layers).collect();
         let grades = self.layer_grades(&layers, &seen)?;
-        let frame = draw(gpu, &plan, &grades)?;
+        let frame = draw(gpu, &plan, &grades, keep && SHARED.load(Ordering::Relaxed))?;
         GPU_FRAMES.fetch_add(1, Ordering::Relaxed);
         Some(frame)
     }
@@ -233,9 +267,9 @@ fn parts(plan: &FramePlan) -> Option<(usize, usize, Vec<Part<'_>>)> {
     }
 }
 
-/// Draws `plan` on the GPU, its layers (in plan order, Push sides included) with `grades`.
-/// `None` when a layer cannot be drawn there or the GPU failed.
-fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>]) -> Option<Frame> {
+/// Draws `plan` on the GPU, its layers (in plan order, Push sides included) with `grades`, read
+/// back or (`keep`) left there. `None` when a layer cannot be drawn there or the GPU failed.
+fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>], keep: bool) -> Option<Frame> {
     let (width, height, parts) = parts(plan)?;
     let all: Vec<&PlanLayer> = parts.iter().flat_map(Part::layers).collect();
     // standard effects the GPU does not run yet: on the CPU, layer by layer (with the layer's
@@ -285,8 +319,13 @@ fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>]) -> O
             }
         })
         .collect();
-    let rgba = gpu.lock().ok()?.render_steps((width as u32, height as u32), &steps)?;
-    Some(Frame { width: width as u32, height: height as u32, rgba })
+    let size = (width as u32, height as u32);
+    if keep {
+        let picture = gpu.lock().ok()?.draw_steps(size, &steps);
+        return Some(Frame { width: size.0, height: size.1, rgba: Vec::new(), gpu: Some(Arc::new(OnGpu(picture))) });
+    }
+    let rgba = gpu.lock().ok()?.render_steps(size, &steps)?;
+    Some(Frame::new(size.0, size.1, rgba))
 }
 
 /// A Push transition's direction (0 down, 1 left, 2 up, 3 right) and motion blur (0 to 1), as

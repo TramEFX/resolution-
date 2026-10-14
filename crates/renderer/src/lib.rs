@@ -19,9 +19,15 @@
 //! the node's input, and its windows. The key is a real per-pixel mask over the whole node, not
 //! a baked LUT (D-032's goal).
 //!
+//! A frame is read back as 8-bit sRGB ([`Renderer::render_steps`]) or left on the GPU as a
+//! [`Picture`] for a front end drawing on the same device ([`Renderer::draw_steps`], LOG D-039).
+//!
 //! This crate knows no engine: callers hand it pictures as plain slices.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// The GPU library, for callers sharing a device with the renderer ([`Renderer::on`]).
+pub use wgpu;
 
 use resolution_grade::{Grade, Shape};
 
@@ -208,7 +214,86 @@ pub enum Step<'a> {
 }
 
 const ACCUM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// sRGB-encoded colour in a plain 8-bit texture (encoded by the resolve shader): what egui's
+/// renderer takes as a native texture.
+const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// A frame left on the GPU: 8-bit sRGB-encoded RGBA, opaque.
+pub struct Picture {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    size: (u32, u32),
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    pixels: OnceLock<Option<Vec<u8>>>,
+}
+
+impl std::fmt::Debug for Picture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Picture({}x{})", self.size.0, self.size.1)
+    }
+}
+
+impl Picture {
+    /// The texture (format `Rgba8Unorm`, sRGB-encoded colour), to draw.
+    pub fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    /// The pixels, straight 8-bit sRGB RGBA, read back from the GPU the first time they are
+    /// asked for (waiting for it). `None` when the GPU could not be read.
+    pub fn read(&self) -> Option<&[u8]> {
+        self.pixels.get_or_init(|| self.read_back()).as_deref()
+    }
+
+    fn read_back(&self) -> Option<Vec<u8>> {
+        let (w, h) = self.size;
+        let row = (w * 4).div_ceil(256) * 256;
+        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: u64::from(row * h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = self.device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buf,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) },
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([enc.finish()]);
+        let slice = buf.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        // a healthy map takes milliseconds; a stuck driver must not hang playback
+        self.device
+            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(std::time::Duration::from_secs(8)) })
+            .ok()?;
+        rx.recv().ok()?.ok()?;
+        let data = slice.get_mapped_range().ok()?;
+        let mut out = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            out.extend_from_slice(&data[(y * row) as usize..(y * row + w * 4) as usize]);
+        }
+        drop(data);
+        buf.unmap();
+        Some(out)
+    }
+}
 
 pub struct Renderer {
     device: wgpu::Device,
@@ -486,11 +571,17 @@ impl Renderer {
     /// The frame of `size` pixels: `steps` drawn in order over black, as straight 8-bit sRGB RGBA
     /// (opaque). `None` when the GPU could not finish it.
     pub fn render_steps(&self, size: (u32, u32), steps: &[Step<'_>]) -> Option<Vec<u8>> {
+        let picture = self.draw_steps(size, steps);
+        picture.read().map(<[u8]>::to_vec)
+    }
+
+    /// [`Renderer::render_steps`] left on the GPU: the commands are submitted, not waited for.
+    /// Anything drawing the picture later on the same device sees it finished.
+    pub fn draw_steps(&self, size: (u32, u32), steps: &[Step<'_>]) -> Picture {
         let (w, h) = (size.0.max(1), size.1.max(1));
         let drawn = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
         let canvas = self.target((w, h), ACCUM_FORMAT, drawn | wgpu::TextureUsages::COPY_SRC);
-        let output =
-            self.target((w, h), OUTPUT_FORMAT, wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+        let output = self.target((w, h), OUTPUT_FORMAT, drawn | wgpu::TextureUsages::COPY_SRC);
         let layers = |s: &Step<'_>| -> Vec<Blend> {
             match s {
                 Step::Layers(ls) => ls.iter().map(|l| l.blend).collect(),
@@ -558,46 +649,16 @@ impl Renderer {
             p.set_bind_group(0, &resolve, &[]);
             p.draw(0..3, 0..1);
         }
-        let row = (w * 4).div_ceil(256) * 256;
-        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: u64::from(row * h),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        enc.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &output.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buf,
-                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) },
-            },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-        );
         self.queue.submit([enc.finish()]);
         drop((keep, inputs_kept));
-        let slice = buf.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| {
-            let _ = tx.send(r);
-        });
-        // a healthy map takes milliseconds; a stuck driver must not hang playback
-        self.device
-            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(std::time::Duration::from_secs(8)) })
-            .ok()?;
-        rx.recv().ok()?.ok()?;
-        let data = slice.get_mapped_range().ok()?;
-        let mut out = Vec::with_capacity((w * h * 4) as usize);
-        for y in 0..h {
-            out.extend_from_slice(&data[(y * row) as usize..(y * row + w * 4) as usize]);
+        Picture {
+            texture: output.texture,
+            view: output.view,
+            size: (w, h),
+            device: self.device.clone(),
+            queue: self.queue.clone(),
+            pixels: OnceLock::new(),
         }
-        drop(data);
-        buf.unmap();
-        Some(out)
     }
 
     /// Records `layers` drawn onto `target`, bottom to top. A layer whose blend mode reads the

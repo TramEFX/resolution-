@@ -46,7 +46,7 @@ impl Playback for Fake {
         }
         // square frames of the size asked for
         let side = max_side as usize;
-        Ok(Frame { width: max_side, height: max_side, rgba: vec![frame as u8; side * side * 4] })
+        Ok(Frame::new(max_side, max_side, vec![frame as u8; side * side * 4]))
     }
     fn mixer(&self, _: u32) -> Mixer {
         Box::new(|_, buf, _| buf.fill(0.0))

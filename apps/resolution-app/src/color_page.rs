@@ -1468,7 +1468,7 @@ pub fn qualifier_picker(ui: &mut Ui, screen: Rect, picture: Option<&Arc<Frame>>,
         let v = ((p.y - screen.top()) / screen.height()).clamp(0.0, 0.999);
         let (x, y) = ((u * f.width as f32) as usize, (v * f.height as f32) as usize);
         let i = (y * f.width as usize + x) * 4;
-        if let Some(px) = f.rgba.get(i..i + 3) {
+        if let Some(px) = f.pixels().get(i..i + 3) {
             let rgb = [px[0], px[1], px[2]].map(|c| f32::from(c) / 255.0);
             page.adjust(&mut asks, json!({ "qualifier": Qualifier::picked(rgb) }));
         }

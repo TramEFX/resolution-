@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use egui::{ColorImage, TextureHandle, TextureOptions};
+use eframe::egui_wgpu::{self, wgpu};
+use egui::{ColorImage, TextureHandle, TextureId, TextureOptions, Vec2, vec2};
 use resolution_engine_api::{Frame, Playback};
 use resolution_playback::{AudioLost, AudioOut, AudioStats, FrameKey, FrameServer, Step, Transport, ahead};
 use serde_json::json;
@@ -74,11 +75,37 @@ impl Sound {
     }
 }
 
+/// The picture a viewer has on screen.
+pub enum Shown {
+    /// Uploaded from the frame's pixels.
+    Uploaded(TextureHandle),
+    /// The renderer's own texture, left on the GPU (LOG D-039), registered with egui's renderer.
+    OnGpu { id: TextureId, size: Vec2 },
+}
+
+impl Shown {
+    pub fn id(&self) -> TextureId {
+        match self {
+            Shown::Uploaded(t) => t.id(),
+            Shown::OnGpu { id, .. } => *id,
+        }
+    }
+
+    pub fn size_vec2(&self) -> Vec2 {
+        match self {
+            Shown::Uploaded(t) => t.size_vec2(),
+            Shown::OnGpu { size, .. } => *size,
+        }
+    }
+}
+
 pub struct Monitor {
     /// What this viewer plays, from the latest snapshot.
     pub program: Option<Arc<dyn Playback>>,
     pub frames: FrameServer,
-    pub frame: Option<TextureHandle>,
+    pub frame: Option<Shown>,
+    /// egui's renderer, when frames are left on the GPU for this viewer ([`Monitor::draw_on_gpu`]).
+    gpu: Option<egui_wgpu::RenderState>,
     /// The frame in `frame`.
     pub shown: Option<FrameKey>,
     /// The picture in `frame`, for the scopes.
@@ -107,6 +134,7 @@ impl Monitor {
             program: None,
             frames,
             frame: None,
+            gpu: None,
             shown: None,
             picture: None,
             view_side: 960,
@@ -138,6 +166,20 @@ impl Monitor {
         FrameKey { revision: p.revision(), frame, side: self.view_side, draft: false }
     }
 
+    /// Shows frames the renderer leaves on egui's own GPU device, without reading them back
+    /// (LOG D-039).
+    pub fn draw_on_gpu(&mut self, render_state: egui_wgpu::RenderState) {
+        self.frames.keep_frames_on_gpu(true);
+        self.gpu = Some(render_state);
+    }
+
+    /// Takes the picture off screen, giving back a texture lent to egui's renderer.
+    fn clear_frame(&mut self) {
+        if let (Some(Shown::OnGpu { id, .. }), Some(rs)) = (self.frame.take(), &self.gpu) {
+            rs.renderer.write().free_texture(&id);
+        }
+    }
+
     /// A new snapshot: what to play, and where the engine's playhead is.
     pub fn update_program(&mut self, program: Option<Arc<dyn Playback>>, engine_frame: i64, sound: &mut Sound) {
         let had = self.program.is_some();
@@ -151,7 +193,7 @@ impl Monitor {
                 sound.stop();
             }
             self.transport.stop();
-            self.frame = None;
+            self.clear_frame();
             self.shown = None;
         }
     }
@@ -279,10 +321,37 @@ impl Monitor {
         };
         match found {
             Some((k, f)) if self.shown != Some(k) => {
-                let image = ColorImage::from_rgba_unmultiplied([f.width as usize, f.height as usize], &f.rgba);
-                match &mut self.frame {
-                    Some(t) => t.set(image, TextureOptions::LINEAR),
-                    None => self.frame = Some(ctx.load_texture(self.texture, image, TextureOptions::LINEAR)),
+                let on_gpu = f.gpu.as_ref().and_then(|g| g.texture().downcast_ref::<wgpu::TextureView>());
+                match (on_gpu, &self.gpu) {
+                    (Some(view), Some(rs)) => {
+                        // the renderer's texture, drawn as it is (sRGB-encoded Rgba8Unorm)
+                        let mut r = rs.renderer.write();
+                        let id = match &self.frame {
+                            Some(Shown::OnGpu { id, .. }) => {
+                                r.update_egui_texture_from_wgpu_texture(
+                                    &rs.device,
+                                    view,
+                                    wgpu::FilterMode::Linear,
+                                    *id,
+                                );
+                                *id
+                            }
+                            _ => r.register_native_texture(&rs.device, view, wgpu::FilterMode::Linear),
+                        };
+                        drop(r);
+                        self.frame = Some(Shown::OnGpu { id, size: vec2(f.width as f32, f.height as f32) });
+                    }
+                    _ => {
+                        let px = f.pixels();
+                        let image = ColorImage::from_rgba_unmultiplied([f.width as usize, f.height as usize], &px);
+                        if let Some(Shown::Uploaded(t)) = &mut self.frame {
+                            t.set(image, TextureOptions::LINEAR);
+                        } else {
+                            self.clear_frame();
+                            self.frame =
+                                Some(Shown::Uploaded(ctx.load_texture(self.texture, image, TextureOptions::LINEAR)));
+                        }
+                    }
                 }
                 self.shown = Some(k);
                 self.picture = Some(f);
