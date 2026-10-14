@@ -65,7 +65,8 @@ and compiles it onto the clip as Lumetri Color effects at the front of its effec
 functions as R, G and B curves, the saturation step as Saturation, Vibrance and a Hue vs Hue
 curve. So every renderer (playback, frame renders, Deliver) shows the grade, and each edit is one
 FilmCraft undo step holding both the metadata and the effects. A node's windows become effect masks on
-its Lumetri effects, in the clip's pixels (LOG D-031). Lumetri runs these on the CPU; GPU grading is a
+its Lumetri effects, in the clip's pixels (LOG D-031). A qualified node, key and all, is baked into a
+33-point LUT in the project's LUT library and carried by one Lumetri effect (D-032, D-033). Lumetri runs these on the CPU; GPU grading is a
 later step, and with it real key masks for qualifiers (D-032).
 
 ## The editor (`apps/resolution-app`)

@@ -17,7 +17,7 @@ use egui::{
     TextureOptions, Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
 };
 use resolution_engine_api::{Frame, PARADE_GAP, Playback, RenderHints, ScopeKind, Scopes, VECTORSCOPE_EXTENT};
-use resolution_grade::{Curve, Node, Shape as WindowShape, Wheel, Window};
+use resolution_grade::{Curve, Node, Qualifier, Shape as WindowShape, Wheel, Window};
 use serde_json::{Map, Value, json};
 
 use crate::chrome;
@@ -998,6 +998,7 @@ pub fn scopes_panel(ui: &mut Ui, look: &Look, view: &mut ScopeView) {
 pub enum Palette {
     #[default]
     Curves,
+    Qualifier,
     Window,
 }
 
@@ -1006,7 +1007,7 @@ fn palette_header(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Rect {
     let t = look.theme;
     let header = chrome::panel_header(ui, look, "", None);
     let mut x = header.left() + 4.0;
-    for (p, label) in [(Palette::Curves, "Curves"), (Palette::Window, "Window")] {
+    for (p, label) in [(Palette::Curves, "Curves"), (Palette::Qualifier, "Qualifier"), (Palette::Window, "Window")] {
         let w = ui.painter().layout_no_wrap(label.into(), look.medium(), t.text).size().x + 16.0;
         let b = Rect::from_min_max(pos2(x, header.top()), pos2(x + w, header.bottom()));
         x += w;
@@ -1302,6 +1303,175 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
     }
     if r.drag_stopped() && page.moving_window {
         page.end_drag();
+    }
+    asks
+}
+
+// ---- the Qualifier palette ----
+
+/// A qualifier number: its name in the palette, and where it lives.
+struct QualifierField {
+    name: &'static str,
+    get: fn(&Qualifier) -> f32,
+    set: fn(&mut Qualifier, f32),
+}
+
+/// The three columns of the Qualifier palette: each section's switch, then its numbers.
+type Section = (&'static str, fn(&Qualifier) -> bool, fn(&mut Qualifier), &'static [QualifierField]);
+
+const SECTIONS: [Section; 3] = [
+    (
+        "Hue",
+        |q| q.hue_on,
+        |q| q.hue_on = !q.hue_on,
+        &[
+            QualifierField { name: "Hue Center", get: |q| q.hue_center, set: |q, v| q.hue_center = v },
+            QualifierField { name: "Hue Width", get: |q| q.hue_width, set: |q, v| q.hue_width = v },
+            QualifierField { name: "Hue Soft", get: |q| q.hue_soft, set: |q, v| q.hue_soft = v },
+        ],
+    ),
+    (
+        "Sat",
+        |q| q.sat_on,
+        |q| q.sat_on = !q.sat_on,
+        &[
+            QualifierField { name: "Sat Low", get: |q| q.sat_low, set: |q, v| q.sat_low = v },
+            QualifierField { name: "Sat High", get: |q| q.sat_high, set: |q, v| q.sat_high = v },
+            QualifierField { name: "Sat Low Soft", get: |q| q.sat_low_soft, set: |q, v| q.sat_low_soft = v },
+            QualifierField { name: "Sat High Soft", get: |q| q.sat_high_soft, set: |q, v| q.sat_high_soft = v },
+        ],
+    ),
+    (
+        "Lum",
+        |q| q.lum_on,
+        |q| q.lum_on = !q.lum_on,
+        &[
+            QualifierField { name: "Lum Low", get: |q| q.lum_low, set: |q, v| q.lum_low = v },
+            QualifierField { name: "Lum High", get: |q| q.lum_high, set: |q, v| q.lum_high = v },
+            QualifierField { name: "Lum Low Soft", get: |q| q.lum_low_soft, set: |q, v| q.lum_low_soft = v },
+            QualifierField { name: "Lum High Soft", get: |q| q.lum_high_soft, set: |q, v| q.lum_high_soft = v },
+        ],
+    ),
+];
+
+/// A small on/off button.
+fn toggle(ui: &mut Ui, look: &Look, rect: Rect, label: &str, accessible: &str, on: bool) -> bool {
+    let t = look.theme;
+    let r = ui.interact(rect, ui.id().with(("toggle", accessible)), Sense::click());
+    name(&r, WidgetType::Button, accessible);
+    ui.painter().rect_filled(
+        rect,
+        look.radius(),
+        if on {
+            t.active_bg
+        } else if r.hovered() {
+            t.hover
+        } else {
+            t.field
+        },
+    );
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, look.small(), if on { t.accent } else { t.dim });
+    r.clicked()
+}
+
+/// The Qualifier palette: the current node's HSL key. With none, Add Qualifier (or click the
+/// viewer to pick a colour); with one, On, Invert and Remove, then the Hue, Saturation and
+/// Luminance ranges, each section switched on or off.
+pub fn qualifier(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
+    let mut asks = Vec::new();
+    let t = look.theme;
+    palette_header(ui, look, page);
+    let Some(node) = page.current().cloned() else { return asks };
+    ui.add_space(6.0);
+    let Some(q) = node.qualifier else {
+        ui.horizontal(|ui| {
+            ui.add_space(8.0);
+            if chrome::text_button(ui, look, "Add Qualifier", true).clicked() {
+                page.adjust(&mut asks, json!({ "qualifier": Qualifier::default() }));
+            }
+            ui.label(egui::RichText::new("or click the viewer to pick a colour.").color(t.dim));
+        });
+        return asks;
+    };
+    let mut nq = q;
+    let mut remove = false;
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        for (text, on, flip) in [("On", q.enabled, 0), ("Invert", q.invert, 1)] {
+            let (b, _) = ui.allocate_exact_size(vec2(60.0, look.skin.button), Sense::hover());
+            if toggle(ui, look, b, text, &format!("Qualifier {text}"), on) {
+                if flip == 0 {
+                    nq.enabled = !nq.enabled;
+                } else {
+                    nq.invert = !nq.invert;
+                }
+            }
+        }
+        if chrome::text_button(ui, look, "Remove Qualifier", true).clicked() {
+            remove = true;
+        }
+        ui.label(egui::RichText::new("Click the viewer to pick a colour.").color(t.dim));
+    });
+    ui.add_space(6.0);
+    let area = ui.available_rect_before_wrap();
+    let col_w = (area.width() - 16.0) / 3.0;
+    let row_h = 24.0;
+    let fresh = Qualifier::default();
+    for (c, (title, is_on, flip, fields)) in SECTIONS.iter().enumerate() {
+        let x = area.left() + 8.0 + col_w * c as f32;
+        let head = Rect::from_min_size(pos2(x, area.top()), vec2(col_w, row_h)).shrink2(vec2(3.0, 2.0));
+        if toggle(ui, look, head, title, &format!("{title} Range"), is_on(&q)) {
+            flip(&mut nq);
+        }
+        for (k, f) in fields.iter().enumerate() {
+            let cell = Rect::from_min_size(pos2(x, area.top() + row_h * (k + 1) as f32), vec2(col_w, row_h))
+                .shrink2(vec2(3.0, 2.0));
+            let v = (f.get)(&q);
+            let r = number(ui, look, cell, f.name, &format!("{v:.1}"), (v - (f.get)(&fresh)).abs() > 1e-3);
+            if r.drag_started() {
+                page.begin_drag();
+            }
+            if r.double_clicked() {
+                (f.set)(&mut nq, (f.get)(&fresh));
+            } else if r.dragged() && r.drag_delta().x != 0.0 {
+                (f.set)(&mut nq, v + r.drag_delta().x * 0.1);
+            }
+            if r.drag_stopped() {
+                page.end_drag();
+            }
+        }
+    }
+    ui.allocate_rect(Rect::from_min_size(area.min, vec2(area.width(), row_h * 5.0)), Sense::hover());
+    if remove {
+        page.adjust(&mut asks, json!({ "qualifier": Value::Null }));
+    } else if nq != q {
+        page.adjust(&mut asks, json!({ "qualifier": nq }));
+    }
+    asks
+}
+
+/// The qualifier picker over the viewer's picture `screen` (showing `picture`): a click takes the
+/// colour under the pointer as the node's key. It reads the picture as the viewer shows it, after
+/// the grade.
+pub fn qualifier_picker(ui: &mut Ui, screen: Rect, picture: Option<&Arc<Frame>>, page: &mut ColorPage) -> Vec<Ask> {
+    let mut asks = Vec::new();
+    let r = ui.interact(screen, ui.id().with("qualifier picker"), Sense::click());
+    name(&r, WidgetType::Other, "Qualifier picker");
+    if r.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+    if r.clicked()
+        && page.current().is_some()
+        && let (Some(p), Some(f)) = (r.interact_pointer_pos(), picture)
+    {
+        let u = ((p.x - screen.left()) / screen.width()).clamp(0.0, 0.999);
+        let v = ((p.y - screen.top()) / screen.height()).clamp(0.0, 0.999);
+        let (x, y) = ((u * f.width as f32) as usize, (v * f.height as f32) as usize);
+        let i = (y * f.width as usize + x) * 4;
+        if let Some(px) = f.rgba.get(i..i + 3) {
+            let rgb = [px[0], px[1], px[2]].map(|c| f32::from(c) / 255.0);
+            page.adjust(&mut asks, json!({ "qualifier": Qualifier::picked(rgb) }));
+        }
     }
     asks
 }

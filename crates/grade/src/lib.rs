@@ -109,6 +109,10 @@ pub struct Node {
     /// up; everywhere when none is enabled. Grades stored before windows existed have none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub windows: Vec<Window>,
+    /// A colour key (LOG D-032): the correction applies by how much each pixel's colour is in its
+    /// ranges. Grades stored before qualifiers existed have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<Qualifier>,
 }
 
 impl Default for Node {
@@ -129,6 +133,7 @@ impl Default for Node {
             tint: 0.0,
             curves: Curves::default(),
             windows: Vec::new(),
+            qualifier: None,
         }
     }
 }
@@ -239,7 +244,29 @@ impl Node {
             return rgb;
         }
         let toned = [self.tone(0, rgb[0]), self.tone(1, rgb[1]), self.tone(2, rgb[2])];
-        self.saturation().apply(toned)
+        let out = self.saturation().apply(toned);
+        match self.keyed() {
+            // the correction, blended by how much the node's input is in the key
+            Some(q) => {
+                let k = q.key(rgb);
+                [0, 1, 2].map(|c| rgb[c] + (out[c] - rgb[c]) * k)
+            }
+            None => out,
+        }
+    }
+
+    /// The node's qualifier, when it is on.
+    pub fn keyed(&self) -> Option<&Qualifier> {
+        self.qualifier.as_ref().filter(|q| q.enabled)
+    }
+
+    /// The node (inside its windows) as a 3D table of `n` points per side, red changing fastest,
+    /// as a `.cube` file lists it: how an engine without colour keys carries a qualified node
+    /// (LOG D-032).
+    pub fn table(&self, n: usize) -> Vec<[f32; 3]> {
+        let n = n.max(2);
+        let at = |i: usize| i as f32 / (n - 1) as f32;
+        (0..n * n * n).map(|i| self.apply([at(i % n), at(i / n % n), at(i / (n * n))])).collect()
     }
 
     /// Set the controls named in `patch`, a JSON object of this node's fields; a wheel may name
@@ -271,6 +298,9 @@ impl Node {
         self.temp = self.temp.clamp(-4000.0, 4000.0);
         self.tint = self.tint.clamp(-100.0, 100.0);
         self.windows.iter_mut().for_each(Window::clamp);
+        if let Some(q) = &mut self.qualifier {
+            q.clamp();
+        }
         for c in [&mut self.curves.y, &mut self.curves.r, &mut self.curves.g, &mut self.curves.b] {
             c.tidy();
         }
@@ -302,6 +332,134 @@ fn contrast(v: f32, c: f32, pivot: f32) -> f32 {
     }
     let p = pivot.clamp(0.01, 0.99);
     if v <= p { p * (v / p).powf(c) } else { 1.0 - (1.0 - p) * ((1.0 - v) / (1.0 - p)).powf(c) }
+}
+
+/// An HSL qualifier (LOG D-032): a key on the node's input picking colours by hue, saturation
+/// and luminance. Every number runs 0 to 100, as in Resolve's palette. Hue goes once round the
+/// colour wheel from red (0) through yellow, green, cyan, blue and magenta back to red (100);
+/// saturation is HSL saturation, luminance Rec. 709 luma. Each range is full inside and falls to
+/// nothing over its soft width outside; a range that is off keys everything.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Qualifier {
+    pub enabled: bool,
+    /// Key the colours outside the ranges instead.
+    pub invert: bool,
+    pub hue_on: bool,
+    pub hue_center: f32,
+    /// The hue range's full width.
+    pub hue_width: f32,
+    pub hue_soft: f32,
+    pub sat_on: bool,
+    pub sat_low: f32,
+    pub sat_high: f32,
+    pub sat_low_soft: f32,
+    pub sat_high_soft: f32,
+    pub lum_on: bool,
+    pub lum_low: f32,
+    pub lum_high: f32,
+    pub lum_low_soft: f32,
+    pub lum_high_soft: f32,
+}
+
+impl Default for Qualifier {
+    /// Reds of some saturation in the midtones, until a colour is picked.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            invert: false,
+            hue_on: true,
+            hue_center: 0.0,
+            hue_width: 10.0,
+            hue_soft: 5.0,
+            sat_on: true,
+            sat_low: 20.0,
+            sat_high: 100.0,
+            sat_low_soft: 10.0,
+            sat_high_soft: 0.0,
+            lum_on: true,
+            lum_low: 10.0,
+            lum_high: 90.0,
+            lum_low_soft: 10.0,
+            lum_high_soft: 10.0,
+        }
+    }
+}
+
+/// 1 inside `[lo, hi]`, falling to 0 over `lo_soft` below it and `hi_soft` above, smoothly.
+fn range(v: f32, lo: f32, hi: f32, lo_soft: f32, hi_soft: f32) -> f32 {
+    let fall = |d: f32, soft: f32| {
+        if d <= 0.0 {
+            1.0
+        } else if soft <= 1e-6 {
+            0.0
+        } else {
+            let t = (1.0 - d / soft).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        }
+    };
+    fall(lo - v, lo_soft) * fall(v - hi, hi_soft)
+}
+
+impl Qualifier {
+    /// How much of `rgb` (0 to 1) the key takes: 0 to 1.
+    pub fn key(&self, rgb: [f32; 3]) -> f32 {
+        let hsl = rgb_to_hsl(rgb.map(|v| v.clamp(0.0, 1.0)));
+        let mut k = 1.0;
+        if self.hue_on {
+            // distance round the wheel, in hundredths of a turn
+            let d = (hsl[0] * 100.0 - self.hue_center).rem_euclid(100.0);
+            let d = d.min(100.0 - d);
+            k *= range(d, -1.0, self.hue_width / 2.0, 0.0, self.hue_soft);
+        }
+        if self.sat_on {
+            k *= range(hsl[1] * 100.0, self.sat_low, self.sat_high, self.sat_low_soft, self.sat_high_soft);
+        }
+        if self.lum_on {
+            let l = luma(rgb.map(|v| v.clamp(0.0, 1.0))) * 100.0;
+            k *= range(l, self.lum_low, self.lum_high, self.lum_low_soft, self.lum_high_soft);
+        }
+        if self.invert { 1.0 - k } else { k }
+    }
+
+    /// A qualifier centred on one picked colour (Resolve's qualifier picker): its hue, its
+    /// saturation and its luminance, with some room either side.
+    pub fn picked(rgb: [f32; 3]) -> Self {
+        let hsl = rgb_to_hsl(rgb.map(|v| v.clamp(0.0, 1.0)));
+        let (s, l) = (hsl[1] * 100.0, luma(rgb.map(|v| v.clamp(0.0, 1.0))) * 100.0);
+        Self {
+            hue_center: hsl[0] * 100.0,
+            hue_width: 8.0,
+            hue_soft: 6.0,
+            sat_low: (s - 20.0).max(0.0),
+            sat_high: (s + 20.0).min(100.0),
+            sat_low_soft: 10.0,
+            sat_high_soft: 10.0,
+            lum_low: (l - 25.0).max(0.0),
+            lum_high: (l + 25.0).min(100.0),
+            lum_low_soft: 10.0,
+            lum_high_soft: 10.0,
+            ..Self::default()
+        }
+    }
+
+    fn clamp(&mut self) {
+        self.hue_center = self.hue_center.rem_euclid(100.0);
+        for v in [
+            &mut self.hue_width,
+            &mut self.hue_soft,
+            &mut self.sat_low,
+            &mut self.sat_high,
+            &mut self.sat_low_soft,
+            &mut self.sat_high_soft,
+            &mut self.lum_low,
+            &mut self.lum_high,
+            &mut self.lum_low_soft,
+            &mut self.lum_high_soft,
+        ] {
+            *v = v.clamp(0.0, 100.0);
+        }
+    }
 }
 
 /// A window's shape.

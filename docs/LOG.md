@@ -89,7 +89,8 @@ doc is updated *and* the entry says which section moved.
 | D-030 | 2026-10-14 | color | Video scopes: drawn by the engine from the frame the viewer shows; read as numbers by agents | active |
 | B-033 | 2026-10-14 | ui | The Color page's palettes shrank a few points every frame, down to their minimum | fixed |
 | D-031 | 2026-10-14 | color | Windows: Linear and Circle windows on a node, compiled to FilmCraft effect masks | active |
-| D-032 | 2026-10-14 | color | Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal | active |
+| D-032 | 2026-10-14 | color | Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal | active (built: D-033) |
+| D-033 | 2026-10-14 | color | The qualifier as built: Resolve's HSL ranges, a qualified node baked into a 33-point project LUT | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1843,3 +1844,60 @@ The options put to Truman:
 Truman: **3 is the goal; build 1 now.** The grade stays Resolution's own model (D-028), and the
 LUT is only how today's compile carries a qualified node. When the GPU renderer arrives,
 qualifiers move to real key masks and the LUTs go away, with no grade lost.
+
+### D-033 — The qualifier as built: Resolve's HSL ranges, a qualified node baked into a 33-point project LUT
+**Area:** color · **Status:** active · **Doc:** `crates/grade` (`Qualifier`); `crates/filmcraft-adapter/src/color.rs`; `apps/resolution-app/src/color_page.rs`
+
+**Decision:** D-032 built.
+
+- **The model** (`crates/grade`): a node may hold a qualifier. Its parts:
+  - On, Invert, and three ranges, each with its own switch, numbered 0 to 100 as in Resolve:
+    - Hue: Center, Width, Soft. Hue goes once round the wheel from red, so red is both ends.
+    - Saturation: Low, High, Low Soft, High Soft (HSL saturation).
+    - Luminance: Low, High, Low Soft, High Soft (Rec. 709 luma).
+  - Each range is full inside and falls off smoothly over its soft width outside.
+  - The key is taken on the node's input. The node's correction is blended by it, so every
+    control (wheels, curves, saturation) applies inside the key.
+  - `Qualifier::picked` centres the ranges on one colour, as Resolve's picker does.
+  - Grades stored before qualifiers load with none.
+- **The engine side:** a qualified node with a correction compiles to one Lumetri effect, Basic
+  Correction on and nothing else. Its input LUT is the node itself, key and all, baked into a
+  33-point `.cube` (`Node::table`). The LUTs:
+  - go in the project's LUT library, named `resolution-<hash>`;
+  - are hashed on what the table depends on, so moving a window or renaming the node keeps the
+    same table;
+  - are dropped once no clip of any timeline uses them, at the next grade edit.
+
+  Windows still mask the effect. An undo puts the qualifier and its LUT back together.
+- **The page:** a Qualifier tab beside Curves and Window.
+  - With no qualifier: Add Qualifier. With one: On, Invert, Remove Qualifier, then the three
+    ranges as columns. Each column has its switch; drag a number sideways, double-click to reset.
+  - While the palette is open, a click on the viewer picks the colour under the pointer as the
+    key.
+
+**Measured** (full-size demo frame, Gamma and Saturation keyed on its most orange colour, against
+the node's own math): median error 0, 99 % of pixels within 2.3 code values, 99.9 % within 5.1,
+worst 6.5. The error sits in the key's soft edge, between the LUT's points. A test guards the
+figures. On the Sony clip an agent's whole edit, bake included, took 36 ms.
+
+**Limits:**
+- No matte finesse (denoise, blur, clean black and white): a LUT sees one pixel at a time
+  (D-032).
+- No Highlight view of the key.
+- The picker reads the picture as the viewer shows it, after the grade, not the node's input.
+- No RGB or Luma-only qualifier modes.
+- About 1 MB of project per qualified node (D-032).
+
+**Checked:**
+- Grade tests: the key's ranges, its soft hue edge and red at both ends of the wheel; a qualified
+  node changes only what its key takes; the table matches the node at its points; old grades load.
+- Adapter tests:
+  - A full-size demo render with Gain 0 keyed on the frame's most orange colour: that pixel goes
+    black and the most blue pixel is unchanged. One LUT is in the project; turning the qualifier
+    off drops it and grades everything; undo brings both back.
+  - A window move keeps the LUT.
+  - The accuracy figures above.
+- A UI test: Qualifier palette, pick from the viewer, widen the hue by dragging, Invert, Remove,
+  each through the engine.
+- By hand, 2026-10-14, on the Sony clip: an agent keyed the magenta light (hue 92) with
+  Saturation 0. The pink on the arm and hair went grey; the blue light and background stayed blue.
