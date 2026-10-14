@@ -102,6 +102,10 @@ An egui / eframe (wgpu) app (LOG D-012), and a client of `Engine` like the MCP s
   `resolution mcp --editor` connects and serves MCP over a `RemoteEngine`, which forwards each
   `Engine` call to the editor's engine thread. Agents' edits land in the same history and snapshots
   as the user's, so they show on screen as they happen.
+- **Agent drafts** (LOG D-027, `worker.rs`). An agent's first edit is made on a copy of the open
+  timeline, "<name> (agent draft)", and its later edits go there too. The worker keeps the draft's
+  record of steps (made, undone, redone, by whom), which the banner lists. Accept and Reject are
+  the user's alone: they are worker requests, not vocabulary commands.
 - **Tests drive the real UI.** `egui_kittest` presses keys and clicks clips headlessly.
   `resolution-app --screenshot out.png` saves the window once a frame is on screen; `--play <s>`
   plays and prints what was shown and heard.
@@ -157,7 +161,7 @@ Safety rules:
 - **Unknown commands** get suggestions; vocabulary commands the engine can't do headless say so.
 - Engine panics become an error for that call; the session survives.
 
-Still to build (from the research's lessons): agents editing a **draft timeline** the user
-accepts; provenance **receipts** per operation; per-command **JSON Schemas** (today `params` is a
+Still to build (from the research's lessons): provenance **receipts** per operation (agents'
+drafts, D-027, list edits by undo label only); per-command **JSON Schemas** (today `params` is a
 description string, as upstream FilmCraft has it, issue #347); an HTTP transport on loopback with
 a per-launch token; scope readouts so agents can grade by numbers.

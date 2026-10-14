@@ -47,7 +47,8 @@ read, never copied into the repo.
 
 - [x] `resolution-mcp`: page-organised discovery, risk tiers, dry runs with timeline diffs,
       atomic batches, checkpoints, `render_frame`, stdio (`resolution mcp`, `.mcp.json`)
-- [ ] Draft timelines for agents, accepted by the user; provenance receipts (built in the editor, M3)
+- [x] Draft timelines for agents, accepted by the user (built in the editor, M3; D-027)
+- [ ] Provenance receipts per operation (today a draft lists the agent's edits by undo label)
 - [ ] Open real projects/media from MCP end to end (import → assemble → render) as an acceptance test
 - [ ] Per-command JSON Schemas for the vocabulary
 - [ ] Transcription on by default; transcript-based editing; silence removal
@@ -81,7 +82,9 @@ read, never copied into the repo.
 
 - [x] Agents edit the open timeline through the editor's engine thread: the agent link and
       `resolution mcp --editor` (D-026)
-- [ ] Draft timelines: agent edits shown as a draft the user accepts or rejects; provenance receipts
+- [x] Draft timelines: an agent's edits go to a copy of the timeline that the user accepts or
+      rejects from a banner; the copy follows the one undo history (D-027)
+- [ ] Provenance receipts: what each agent edit did, where and why, beyond its undo label
 
 ## M4 — Color page, first slice (step 5)
 

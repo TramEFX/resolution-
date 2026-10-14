@@ -25,6 +25,20 @@ impl Default for FilmCraftEngine {
     }
 }
 
+/// The bin holding `item` in a `project.inspect` tree under `node` (whose id is `bin`):
+/// `Some(None)` at the top of the project, `None` if it is not there.
+fn bin_of(node: &Value, bin: Option<u64>, item: u64) -> Option<Option<u64>> {
+    node["children"].as_array().into_iter().flatten().find_map(|c| {
+        if c["item"].as_u64() == Some(item) {
+            Some(bin)
+        } else if c.get("children").is_some() {
+            bin_of(c, c["id"].as_u64(), item)
+        } else {
+            None
+        }
+    })
+}
+
 impl FilmCraftEngine {
     /// A headless session on the native filesystem.
     pub fn new() -> Self {
@@ -67,6 +81,47 @@ impl FilmCraftEngine {
             );
             m.insert("snapping".into(), Value::Bool(s.state.snapping));
             m.insert("linkedSelection".into(), Value::Bool(s.state.linked_selection));
+        }
+        Ok(out)
+    }
+
+    /// Commands FilmCraft runs on the project selection: select the items named, then run it.
+    /// `timeline.duplicate` (`item`, default the open timeline) is `edit.duplicate`, with the copy
+    /// moved to the original's bin as Resolve does; `media.delete` (`items`) is `project.delete`.
+    fn on_selection(&mut self, id: &str, params: Value) -> Result<Outcome> {
+        let items: Vec<u64> = match id {
+            "timeline.duplicate" => {
+                params["item"].as_u64().or(self.session.state.active_sequence.map(|s| s.0)).into_iter().collect()
+            }
+            _ => params["items"].as_array().map(|a| a.iter().filter_map(Value::as_u64).collect()).unwrap_or_default(),
+        };
+        if items.is_empty() {
+            return Err(EngineError::BadParams { cmd: id.to_string(), msg: "name the items".into() });
+        }
+        self.run(id, "project.select", serde_json::json!({ "items": items }))?;
+        if id == "media.delete" {
+            return self.run(id, "project.delete", serde_json::json!({ "items": items }));
+        }
+        // FilmCraft puts the copy at the top of the project, Resolve in the original's bin: move
+        // it there, folding the move into the duplicate's undo step as FilmCraft folds its own
+        // (`clip_ops`: the first step's "before" project stands for both). If the move fails the
+        // copy stays where FilmCraft put it.
+        let n0 = self.session.history.undo.len();
+        let mut out = self.run(id, "edit.duplicate", serde_json::json!({ "items": items }))?;
+        let tree = self.run(id, "project.inspect", Value::Object(Default::default()))?.result;
+        let bin = |item| bin_of(&tree["root"], None, item);
+        if let Some(copy) = out.result["items"][0].as_u64()
+            && let Some(to) = bin(items[0])
+            && bin(copy) != Some(to)
+            && self.run(id, "project.moveToBin", serde_json::json!({ "items": [copy], "bin": to })).is_ok()
+        {
+            let undo = &mut self.session.history.undo;
+            if undo.len() > n0 + 1 {
+                let first = undo[n0].clone();
+                undo.truncate(n0);
+                undo.push(first);
+            }
+            out.revision = self.session.revision;
         }
         Ok(out)
     }
@@ -130,6 +185,9 @@ impl Engine for FilmCraftEngine {
             Some(Target::Engine(fc) | Target::Approx(fc, _)) => self.run(id, fc, params),
             Some(Target::Adapter) if id == "timeline.inspect" => self.inspect_timeline(),
             Some(Target::Adapter) if id == "source.inspect" => self.inspect_source(),
+            Some(Target::Adapter) if id == "timeline.duplicate" || id == "media.delete" => {
+                self.on_selection(id, params)
+            }
             Some(Target::Adapter) => {
                 // Undo and redo move through the history; they add no step of their own (LOG B-001).
                 let label = if id == "edit.undo" { self.undo() } else { self.redo() };
@@ -402,6 +460,51 @@ mod tests {
         let loudest = peaks.iter().fold(0f32, |m, (lo, hi)| m.max(lo.abs()).max(hi.abs()));
         assert!(loudest > 0.01 && loudest <= 1.0, "loudest peak {loudest}");
         assert!(peaks.iter().all(|(lo, hi)| lo <= hi));
+    }
+
+    /// The steps of an agent draft: duplicate the open timeline, rename the copy, delete one.
+    #[test]
+    fn timelines_duplicate_rename_and_delete() {
+        let mut e = demo();
+        let project = |e: &mut FilmCraftEngine| e.execute("project.inspect", json!({})).expect("project").result;
+        fn timelines(node: &Value, out: &mut Vec<(u64, String)>) {
+            for c in node["children"].as_array().into_iter().flatten() {
+                if c["type"] == "Sequence" {
+                    out.push((
+                        c["item"].as_u64().unwrap_or_default(),
+                        c["name"].as_str().unwrap_or_default().to_string(),
+                    ));
+                }
+                timelines(c, out);
+            }
+        }
+        let list = |e: &mut FilmCraftEngine| {
+            let mut out = Vec::new();
+            timelines(&project(e)["root"], &mut out);
+            out
+        };
+        let original = project(&mut e)["activeSequence"].as_u64().expect("open timeline");
+        let before = list(&mut e).len();
+        let out = e.execute("timeline.duplicate", json!({})).expect("duplicate");
+        let copy = out.result["items"][0].as_u64().expect("the copy");
+        assert!(out.undo_label.is_some());
+        assert_eq!(list(&mut e).len(), before + 1);
+        // in the original's bin, as Resolve does, and one undo step
+        let tree = project(&mut e);
+        let original_bin = bin_of(&tree["root"], None, original);
+        assert!(matches!(original_bin, Some(Some(_))), "the demo keeps its timelines in a bin");
+        assert_eq!(bin_of(&tree["root"], None, copy), original_bin);
+        assert_eq!(e.undo(), out.undo_label);
+        assert_eq!(list(&mut e).len(), before, "one undo takes the copy away");
+        assert_eq!(e.redo(), out.undo_label);
+        assert_eq!(bin_of(&project(&mut e)["root"], None, copy), original_bin);
+        e.execute("media.rename", json!({"item": copy, "name": "Main Edit (agent draft)"})).expect("rename");
+        assert!(list(&mut e).iter().any(|(i, n)| *i == copy && n == "Main Edit (agent draft)"));
+        e.execute("timeline.open", json!({"item": copy})).expect("open the copy");
+        e.execute("media.delete", json!({"items": [original]})).expect("delete the original");
+        let after = list(&mut e);
+        assert!(after.iter().all(|(i, _)| *i != original), "the original is gone: {after:?}");
+        assert_eq!(project(&mut e)["activeSequence"].as_u64(), Some(copy));
     }
 
     /// LOG B-001: undo and redo move through the history; they add no step of their own.
