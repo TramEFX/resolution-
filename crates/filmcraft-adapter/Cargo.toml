@@ -24,3 +24,7 @@ filmcraft-color = { workspace = true }
 # FilmCraft's own thread pool library: playback frames render in a pool of their own (playback.rs)
 rayon = "1"
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# reading Deliver's PNG frames back in tests
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -45,11 +45,12 @@
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use filmcraft_color::{GpuCurve, InputTransform, REFERENCE_WHITE_NITS};
+use filmcraft_engine::MediaPool;
 use filmcraft_engine::export::FrameRenderer;
-use filmcraft_engine::project::{ClipId, EffectInstance, ItemId, ParamValue, Project};
+use filmcraft_engine::project::{ClipId, EffectInstance, ItemId, ItemKind, ParamValue, Project};
 use filmcraft_engine::render::plan::{FramePlan, PlanLayer, PlanStep, effect_image_with, is_cpu_frame, plan_frame};
 use filmcraft_engine::render::{Image, RenderOptions, SourceProvider, render_sequence};
 use filmcraft_engine::time::Tick;
@@ -182,6 +183,36 @@ impl Graded {
             }
         }
         Self { project: Arc::new(p), stand_ins }
+    }
+
+    /// The copy.
+    pub(crate) fn project(&self) -> &Arc<Project> {
+        &self.project
+    }
+
+    /// Registers every stand-in in `pool` as a graded source of its real media (opened through
+    /// `sources`), so FilmCraft's own renders of the copy, an export's among them, get graded
+    /// pictures (LOG D-045). `false`, registering nothing, when the copy needs nothing of ours or
+    /// cannot have it: no stand-ins, no GPU, the GPU renderer off, or a graded subclip (the pool
+    /// resolves a subclip to its media item before its own id, so a stand-in for one is never
+    /// asked for).
+    pub(crate) fn register_sources(&self, pool: &MediaPool, sources: &dyn SourceProvider) -> bool {
+        if self.stand_ins.is_empty() || !GPU_ON.load(Ordering::Relaxed) || renderer().is_none() {
+            return false;
+        }
+        let media = |s: &StandIn| matches!(self.project.item(s.real).map(|i| &i.kind), Some(ItemKind::Media(_)));
+        if !self.stand_ins.values().all(media) {
+            return false;
+        }
+        let mut opened = Vec::with_capacity(self.stand_ins.len());
+        for (id, s) in &self.stand_ins {
+            let Some(inner) = sources.source(s.real) else { return false };
+            opened.push((*id, Arc::new(GradedSource { inner, grade: s.grade.clone() }) as SharedSource));
+        }
+        for (id, src) in opened {
+            pool.insert(id, src);
+        }
+        true
     }
 
     /// The frame at `t` of timeline `seq` as FilmCraft's CPU renderer draws it from the copy, every
@@ -422,11 +453,24 @@ fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>], out:
     })
 }
 
-/// An export's frame renderer (LOG D-042): one for each of the export's renderer slots, each
-/// making its graded copy of the export's project when first asked.
+/// An export's frame renderer (LOG D-042): one for each of the export's renderer slots. An export
+/// of a graded copy (`deliver.render`, D-045) finds the copy among those [`exporting`]; any other
+/// export makes a graded copy of its project when first asked.
 struct ExportFrames {
     /// The project it was made for (by address) and its graded copy.
-    graded: Option<(usize, Graded)>,
+    graded: Option<(usize, Arc<Graded>)>,
+}
+
+/// Graded copies being exported, by their project's address.
+static EXPORTING: Mutex<Vec<(usize, Weak<Graded>)>> = Mutex::new(Vec::new());
+
+/// Notes that `graded`'s copy is being exported, for the export's [`ExportFrames`] to draw it with
+/// its stand-ins rather than make a copy of the copy.
+pub(crate) fn exporting(graded: &Arc<Graded>) {
+    if let Ok(mut list) = EXPORTING.lock() {
+        list.retain(|(_, g)| g.strong_count() > 0);
+        list.push((Arc::as_ptr(&graded.project) as usize, Arc::downgrade(graded)));
+    }
 }
 
 /// Registers [`ExportFrames`] as the frame renderer of FilmCraft's exports that ask for GPU
@@ -464,7 +508,12 @@ impl FrameRenderer for ExportFrames {
     ) -> Option<Image> {
         let id = project as *const Project as usize;
         if self.graded.as_ref().is_none_or(|(p, _)| *p != id) {
-            self.graded = Some((id, Graded::of(&Arc::new(project.clone()), seq)));
+            let copy = EXPORTING
+                .lock()
+                .ok()
+                .and_then(|list| list.iter().find(|(p, _)| *p == id).and_then(|(_, g)| g.upgrade()));
+            let graded = copy.unwrap_or_else(|| Arc::new(Graded::of(&Arc::new(project.clone()), seq)));
+            self.graded = Some((id, graded));
         }
         let (_, graded) = self.graded.as_ref()?;
         graded.render_linear(seq, t, opts, sources)

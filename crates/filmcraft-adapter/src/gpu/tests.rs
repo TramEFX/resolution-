@@ -434,13 +434,10 @@ fn deliver_renders_through_the_gpu_renderer() {
 /// A frame FilmCraft draws itself, whole, on the CPU (a Wipe between two graded clips): its graded
 /// clips' pictures come graded from their sources, by the grade's own math (LOG D-044), not through
 /// the Lumetri compile (whose qualifier is a baked table, D-033).
-#[test]
-fn a_frame_filmcraft_draws_itself_shows_grades_by_their_own_math() {
-    if renderer().is_none() {
-        return;
-    }
+/// The demo with a Wipe into City Night Drive (9.43 s), where Aurora ends: a transition FilmCraft
+/// draws whole on the CPU.
+fn wiped_demo() -> FilmCraftEngine {
     let mut e = demo();
-    // a Wipe into City Night Drive (9.43 s), where Aurora ends
     let city = {
         let s = &e.session;
         let seq = s.state.active_sequence.unwrap();
@@ -451,6 +448,40 @@ fn a_frame_filmcraft_draws_itself_shows_grades_by_their_own_math() {
         json!({ "clip": city.0, "effect": "wipe", "edge": "in", "frames": 24 }),
     )
     .unwrap();
+    e
+}
+
+/// A grade keyed hard on a band of warm hues (a sharp edge, which the compile's 33-point table
+/// cannot follow), cooled inside the key.
+fn hard_key() -> Value {
+    let mut key = resolution_grade::Qualifier::picked([0.8, 0.5, 0.3]);
+    (key.hue_soft, key.sat_on, key.lum_on) = (0.5, false, false);
+    json!({ "gain": {"y": 0.7, "b": 1.3}, "saturation": 30.0, "qualifier": key })
+}
+
+/// How far `graded` strays from the grade's math applied to `plain`, pixel by pixel: the 99th and
+/// 99.9th percentiles, in code values.
+fn strays(plain: &[u8], graded: &[u8], grade: &Value) -> (f32, f32) {
+    let mut n = resolution_grade::Node::default();
+    n.patch(grade).unwrap();
+    let mut off: Vec<f32> = plain
+        .chunks(4)
+        .zip(graded.chunks(4))
+        .map(|(p, g)| {
+            let want = n.apply([p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0));
+            (0..3).map(|k| (want[k] * 255.0 - f32::from(g[k])).abs()).fold(0.0, f32::max)
+        })
+        .collect();
+    off.sort_by(f32::total_cmp);
+    (off[off.len() * 99 / 100], off[off.len() * 999 / 1000])
+}
+
+#[test]
+fn a_frame_filmcraft_draws_itself_shows_grades_by_their_own_math() {
+    if renderer().is_none() {
+        return;
+    }
+    let mut e = wiped_demo();
     let t = 9.43;
     let (seq, plain) = {
         let s = &e.session;
@@ -458,27 +489,12 @@ fn a_frame_filmcraft_draws_itself_shows_grades_by_their_own_math() {
         assert!(is_cpu_frame(&s.project, seq, Tick::from_seconds_f64(t)), "a Wipe is drawn on the CPU");
         (seq, cpu_frame(&e, seq, t))
     };
-    // both clips keyed hard on a band of warm hues (a sharp edge, which the compile's 33-point table
-    // cannot follow), cooled inside the key
-    let mut key = resolution_grade::Qualifier::picked([0.8, 0.5, 0.3]);
-    (key.hue_soft, key.sat_on, key.lum_on) = (0.5, false, false);
-    let grade = json!({ "gain": {"y": 0.7, "b": 1.3}, "saturation": 30.0, "qualifier": key });
+    // both clips keyed hard on a band of warm hues
+    let grade = hard_key();
     grade_at(&mut e, 8.0, grade.clone());
     grade_at(&mut e, 11.0, grade.clone());
     let graded = cpu_frame(&e, seq, t);
-    let mut n = resolution_grade::Node::default();
-    n.patch(&grade).unwrap();
-    let mut off: Vec<f32> = plain
-        .rgba
-        .chunks(4)
-        .zip(graded.rgba.chunks(4))
-        .map(|(p, g)| {
-            let want = n.apply([p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0));
-            (0..3).map(|k| (want[k] * 255.0 - f32::from(g[k])).abs()).fold(0.0, f32::max)
-        })
-        .collect();
-    off.sort_by(f32::total_cmp);
-    let (p99, p999) = (off[off.len() * 99 / 100], off[off.len() * 999 / 1000]);
+    let (p99, p999) = strays(&plain.rgba, &graded.rgba, &grade);
     eprintln!("wipe, graded at the source: 99% within {p99:.2}, 99.9% within {p999:.2} code values");
     assert!(p99 <= 1.0 && p999 <= 2.0, "99% {p99}, 99.9% {p999}");
 }
@@ -508,4 +524,44 @@ fn an_agents_frame_is_the_viewers() {
     let Some((viewer, _)) = both(&e) else { return };
     let (mean, p99) = differ(&agent, &viewer);
     assert!(mean < 0.01 && p99 == 0.0, "the agent's frame is the viewer's: mean {mean}, 99% {p99}");
+}
+
+/// Deliver renders a frame FilmCraft draws itself (inside a Wipe) with the grades by their own math
+/// (LOG D-045): one frame to PNG, ungraded and then graded, the graded one against the math.
+#[test]
+fn deliver_renders_frames_filmcraft_draws_itself_by_the_grades_own_math() {
+    if renderer().is_none() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("resolution-deliver-wipe-{}", std::process::id()));
+    let png = |e: &mut FilmCraftEngine, name: &str| -> Vec<u8> {
+        let out = dir.join(name);
+        std::fs::create_dir_all(&out).unwrap();
+        let r = e
+            .execute(
+                "deliver.render",
+                json!({ "path": out.join("frame.png").to_string_lossy(), "format": "png", "startSeconds": 9.43, "endSeconds": 9.47, "wait": true }),
+            )
+            .unwrap();
+        assert!(r.result["job"].as_u64().is_some(), "{}", r.result);
+        let first = std::fs::read_dir(&out)
+            .unwrap()
+            .filter_map(|f| f.ok())
+            .map(|f| f.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "png"))
+            .min()
+            .expect("a frame");
+        image::open(first).unwrap().to_rgba8().into_raw()
+    };
+    let mut e = wiped_demo();
+    let plain = png(&mut e, "plain");
+    let grade = hard_key();
+    grade_at(&mut e, 8.0, grade.clone());
+    grade_at(&mut e, 11.0, grade.clone());
+    let graded = png(&mut e, "graded");
+    assert_eq!(plain.len(), graded.len());
+    let (p99, p999) = strays(&plain, &graded, &grade);
+    eprintln!("Deliver, a Wipe graded at the source: 99% within {p99:.2}, 99.9% within {p999:.2} code values");
+    assert!(p99 <= 1.0 && p999 <= 2.0, "99% {p99}, 99.9% {p999}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

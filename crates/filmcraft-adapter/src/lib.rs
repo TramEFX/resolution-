@@ -1,6 +1,7 @@
 //! Resolution's [`Engine`] on top of FilmCraft's headless `Session`.
 
 mod color;
+mod deliver;
 mod gpu;
 pub mod map;
 pub mod playback;
@@ -190,7 +191,16 @@ impl Engine for FilmCraftEngine {
         match map::target(id) {
             // a file renders as the viewer shows it: through the GPU renderer, unless asked not to
             // (LOG D-042)
-            Some(Target::Engine(fc)) if id == "deliver.render" => self.run(id, fc, gpu::deliver_params(params)),
+            Some(Target::Engine(fc)) if id == "deliver.render" => {
+                let params = gpu::deliver_params(params);
+                // of the graded copy, so FilmCraft's own frames show the grades too (LOG D-045)
+                match deliver::render(&mut self.session, &params) {
+                    Some(r) => r
+                        .map(|result| Outcome { result, revision: self.revision(), undo_label: None })
+                        .map_err(|e| convert(id, e)),
+                    None => self.run(id, fc, params),
+                }
+            }
             Some(Target::Engine(fc) | Target::Approx(fc, _)) => self.run(id, fc, params),
             Some(Target::Adapter) if id == "timeline.inspect" => self.inspect_timeline(),
             Some(Target::Adapter) if id == "source.inspect" => self.inspect_source(),
