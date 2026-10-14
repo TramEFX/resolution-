@@ -208,3 +208,77 @@ fn a_turned_linear_window_turns_its_rectangle() {
     let turned = corners(&w(90.0));
     assert_eq!(turned[0], (1200.0, 156.0), "{turned:?}");
 }
+
+/// The most orange and the most blue pixels of a frame, by index.
+fn orange_and_blue(f: &[[f32; 3]]) -> (usize, usize) {
+    let best =
+        |score: fn(&[f32; 3]) -> f32| (0..f.len()).max_by(|a, b| score(&f[*a]).total_cmp(&score(&f[*b]))).unwrap();
+    (best(|p| p[0] - p[2]), best(|p| p[2] - p[0]))
+}
+
+#[test]
+fn a_qualifier_limits_the_node_to_the_colours_it_keys() {
+    let mut e = demo();
+    let before = frame(&e, 1920);
+    let (orange, blue) = orange_and_blue(&before);
+    let q = resolution_grade::Qualifier::picked(before[orange]);
+    adjust(&mut e, json!({"gain": {"y": 0.0}, "qualifier": q}));
+    let after = frame(&e, 1920);
+    assert!(after[orange].iter().all(|v| *v < 0.05), "the keyed orange goes black: {:?}", after[orange]);
+    let d = (0..3).map(|k| (after[blue][k] - before[blue][k]).abs()).fold(0.0, f32::max);
+    assert!(d <= 1.0 / 255.0, "the blue is untouched (off by {d})");
+    // one LUT in the project carries the node
+    let luts: Vec<String> =
+        e.session.project.luts.iter().map(|l| l.id.clone()).filter(|id| id.starts_with(LUT_PREFIX)).collect();
+    assert_eq!(luts.len(), 1, "{luts:?}");
+    // turning the qualifier off drops the LUT and grades everything
+    adjust(&mut e, json!({"qualifier": {"enabled": false}}));
+    assert!(e.session.project.luts.iter().all(|l| !l.id.starts_with(LUT_PREFIX)), "the unused LUT is dropped");
+    assert!(frame(&e, 96).iter().all(|p| p.iter().all(|v| *v <= 2.0 / 255.0)), "gain 0 everywhere");
+    // undo brings the qualifier and its LUT back together
+    e.undo();
+    assert_eq!(e.session.project.luts.iter().filter(|l| l.id.starts_with(LUT_PREFIX)).count(), 1);
+}
+
+#[test]
+fn moving_a_window_keeps_a_qualified_nodes_lut() {
+    let mut n = node(json!({"gain": {"y": 0.5}}));
+    n.qualifier = Some(resolution_grade::Qualifier::default());
+    let mut moved = n.clone();
+    moved.windows = vec![Window::new(Shape::Circle)];
+    moved.label = "Skin".into();
+    assert_eq!(lut_id(&n), lut_id(&moved), "the table does not depend on windows or the label");
+    let mut other = n.clone();
+    other.gain.y = 0.6;
+    assert_ne!(lut_id(&n), lut_id(&other));
+    let compiled = compile(&Grade { nodes: vec![moved] }, (1920, 1080));
+    assert_eq!(compiled.len(), 1, "one effect: the LUT");
+    assert_eq!(compiled[0].masks.len(), 1, "with the window as its mask");
+}
+
+/// How closely a qualified node's 33-point LUT follows the node's own math over a whole frame:
+/// interpolation strays most where the key's soft edge runs between table points.
+#[test]
+fn a_qualified_nodes_lut_follows_its_math() {
+    let mut e = demo();
+    let before = frame(&e, 1920);
+    let (orange, _) = orange_and_blue(&before);
+    let controls = json!({"gamma": {"y": 0.3}, "saturation": 80.0, "qualifier": resolution_grade::Qualifier::picked(before[orange])});
+    adjust(&mut e, controls.clone());
+    let after = frame(&e, 1920);
+    let n = node(controls);
+    let mut errs: Vec<f32> = before
+        .iter()
+        .zip(&after)
+        .map(|(b, a)| {
+            let want = n.apply(*b);
+            (0..3).map(|k| (want[k] - a[k]).abs()).fold(0.0, f32::max) * 255.0
+        })
+        .collect();
+    errs.sort_by(f32::total_cmp);
+    let pct = |p: f32| errs[((errs.len() - 1) as f32 * p) as usize];
+    // measured 2026-10-14 (LOG D-032): median 0, 99 % 2.3, 99.9 % 5.1, worst 6.5 code values
+    assert_eq!(pct(0.5), 0.0, "most pixels exact");
+    assert!(pct(0.99) <= 3.0, "99 % within three code values: {}", pct(0.99));
+    assert!(pct(1.0) <= 8.0, "none more than eight off: {}", pct(1.0));
+}

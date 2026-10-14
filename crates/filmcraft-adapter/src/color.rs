@@ -10,6 +10,11 @@
 //! keep luma), with Hue as a constant Hue vs Hue curve. A neutral or disabled node compiles to
 //! nothing, so an ungraded clip costs nothing to render.
 //!
+//! A qualified node (LOG D-032) cannot be a curve and a saturation: Lumetri cannot limit them to a
+//! colour key. It becomes one Lumetri effect whose input LUT is the node itself, key and all,
+//! baked into a 33-point 3D LUT kept in the project's LUT library (`resolution-<hash>`). LUTs no
+//! clip uses any more are dropped at the next grade edit.
+//!
 //! A node's windows (LOG D-031) become effect masks on its Lumetri effects, in the clip's pixels:
 //! a Circle window an ellipse, a Linear window a rectangle, turned, with its softness as the
 //! feather. Masks add up, as Resolve's windows do.
@@ -20,16 +25,22 @@
 //! "foreign" (made outside the Color page); the next grade edit replaces them.
 
 use filmcraft_engine::project::{
-    ClipId, EffectInstance, ItemId, Mask, MaskPath, Param, ParamValue, Project, find_effect,
+    ClipId, EffectInstance, ItemId, ItemKind, Mask, MaskPath, Param, ParamValue, Project, ProjectLut, find_effect,
 };
 use filmcraft_geom::Vec2;
 use resolution_engine_api::{EngineError, Outcome, Result};
-use resolution_grade::{Grade, Shape, Window};
+use resolution_grade::{Grade, Node, Shape, Window};
 use serde_json::{Value, json};
 
 use crate::FilmCraftEngine;
 
 const KEY: &str = "resolution.grade.";
+
+/// The project LUTs that carry qualified nodes.
+const LUT_PREFIX: &str = "resolution-";
+
+/// Points per side of a qualified node's LUT.
+const LUT_POINTS: usize = 33;
 
 fn key(clip: ClipId) -> String {
     format!("{KEY}{}", clip.0)
@@ -184,6 +195,21 @@ impl FilmCraftEngine {
     ) -> Result<Option<String>> {
         let json = serde_json::to_string(grade).map_err(|e| EngineError::Engine(e.to_string()))?;
         let effects = compile(grade, self.clip_size(seq, clip));
+        // the tables of the grade's qualified nodes, made only when the project lacks them
+        let have: Vec<String> = self.session.project.luts.iter().map(|l| l.id.clone()).collect();
+        let luts: Vec<ProjectLut> = grade
+            .nodes
+            .iter()
+            .filter(|n| n.enabled && n.keyed().is_some() && !n.is_neutral())
+            .filter(|n| !have.contains(&lut_id(n)))
+            .map(|n| ProjectLut {
+                id: lut_id(n),
+                name: "Resolution qualified node".into(),
+                source_path: None,
+                format: "cube".into(),
+                text: cube(n).into(),
+            })
+            .collect();
         let neutral = *grade == Grade::default();
         let missing = || filmcraft_engine::EngineError::Other("the clip is gone".into());
         let edit = move |p: &mut Project, _: &mut filmcraft_engine::EditorState| {
@@ -201,6 +227,8 @@ impl FilmCraftEngine {
             } else {
                 item.metadata.insert(key(clip), json);
             }
+            p.luts.extend(luts);
+            prune_luts(p);
             Ok(())
         };
         let before = self.undo_top();
@@ -262,6 +290,17 @@ pub(crate) fn compile(grade: &Grade, size: (u32, u32)) -> Vec<EffectInstance> {
         let masks: Vec<Mask> =
             n.windows.iter().filter(|w| w.enabled).enumerate().map(|(i, w)| mask(w, size, i)).collect();
         let start = out.len();
+        if n.keyed().is_some() {
+            // the whole node, key and all, as the effect's input LUT
+            if !n.is_neutral() {
+                let mut e = off();
+                set(&mut e, "basic_on", ParamValue::Bool(true));
+                set(&mut e, "input_lut", ParamValue::Text(format!("lib:{}", lut_id(n))));
+                e.masks = masks;
+                out.push(e);
+            }
+            continue;
+        }
         if !n.tone_is_identity() {
             let mut e = off();
             set(&mut e, "curves_on", ParamValue::Bool(true));
@@ -288,6 +327,47 @@ pub(crate) fn compile(grade: &Grade, size: (u32, u32)) -> Vec<EffectInstance> {
         }
     }
     out
+}
+
+/// The id of the LUT that carries qualified node `n`: a hash of what the table depends on (not
+/// its windows or label, which do not change it), so moving a window keeps the table.
+fn lut_id(n: &Node) -> String {
+    let mut table = n.clone();
+    table.windows.clear();
+    table.label.clear();
+    let text = serde_json::to_string(&table).unwrap_or_default();
+    // FNV-1a
+    let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    format!("{LUT_PREFIX}{h:016x}")
+}
+
+/// Node `n` as a `.cube` file of [`LUT_POINTS`] per side.
+fn cube(n: &Node) -> String {
+    use std::fmt::Write as _;
+    let mut s = format!("TITLE \"Resolution qualified node\"\nLUT_3D_SIZE {LUT_POINTS}\n");
+    for [r, g, b] in n.table(LUT_POINTS) {
+        let _ = writeln!(s, "{r:.6} {g:.6} {b:.6}");
+    }
+    s
+}
+
+/// Drop the qualified-node LUTs that no clip of any timeline uses.
+fn prune_luts(p: &mut Project) {
+    let used: std::collections::BTreeSet<String> = p
+        .items
+        .values()
+        .filter_map(|it| match &it.kind {
+            ItemKind::Sequence(s) => Some(s),
+            _ => None,
+        })
+        .flat_map(|s| s.video_tracks.iter().flat_map(|t| &t.items))
+        .flat_map(|it| &it.effects)
+        .filter_map(|e| match &e.params.get("input_lut")?.value {
+            ParamValue::Text(t) => t.strip_prefix("lib:").map(str::to_string),
+            _ => None,
+        })
+        .collect();
+    p.luts.retain(|l| !l.id.starts_with(LUT_PREFIX) || used.contains(&l.id));
 }
 
 /// A window as an effect mask in the pixels of a `w` x `h` picture.

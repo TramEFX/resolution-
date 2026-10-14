@@ -248,3 +248,69 @@ fn windows_are_set_whole_and_held_to_their_ranges() {
     r.reset();
     assert!(r.windows.is_empty(), "resetting a node clears its windows");
 }
+
+#[test]
+fn a_qualifier_keys_the_colours_in_its_ranges() {
+    let q = Qualifier::picked([0.8, 0.4, 0.2]); // an orange
+    assert!(q.key([0.8, 0.4, 0.2]) > 0.99, "the picked colour is in the key");
+    assert!(q.key([0.2, 0.4, 0.8]) < 0.01, "a blue is not");
+    assert!(q.key([0.5, 0.5, 0.5]) < 0.01, "nor a grey (no saturation)");
+    // the hue's soft edge: a little further round the wheel is partly in
+    let edge = Qualifier {
+        hue_center: 0.0,
+        hue_width: 10.0,
+        hue_soft: 10.0,
+        sat_on: false,
+        lum_on: false,
+        ..Qualifier::default()
+    };
+    let at = |turns: f32| edge.key(hsl_to_rgb([turns, 1.0, 0.5]));
+    assert!(at(0.04) > 0.99 && at(0.15) < 0.01, "inside half the width, outside width and soft");
+    let mid = at(0.10);
+    assert!(mid > 0.05 && mid < 0.95, "between: {mid}");
+    assert!((at(0.97) - 1.0).abs() < 1e-6, "red is both ends of the wheel");
+    let inverted = Qualifier { invert: true, ..q };
+    assert!(inverted.key([0.2, 0.4, 0.8]) > 0.99);
+}
+
+#[test]
+fn a_qualified_node_changes_only_what_its_key_takes() {
+    let mut n = node(json!({"gain": {"y": 0.0}}));
+    n.qualifier = Some(Qualifier::picked([0.8, 0.4, 0.2]));
+    assert_eq!(n.apply([0.8, 0.4, 0.2]).map(|v| (v * 1000.0).round()), [0.0; 3], "the keyed orange goes black");
+    assert_eq!(n.apply([0.2, 0.4, 0.8]), [0.2, 0.4, 0.8], "the blue is untouched");
+    n.qualifier = Some(Qualifier { enabled: false, ..Qualifier::picked([0.8, 0.4, 0.2]) });
+    assert_eq!(
+        n.apply([0.2, 0.4, 0.8]).map(|v| (v * 1000.0).round()),
+        [0.0; 3],
+        "a qualifier that is off keys everything"
+    );
+}
+
+#[test]
+fn the_table_holds_the_node_at_its_points() {
+    let mut n = node(json!({"gamma": {"y": 0.3}, "saturation": 70.0}));
+    n.qualifier = Some(Qualifier::picked([0.8, 0.4, 0.2]));
+    let t = n.table(5);
+    assert_eq!(t.len(), 125);
+    // red changes fastest: index 1 is (0.25, 0, 0); index 5 is (0, 0.25, 0); index 25 is (0, 0, 0.25)
+    for (i, rgb) in [(1, [0.25, 0.0, 0.0]), (5, [0.0, 0.25, 0.0]), (25, [0.0, 0.0, 0.25]), (124, [1.0, 1.0, 1.0])] {
+        assert_eq!(t[i], n.apply(rgb), "point {i}");
+    }
+}
+
+#[test]
+fn grades_stored_before_qualifiers_still_load() {
+    let v = serde_json::to_value(Node::default()).unwrap();
+    assert!(v.get("qualifier").is_none(), "a node without one is stored without the field");
+    let g: Grade = serde_json::from_value(json!({ "nodes": [v] })).unwrap();
+    assert!(g.nodes[0].qualifier.is_none());
+    let mut n = Node::default();
+    n.patch(
+        &json!({"qualifier": {"enabled": true, "invert": false, "hue_on": true, "hue_center": 150.0, "hue_width": 10.0,
+        "hue_soft": 5.0, "sat_on": true, "sat_low": 20.0, "sat_high": 100.0, "sat_low_soft": 10.0, "sat_high_soft": 0.0,
+        "lum_on": true, "lum_low": 10.0, "lum_high": 90.0, "lum_low_soft": 10.0, "lum_high_soft": 10.0}}),
+    )
+    .unwrap();
+    assert_eq!(n.qualifier.map(|q| q.hue_center), Some(50.0), "hue goes round: 150 is 50");
+}

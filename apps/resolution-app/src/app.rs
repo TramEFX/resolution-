@@ -1619,6 +1619,7 @@ impl ResolutionApp {
                 asks.extend(color_page::within(ui, left, |ui| color_page::primaries(ui, &look, &mut self.color)));
                 asks.extend(color_page::within(ui, mid, |ui| match self.color.palette {
                     color_page::Palette::Curves => color_page::curves(ui, &look, &mut self.color),
+                    color_page::Palette::Qualifier => color_page::qualifier(ui, &look, &mut self.color),
                     color_page::Palette::Window => color_page::windows(ui, &look, &mut self.color),
                 }));
                 color_page::within(ui, right, |ui| color_page::scopes_panel(ui, &look, &mut self.scope_view));
@@ -1646,6 +1647,13 @@ impl ResolutionApp {
             {
                 let frame = (tl.width, tl.height);
                 asks.extend(color_page::window_overlay(ui, &look, pic, frame, &mut self.color));
+            }
+            // the qualifier's picker while the Qualifier palette is open
+            if self.color.palette == color_page::Palette::Qualifier
+                && let Some(pic) = self.picture_rect
+            {
+                let picture = self.timeline_viewer.picture.clone();
+                asks.extend(color_page::qualifier_picker(ui, pic, picture.as_ref(), &mut self.color));
             }
         });
         for ask in asks {
@@ -2681,6 +2689,28 @@ mod tests {
         pump(&mut h, "inverted", |a| windows(a).first().is_some_and(|w| w.invert));
         click(&mut h, "Delete Window 1");
         pump(&mut h, "no windows", |a| windows(a).is_empty() && !a.color.dragging);
+    }
+
+    #[test]
+    fn the_qualifier_picks_a_colour_from_the_viewer_and_takes_its_ranges() {
+        let mut h = on_color_page();
+        click(&mut h, "Qualifier palette");
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some() && a.timeline_viewer.picture.is_some());
+        h.step();
+        let picker = h.get_by_label("Qualifier picker").rect();
+        click_at(&mut h, picker.center());
+        let q = |a: &ResolutionApp| a.color.current().and_then(|n| n.qualifier);
+        pump(&mut h, "a qualifier from the picked colour, from the engine", |a| {
+            !a.color.dragging && a.color.asked.is_some() && q(a).is_some_and(|q| q.enabled)
+        });
+        let width = q(h.state()).map(|q| q.hue_width).unwrap_or_default();
+        let field = h.get_by_label("Hue Width").rect();
+        drag(&mut h, field.center(), field.center() + vec2(50.0, 0.0));
+        pump(&mut h, "a wider hue range", |a| !a.color.dragging && q(a).is_some_and(|q| q.hue_width > width + 1.0));
+        click(&mut h, "Qualifier Invert");
+        pump(&mut h, "inverted", |a| q(a).is_some_and(|q| q.invert));
+        click(&mut h, "Remove Qualifier");
+        pump(&mut h, "no qualifier", |a| q(a).is_none() && !a.color.dragging);
     }
 
     #[test]
