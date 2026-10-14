@@ -91,6 +91,8 @@ doc is updated *and* the entry says which section moved.
 | D-031 | 2026-10-14 | color | Windows: Linear and Circle windows on a node, compiled to FilmCraft effect masks | active |
 | D-032 | 2026-10-14 | color | Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal | active (built: D-033) |
 | D-033 | 2026-10-14 | color | The qualifier as built: Resolve's HSL ranges, a qualified node baked into a 33-point project LUT | active |
+| D-034 | 2026-10-14 | tools | An action journal: every command, who sent it, how long it took and how it ended, for finding failures and freezes | planned |
+| D-035 | 2026-10-14 | color | Our own GPU renderer: the viewer's frames, with Resolution's grade math run exactly on the GPU | active (to build) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1901,3 +1903,74 @@ figures. On the Sony clip an agent's whole edit, bake included, took 36 ms.
   each through the engine.
 - By hand, 2026-10-14, on the Sony clip: an agent keyed the magenta light (hue 92) with
   Saturation 0. The pink on the arm and hair went grey; the blue light and background stayed blue.
+
+### D-034 — An action journal: every command, who sent it, how long it took and how it ended, for finding failures and freezes
+**Area:** tools · **Status:** planned · **Doc:** ROADMAP "Tools"
+
+**Idea (Truman, 2026-10-14):** a debugger for the program that shows a log of the actions taken
+and how each resolved, to find out why something fails or freezes.
+
+**Why it fits:** every action is already one vocabulary command on one engine thread (invariant
+3): the user's keys, buttons and menus, and agents over the link. One place can record them all:
+
+- the command, its parameters, and who sent it (the user or an agent);
+- when it started and how long it ran;
+- its result or error, and its undo step.
+
+So the journal would show directly:
+
+- a freeze, as a command that started and never ended (and what else was waiting);
+- a slow action, by its time;
+- a silent failure, with its error;
+- what an agent did, step by step.
+
+**Build it** when testing and debugging features begins in earnest. Not built yet; to be designed
+then. Likely shape: the worker records each request and reply into a bounded in-memory journal; a
+panel shows it live; it can be saved to a file for a bug report; agents can read it over MCP.
+
+### D-035 — Our own GPU renderer: the viewer's frames, with Resolution's grade math run exactly on the GPU
+**Area:** color · **Status:** active (to build) · **Doc:** ROADMAP M4
+
+**Decision (Truman, 2026-10-14):** grades will render in Resolution's own GPU renderer, not through
+FilmCraft's effects. The choices put to him:
+
+1. **Our own GPU renderer** (chosen). Port FilmCraft's GPU compositor into Resolution (MIT or
+   Apache-2.0, as with playback in D-013) and add our own grade stage. Our node math then runs
+   exactly on the GPU:
+   - real key masks for qualifiers (D-032's goal);
+   - windows, and later parallel and layer nodes;
+   - float precision between nodes.
+2. **FilmCraft's GPU compositor, plus an upstream contribution** making Lumetri's curves, LUTs and
+   masks run on the GPU. Less code for us, but it depends on upstream, and qualifiers would stay
+   baked LUTs for good.
+3. **Groundwork only** (our playback on a GPU compositor), deciding the grade stage later.
+
+**Why:** Resolve's colour engine is Resolve's identity, and FilmCraft's Premiere-style effect stack
+cannot hold it. Effects run in series, each clamped to 0…1, and masks are shapes only. D-028's
+Lumetri compile is the bridge until this lands. Grades stay Resolution's own model, so nothing
+stored changes.
+
+**Facts found:**
+- FilmCraft already plans frames as plain data (`plan_frame`: layers of decoded frames, placement,
+  opacity, blend, GPU-able effects) and runs them on a wgpu compositor (`filmcraft-gpu`). It has
+  GPU 3D-LUT and mask code, and a GPU export renderer.
+- Its wgpu is version 30, the same as our egui's, so frames can stay on the GPU to the screen.
+- Lumetri on the GPU covers Basic Correction only. Curves, LUTs and masks send a layer back to the
+  CPU, and those are what our grades compile to.
+
+**The program:**
+- **G1:** a Resolution GPU renderer for the viewers' frames, with the grade stage as WGSL:
+  - the tone functions as 1D tables;
+  - Saturation, Color Boost and Hue;
+  - the qualifier's key and the windows' coverage, computed exactly per pixel.
+
+  Frames it does not cover yet (transitions, other blend modes, adjustment layers, HDR) fall
+  back to FilmCraft's CPU renderer. Tested against `crates/grade`'s reference math.
+- **G2:** measure graded playback on the Sony clip; widen the renderer's coverage (blend modes,
+  standard effects); show frames on screen without the trip back to memory.
+- **G3:** Deliver through the same renderer, feeding FilmCraft's encoders, so viewer and file are
+  identical.
+- **Later:** parallel and layer nodes, matte finesse, no clamping between nodes.
+
+Until G3, Deliver keeps D-028's compile, which follows the same math within a code value (6.5 at
+a qualifier's soft edge, D-033).

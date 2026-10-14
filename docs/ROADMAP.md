@@ -101,9 +101,13 @@ read, never copied into the repo.
 - [ ] Matte finesse (key denoise and blur), Highlight view, RGB and Luma qualifier modes
 - [ ] Polygon, Curve and Gradient windows; window handles on screen; tracking
 - [ ] Parallel and layer nodes
-- [ ] GPU colour pipeline: our playback on FilmCraft's GPU frame plans, and Lumetri's curves on
-      the GPU upstream (D-028 measured CPU grading). **The goal for qualifiers** (D-032): real key
-      masks over the whole node in our own renderer, replacing the baked LUTs
+- [ ] **Our own GPU renderer** (D-035, Truman's choice), replacing the Lumetri compile for grades:
+  - [ ] G1: the viewers' frames on the GPU, with the grade stage (tone, saturation, real key masks,
+        windows) exact to `crates/grade`; FilmCraft's CPU renderer for what it does not cover yet
+  - [ ] G2: graded playback measured on the Sony clip; blend modes and standard effects; frames to
+        the screen without a copy back
+  - [ ] G3: Deliver through the same renderer, so viewer and file are identical
+  - [ ] Later: parallel and layer nodes, matte finesse, no clamping between nodes
 
 ## M5 — Cut page and Media page
 
@@ -112,3 +116,9 @@ read, never copied into the repo.
 Fairlight-style bus model, full Deliver page presets, Fusion page (watch EffectCraft), OpenFX hosting.
 Skins (D-018): alternative chrome over the same layouts; the step-1 Graphite and Soft Light
 directions are the first candidates.
+
+## Tools
+
+- [ ] **Action journal** (D-034, Truman's idea): every command, who sent it, how long it ran and
+      how it ended, live in a panel, savable for bug reports, readable by agents; for finding
+      failures and freezes. Build it when testing and debugging features begins in earnest.
