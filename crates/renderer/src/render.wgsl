@@ -15,7 +15,7 @@ struct U {
     p0: vec4<f32>,   // opacity, kind (0 rgba8 srgb straight, 1 rgba premul linear, 2 yuv), taps, transfer (0 srgb, 1 linear, 2 pq, 3 hlg)
     p1: vec4<f32>,   // y_off y_scale c_off c_scale (code units)
     p2: vec4<f32>,   // kr kb code_scale footprint
-    p3: vec4<f32>,   // alpha-plane scale (0: none), nodes, blend mode (`Blend::index`), unused
+    p3: vec4<f32>,   // alpha-plane scale (0: none), nodes, blend mode (`Blend::index`), chroma siting (0 centre, 1 left)
     // Colour management of HDR / wide-gamut Y'CbCr (`Managed`):
     q0: vec4<f32>,   // on, curve (0 sdr, 1 linear, 2 pq, 3 hlg), HLG OOTF scale (0: none), reference white cd/m²
     q1: vec4<f32>,   // HLG OOTF luma weights, gamut matrix on
@@ -221,7 +221,12 @@ fn sample(p: vec2<f32>) -> vec4<f32> {
     }
     let cs = u.p2.z;
     let yc = load4(tex0, p).r * cs;
-    let cp = p * u.src.zw / u.src.xy;
+    // the chroma planes' position of this luma position: their samples halfway between luma
+    // samples, or (sited left) on the first of each run horizontally
+    var cp = p * u.src.zw / u.src.xy;
+    if u.p3.w > 0.5 {
+        cp.x = (p.x - 0.5) * u.src.z / u.src.x + 0.5;
+    }
     let cb = load4(tex1, cp).r * cs;
     let cr = load4(tex2, cp).r * cs;
     let y = (yc - u.p1.x) / u.p1.y;

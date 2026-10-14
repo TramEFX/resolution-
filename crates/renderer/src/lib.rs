@@ -37,6 +37,9 @@ pub const TONE_N: usize = 4096;
 const NODE_FLOATS: usize = 104;
 /// Windows per node the shader takes.
 pub const MAX_WINDOWS: usize = 8;
+/// The most samples a side the shader takes over a shrunk pixel's footprint: up to 32× smaller,
+/// every source pixel counts.
+const MAX_TAPS: f32 = 32.0;
 /// Numbers in the shader's per-layer uniform (`render.wgsl`'s `U`).
 const UNIFORM_FLOATS: usize = 52;
 
@@ -65,6 +68,15 @@ pub enum Transfer {
     Hlg,
 }
 
+/// Where a subsampled picture's chroma samples sit across its luma samples.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Siting {
+    /// Halfway between them (MPEG-1, JPEG).
+    Center,
+    /// On the left one of each pair (MPEG-2, H.264, HEVC and ProRes; vertically halfway).
+    Left,
+}
+
 /// How a Y'CbCr picture's codes become RGB.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Coding {
@@ -74,11 +86,13 @@ pub struct Coding {
     /// Full range (0 to 2^bits − 1) instead of video range (16 to 235 in 8 bits).
     pub full_range: bool,
     pub transfer: Transfer,
+    pub siting: Siting,
 }
 
 impl Coding {
-    /// Rec. 709, video range, the sRGB curve.
-    pub const REC709: Coding = Coding { kr: 0.2126, kb: 0.0722, full_range: false, transfer: Transfer::Srgb };
+    /// Rec. 709, video range, the sRGB curve, chroma sited left.
+    pub const REC709: Coding =
+        Coding { kr: 0.2126, kb: 0.0722, full_range: false, transfer: Transfer::Srgb, siting: Siting::Left };
 }
 
 /// How a layer combines with what is under it: the blend modes of Premiere (and FilmCraft), in
@@ -793,11 +807,13 @@ fn uniforms(
         (true, true) => (0.0, levels - 1.0, levels / 2.0, levels - 1.0),
         _ => (0.0, 1.0, 0.0, 1.0),
     };
-    // source pixels per frame pixel: supersample when shrinking
+    // source pixels per frame pixel: supersample when shrinking, at least one sample per source
+    // pixel across the footprint (a shrunk picture averages all its pixels, LOG D-040). The work
+    // is about one sample per source pixel whatever the size, up to MAX_TAPS a side.
     let sx = (a * a + b * b).sqrt();
     let sy = (c * c + d * d).sqrt();
     let footprint = (1.0 / sx.min(sy).max(1e-6)) as f32;
-    let taps = if footprint > 1.25 { footprint.ceil().min(4.0) } else { 1.0 };
+    let taps = if footprint > 1.25 { footprint.ceil().min(MAX_TAPS) } else { 1.0 };
     let transfer = match l.coding.transfer {
         Transfer::Srgb => 0.0,
         Transfer::Linear => 1.0,
@@ -832,7 +848,7 @@ fn uniforms(
         alpha_scale,
         nodes as f32,
         l.blend.index() as f32,
-        0.0,
+        if l.coding.siting == Siting::Left { 1.0 } else { 0.0 },
     ];
     // colour management (q0 to q5), only for Y'CbCr
     let m = l.managed.filter(|_| kind == 2.0);
