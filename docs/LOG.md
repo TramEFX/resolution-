@@ -74,6 +74,12 @@ doc is updated *and* the entry says which section moved.
 | D-024 | 2026-10-13 | ui | New Timeline (Ctrl+N) starts empty in the open timeline's format; the source viewer shows the media's own timecode | active |
 | D-025 | 2026-10-13 | ui | A minimal Deliver page: presets, a render queue the app keeps, renders as engine export jobs | active |
 | D-026 | 2026-10-13 | mcp | Agents reach the open editor through a local, token-checked link; `resolution mcp --editor` serves MCP over it | active |
+| B-024 | 2026-10-13 | docs | HANDOFF counted 70 tests in the workspace and 42 in the editor; there were 107 and 43 | fixed |
+| B-025 | 2026-10-13 | ui | The editor sent an agent's draft before the timeline it described | fixed |
+| B-026 | 2026-10-13 | ui | The draft's list of agent edits kept edits that had been undone | fixed |
+| B-027 | 2026-10-13 | engine | `timeline.duplicate` put the copy at the top of the project; Resolve puts it in the original's bin | fixed |
+| B-028 | 2026-10-13 | ui | An agent's edit was lost, though reported made, when its draft failed after the copy | fixed |
+| D-027 | 2026-10-13 | ui | An agent's edits go to a draft of the timeline, which only the user accepts or rejects | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1319,3 +1325,149 @@ directly. The safety net is undo, and checkpoints over MCP.
 - By hand: the editor opened with the Sony clip, and `resolution mcp --editor` driven by an MCP
   client split it at 10 s (two cuts, video and audio) and rendered a frame. A capture of the
   window showed the cut.
+
+### B-024 — HANDOFF counted 70 tests in the workspace and 42 in the editor; there were 107 and 43
+**Area:** docs · **Status:** fixed · **Caught by:** reading: counting the tests while updating
+HANDOFF for D-027
+
+**Symptom:** HANDOFF's MCP row said "70 tests across the workspace" and its UI row "42 tests". On
+`main` after D-026 there were 107 (`#[test]` attributes; `cargo test` agrees) and 43 in
+`apps/resolution-app`. The workspace total was set at the D-015 sync and never raised since. D-026
+added an editor test without raising the UI row. This is B-021's mistake again, for test counts.
+
+**Fix:** counted from the source and from `cargo test`'s per-crate results. After D-027 there are
+113 tests, 47 of them in the editor. HANDOFF says so.
+
+### B-025 — The editor sent an agent's draft before the timeline it described
+**Area:** ui · **Status:** fixed · **Caught by:** test (`rejecting_a_draft_leaves_the_original_as_it_was`)
+
+**Symptom:** the test waited until the draft listed two agent splits, then counted V1's clips. It
+found one cut, not two. The engine had made both: the agent's own `timeline.inspect` of the draft
+showed both cuts.
+
+**Wrong turn:** I first suspected the engine and replayed the same steps over MCP (copy, open,
+split at 2 s and 4 s). They cut correctly, and the original stayed untouched.
+
+**Cause:** after each batch the engine thread sent `Reply::Draft` and then the snapshot. The UI
+could read the draft's new edit count a frame before the timeline that held them.
+
+**Fix:** the snapshot goes first, so whoever sees the edits listed sees them on screen too. The
+test now also waits for the clip count it asserts.
+
+### B-026 — The draft's list of agent edits kept edits that had been undone
+**Area:** ui · **Status:** fixed · **Caught by:** reading the MCP session's dry run while writing D-027
+
+**Symptom (in D-027's first version, never merged):** the draft only appended. An undo of an
+agent's edit left it listed. The undo could be the user's Ctrl+Z, the agent's `undo` tool, or an
+MCP dry run or rolled-back batch, which are a run followed by an undo. A dry run as the agent's
+first edit left a draft "with 1 edit" that held none.
+
+**Fix:** the draft follows the undo history, as the MCP session does for its own steps. The worker
+records every step made, undone or redone, by the user or an agent; they all pass through the
+engine thread. The banner lists the agent's steps still in the draft. A UI test covers the
+agent's undo, the user's Ctrl+Z and redo.
+
+**Wrong turn, same review:** I also expected MCP's report of what an agent's first draft edit
+changed to list every clip. The report compares the original (before) with the copy (after), and
+matches tracks and clips by id. I wrote a fix that reported "switched timeline" instead. A test
+showed that the copy keeps its tracks' and clips' ids: the plain report was right, and listed the
+edit. The fix was dropped. A test (`a_copy_of_the_timeline_keeps_its_ids`) now guards the property
+drafts rely on.
+
+### B-027 — `timeline.duplicate` put the copy at the top of the project; Resolve puts it in the original's bin
+**Area:** engine · **Status:** fixed · **Caught by:** running it: the live draft check's project tree
+
+**Symptom:** the agent's draft did not appear next to the original under Sequences. FilmCraft's
+`edit.duplicate` adds the copy at the top of the project. The Resolve manual ("Duplicate
+Timeline", Creating and Working with Timelines) says Resolve creates it "in the same bin".
+
+**Fix:** the adapter moves the copy into the original's bin (`project.moveToBin`). It folds the move
+into the duplicate's undo step the way FilmCraft folds its own (`clip_ops`): the first step's
+"before" project stands for both. One undo removes the copy. The adapter test checks the bin,
+undo and redo.
+
+**Still differs:** FilmCraft names the copy "<name> Copy" where Resolve appends "copy", and Resolve
+also opens the copy in a new timeline tab.
+
+### B-028 — An agent's edit was lost, though reported made, when its draft failed after the copy
+**Area:** ui · **Status:** fixed · **Caught by:** reading the diff before committing D-027; a test
+confirmed it
+
+**Symptom (in D-027's first version, never merged):** to make a draft, the worker undoes the
+agent's first edit, copies the timeline, and makes the edit again on the copy. If a step after the
+copy failed (renaming or opening it), the worker fell back to `redo` to put the edit back on the
+original. But the copy was itself an undo step, which empties the redo history. So the redo did
+nothing: the edit was gone while the agent was told it had been made. With the old code, a test
+engine that cannot rename ends with 6 clips on V1 instead of 7.
+
+**Fix:** when the redo brings nothing back, the edit runs again on the open timeline (still the
+original: every failing step comes before the copy is opened). Test:
+`an_edit_whose_draft_cannot_be_made_stays_on_the_timeline`. In the adapter, a failed move of a
+copy into its bin (B-027) now keeps the copy instead of failing the duplicate.
+
+### D-027 — An agent's edits go to a draft of the timeline, which only the user accepts or rejects
+**Area:** ui · **Status:** active · **Doc:** ARCHITECTURE "The editor"; HANDOFF §3; `apps/resolution-app/src/worker.rs`
+
+**Decision:** the second half of step 4 (D-016, after D-026). In the open editor, an agent never
+edits the user's timeline itself:
+
+- **The draft.** An agent's first command that makes an undo step:
+  - runs on the open timeline, and is undone there;
+  - is made again on a copy, "<name> (agent draft)". The copy goes in the original's bin and opens
+    at the same playhead.
+
+  The agent gets a notice saying so. Its later edits go to the same draft. If the user has opened
+  another timeline in the meantime, the draft is opened again first. Commands that change nothing
+  (looking, moving the playhead) make no draft.
+- **The banner** above the timeline reads "Agent draft of “<name>”: N edits, latest: <label>".
+  Hovering lists the edits (a first receipt). Its buttons are **Accept Draft** and **Reject Draft**.
+  - **Accept:** the draft takes the original's place. The original is deleted and the draft is
+    renamed to its name.
+  - **Reject:** the original opens again and the draft is deleted.
+  - Both are ordinary undoable edits.
+- **Only the user decides.** Accept and Reject are not vocabulary commands, so no agent can accept
+  its own work.
+- **Still one history.** The list of edits follows the undo history: an undone edit drops off and a
+  redo brings it back (B-026).
+- **New vocabulary**, 101 commands now:
+  - `timeline.duplicate`: FilmCraft's `edit.duplicate` on the project selection, with the copy in
+    the original's bin (B-027);
+  - `media.rename`: `clip.rename`;
+  - `media.delete`: `project.delete` on the selection.
+
+**Why a copy, not edits in place with a backup:** the agent's work stays apart from the user's.
+The user can go on working on the original while the agent works, and nothing that plays the
+original sees the agent's edits until they are accepted. The copy keeps its tracks' and clips' ids,
+so MCP's reports of what changed stay right across the switch (tested; B-026).
+
+**Why run, undo, copy, run again:** only running a command shows whether it edits. `playhead.set`
+is an "edit" by risk tier but makes no undo step. The cost is one extra run per draft.
+
+**Known limits:**
+- A dry run or a rolled-back batch as the agent's first edit leaves an empty draft open. The banner
+  says "no edits", and Reject removes it.
+- One draft at a time, held in the editor's memory. After a restart the draft is an ordinary
+  timeline named "(agent draft)", with no banner.
+- Accepting deletes the original. **Unverified:** what FilmCraft does when another timeline nests
+  the deleted one.
+- An undo past the draft's start works like any undo: first the copy loses its name, then it is
+  gone, and the banner with it.
+- Edits the user makes in the draft are accepted with it, but are not listed as the agent's.
+- Receipts are undo labels ("Add Edit"). Fuller receipts (what, where, why) are still to build.
+
+**Checked:**
+- UI tests (`apps/resolution-app`):
+  - an agent's split goes to a draft, and after Accept one timeline of the original's name holds
+    the split;
+  - rejecting leaves the original as it was and deletes the draft;
+  - the draft lists only the agent's edits still in it (the agent's undo, Ctrl+Z, redo).
+- Adapter test: duplicate (in the original's bin, one undo step), rename, delete. MCP test: a copy
+  of the timeline keeps its ids. Worker test: an edit whose draft cannot be made stays on the open
+  timeline (B-028).
+- By hand, 2026-10-13: the editor on the demo, driven by `resolution mcp --editor`.
+  - A dry-run split was reverted and left an empty draft open (the banner said "no edits").
+  - Two splits went to that draft: V1 went from 6 to 8 clips, and the banner said "2 edits".
+  - The `undo` tool took one back (7 clips).
+  - The draft sat in the Sequences bin beside the original.
+  - A capture of the window showed the banner and the cuts. Accept and Reject were not clicked by
+    hand; the UI tests click them.

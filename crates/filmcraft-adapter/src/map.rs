@@ -10,7 +10,8 @@ pub enum Target {
     Engine(&'static str),
     /// A close but not identical FilmCraft command; the note says how it differs from Resolve.
     Approx(&'static str, &'static str),
-    /// Handled by the adapter itself (undo, redo, inspecting the timeline).
+    /// Handled by the adapter itself (undo, redo, inspecting, and commands FilmCraft runs on its
+    /// project selection).
     Adapter,
     /// Owned by the front end: page switching, panels, timeline zoom, edit modes and playback. FilmCraft
     /// keeps these in its egui crate, which we replace; Resolution's UI implements them.
@@ -51,6 +52,10 @@ pub const MAP: &[(&str, Target)] = &[
     ("timeline.createFromClips", Engine("file.newSequenceFromClip")),
     ("source.open", Engine("source.open")),
     ("timeline.new", Engine("file.newSequence")),
+    // FilmCraft duplicates and deletes the project selection: the adapter selects first
+    ("timeline.duplicate", Adapter),
+    ("media.delete", Adapter),
+    ("media.rename", Engine("clip.rename")),
     ("timeline.open", Engine("sequence.open")),
     ("edit.undo", Adapter),
     ("edit.redo", Adapter),

@@ -152,6 +152,8 @@ pub struct ResolutionApp {
     sound: Sound,
     waveforms: Waveforms,
     deliver: Deliver,
+    /// An agent's draft, from the latest batch (LOG D-027).
+    draft: Option<crate::worker::Draft>,
     /// Agents reach this editor through it while it is open; dropping it closes the link.
     _agent_link: Option<resolution_agent_link::Listener>,
     clock: Instant,
@@ -225,6 +227,7 @@ impl ResolutionApp {
                 Waveforms::new(move || ctx.request_repaint())
             },
             _agent_link: agent_link,
+            draft: None,
             deliver: Deliver::new(),
             clock: Instant::now(),
             play_test: options.play_for.map(|seconds| PlayTest { seconds, started: None, done: false }),
@@ -379,6 +382,7 @@ impl ResolutionApp {
                 }
             }
             Reply::Notice { message, error } => self.say(message, error),
+            Reply::Draft(d) => self.draft = d,
         }
     }
 
@@ -495,9 +499,14 @@ impl ResolutionApp {
 
     /// An edit made with the mouse: stops playback first, as an edit from a key does.
     fn edit(&mut self, id: &str, params: serde_json::Value) {
+        self.edit_stop();
+        self.worker.run(id, params);
+    }
+
+    /// Stop both viewers before an edit.
+    fn edit_stop(&mut self) {
         self.stop_viewer(Viewer::Source);
         self.stop_viewer(Viewer::Timeline);
-        self.worker.run(id, params);
     }
 
     /// Play `v` at `speed`; the other viewer stops, since they share the sound.
@@ -1248,6 +1257,44 @@ impl ResolutionApp {
     fn timeline_panel(&mut self, ui: &mut Ui) {
         let look = self.look;
         let t = look.theme;
+        // an agent's draft (LOG D-027): what it changed, and the user's call
+        if let Some(d) = self.draft.clone() {
+            let mut decided = None;
+            egui::Panel::top("agent-draft")
+                .exact_size(36.0)
+                .frame(Frame::new().fill(t.accent.gamma_multiply(0.14)).inner_margin(Margin::symmetric(12, 0)))
+                .show(ui, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        let list = d.edits();
+                        let edits = match list.len() {
+                            0 => "no edits".to_string(),
+                            1 => "1 edit".to_string(),
+                            n => format!("{n} edits"),
+                        };
+                        let latest = list.last().map(|l| format!(", latest: {l}")).unwrap_or_default();
+                        let text = format!("Agent draft of \u{201c}{}\u{201d}: {edits}{latest}", d.name);
+                        let receipt = list
+                            .iter()
+                            .enumerate()
+                            .map(|(i, e)| format!("{}. {e}", i + 1))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        ui.label(RichText::new(text).font(look.medium()).color(t.text)).on_hover_text(receipt);
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if chrome::text_button(ui, &look, "Reject Draft", true).clicked() {
+                                decided = Some(false);
+                            }
+                            if chrome::text_button(ui, &look, "Accept Draft", true).clicked() {
+                                decided = Some(true);
+                            }
+                        });
+                    });
+                });
+            if let Some(accept) = decided {
+                self.edit_stop();
+                self.worker.decide(accept);
+            }
+        }
         egui::Panel::top("timeline-toolbar")
             .exact_size(look.skin.bar)
             .frame(Frame::new().fill(t.panel).inner_margin(Margin::symmetric(8, 0)))
@@ -2109,6 +2156,95 @@ mod tests {
         pump(&mut h, "Ctrl+Z to undo the agent's split", |a| v1_clips(a) == clips);
         drop(h);
         assert!(!path.exists(), "closing the editor removes its link file");
+    }
+
+    /// The editor with an agent connected, and the original demo timeline's name and V1 clips.
+    fn with_agent(name: &str) -> (Harness<'static, ResolutionApp>, resolution_agent_link::RemoteEngine, PathBuf) {
+        let path = std::env::temp_dir().join(format!("resolution-app-{name}-{}.json", std::process::id()));
+        let link = path.clone();
+        let mut h = Harness::builder().with_size(egui::vec2(1600.0, 920.0)).build_eframe(move |cc| {
+            ResolutionApp::new(cc, Options { demo: true, mute: true, agent_link: Some(link), ..Default::default() })
+        });
+        pump(&mut h, "the demo timeline", |a| a.timeline.is_some());
+        let agent = resolution_agent_link::RemoteEngine::connect(&path).expect("the editor's link");
+        (h, agent, path)
+    }
+
+    fn timeline_names(a: &ResolutionApp) -> Vec<String> {
+        a.media.iter().filter(|m| m.kind == Kind::Timeline).map(|m| m.name.clone()).collect()
+    }
+
+    #[test]
+    fn an_agents_edits_go_to_a_draft_the_user_accepts() {
+        use resolution_engine_api::Engine as _;
+        let (mut h, mut agent, _path) = with_agent("accept");
+        let original = h.state().timeline.as_ref().map(|t| t.name.clone()).expect("timeline");
+        let clips = v1_clips(h.state());
+        // looking and moving the playhead make no draft
+        agent.execute("timeline.inspect", json!({})).expect("inspect");
+        agent.execute("playhead.set", json!({ "seconds": 2.0 })).expect("playhead");
+        h.step();
+        assert!(h.state().draft.is_none());
+        // the first edit does
+        agent.execute("timeline.split", json!({})).expect("split");
+        pump(&mut h, "the agent's draft open", |a| {
+            a.draft.is_some() && a.timeline.as_ref().is_some_and(|t| t.name.ends_with("(agent draft)"))
+        });
+        assert_eq!(v1_clips(h.state()), clips + 1, "the draft holds the split, made at the agent's playhead");
+        assert_eq!(h.state().draft.as_ref().map(|d| d.edits().len()), Some(1));
+        assert!(timeline_names(h.state()).contains(&original), "the original is still there, untouched");
+        click(&mut h, "Accept Draft");
+        pump(&mut h, "the draft accepted", |a| {
+            a.draft.is_none() && a.timeline.as_ref().is_some_and(|t| t.name == original)
+        });
+        assert_eq!(v1_clips(h.state()), clips + 1);
+        let names = timeline_names(h.state());
+        assert_eq!(names.iter().filter(|n| **n == original).count(), 1, "one timeline of that name: {names:?}");
+        assert!(!names.iter().any(|n| n.ends_with("(agent draft)")));
+    }
+
+    #[test]
+    fn rejecting_a_draft_leaves_the_original_as_it_was() {
+        use resolution_engine_api::Engine as _;
+        let (mut h, mut agent, _path) = with_agent("reject");
+        let original = h.state().timeline.as_ref().map(|t| t.name.clone()).expect("timeline");
+        let clips = v1_clips(h.state());
+        agent.execute("playhead.set", json!({ "seconds": 2.0 })).expect("playhead");
+        agent.execute("timeline.split", json!({})).expect("split");
+        agent.execute("playhead.set", json!({ "seconds": 4.0 })).expect("playhead");
+        agent.execute("timeline.split", json!({})).expect("split");
+        pump(&mut h, "two edits in the draft", |a| {
+            a.draft.as_ref().is_some_and(|d| d.edits().len() == 2) && v1_clips(a) == clips + 2
+        });
+        click(&mut h, "Reject Draft");
+        pump(&mut h, "the original back", |a| {
+            a.draft.is_none() && a.timeline.as_ref().is_some_and(|t| t.name == original)
+        });
+        assert_eq!(v1_clips(h.state()), clips, "the original never changed");
+        assert!(!timeline_names(h.state()).iter().any(|n| n.ends_with("(agent draft)")), "the draft is deleted");
+    }
+
+    #[test]
+    fn the_draft_lists_only_the_agents_edits_still_in_it() {
+        use resolution_engine_api::Engine as _;
+        let (mut h, mut agent, _path) = with_agent("undo");
+        let clips = v1_clips(h.state());
+        let edits = |a: &ResolutionApp| a.draft.as_ref().map(|d| d.edits().len());
+        agent.execute("playhead.set", json!({ "seconds": 2.0 })).expect("playhead");
+        agent.execute("timeline.split", json!({})).expect("split");
+        agent.execute("playhead.set", json!({ "seconds": 4.0 })).expect("playhead");
+        agent.execute("timeline.split", json!({})).expect("split");
+        pump(&mut h, "two edits in the draft", |a| edits(a) == Some(2) && v1_clips(a) == clips + 2);
+        // the agent's undo (as an MCP dry run or rollback does) takes its edit off the list
+        assert_eq!(agent.undo().as_deref(), Some("Add Edit"));
+        pump(&mut h, "one edit after the agent's undo", |a| edits(a) == Some(1) && v1_clips(a) == clips + 1);
+        // and so does the user's Ctrl+Z: one history
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        pump(&mut h, "no edits after Ctrl+Z", |a| edits(a) == Some(0) && v1_clips(a) == clips);
+        assert!(h.state().timeline.as_ref().is_some_and(|t| t.name.ends_with("(agent draft)")), "the draft stays");
+        // redo brings an edit back to the list
+        assert_eq!(agent.redo().as_deref(), Some("Add Edit"));
+        pump(&mut h, "one edit after redo", |a| edits(a) == Some(1) && v1_clips(a) == clips + 1);
     }
 
     #[test]

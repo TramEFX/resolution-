@@ -526,6 +526,19 @@ mod tests {
         assert!(s.search(None, Some("nope"), false, 5).is_err());
     }
 
+    /// An agent's first edit in the editor lands in a copy of the timeline (LOG D-027). The copy
+    /// keeps its tracks' and clips' ids, so the change report shows the edit, not every clip anew.
+    #[test]
+    fn a_copy_of_the_timeline_keeps_its_ids() {
+        let mut s = demo();
+        let v = s.run("timeline.duplicate", json!({}), false, false).expect("duplicate");
+        let copy = v["result"]["items"][0].clone();
+        let v = s.run("timeline.open", json!({"item": copy}), false, false).expect("open");
+        let changes = v["timeline_changes"]["changes"].as_array().cloned().unwrap_or_default();
+        let fields: Vec<&str> = changes.iter().filter_map(|c| c.as_str()?.split(':').next()).collect();
+        assert_eq!(fields, ["id", "name", "playhead"], "{v}");
+    }
+
     #[test]
     fn dry_run_measures_then_reverts() {
         let mut s = demo();
