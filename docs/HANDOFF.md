@@ -16,11 +16,11 @@ cargo test              # first build compiles ~45 FilmCraft crates
 cargo run -p resolution-cli -- run project.inspect
 ```
 
-Measured on Windows 11 (Rust 1.99, 2026-10-09): the first `cargo test` took 3 min 12 s, and
-`target/` held 3.0 GB after tests and clippy. It grows with every engine sync and rebuild: on
-2026-10-14 it held 28 GB and filled the disk (the linker failed with LNK1180). Deleting
-`target/debug/incremental` freed about 5 GB; `cargo clean` frees it all, at the cost of a full
-rebuild. Setting `CARGO_INCREMENTAL=0` keeps the incremental cache from coming back.
+Measured on Windows 11 (Rust 1.99): on 2026-10-14, from a `cargo clean`, building everything took
+about 6.5 minutes (tests 293 s, clippy 88 s, the two binaries 13 s; the tests then run in 11 s)
+and left `target/` at 8.3 GB. Cargo keeps the builds of earlier engine pins beside the current
+one, so `target/` grows with every engine sync: it reached 28 GB and filled the disk on
+2026-10-14 (LOG B-032). Run `cargo clean` after each engine sync (UPSTREAM.md, step 3).
 
 Cargo fetches the engine from the private mirror with your normal git credentials
 (`.cargo/config.toml` sets `git-fetch-with-cli`). If it fails with an authentication error, make
@@ -119,8 +119,9 @@ Alongside, pick any:
    variable frame rate. A phone 4K clip decodes correctly. Two timing defects were found (LOG B-010,
    reported as storytold/filmcraft#1276; B-011, fixed upstream and taken). Still needed: **camera and phone
    originals** (iPhone HEVC/HDR, 10-bit, GoPro, mirrorless, ProRes, MTS). The local files are mostly
-   downloads. (The unpacked folder of the Sony and Samsung clips was gone from Downloads on 2026-10-14;
-   its zip, `robnadj_rob-mid-shot-mp4_2026-10-12_2301.zip`, is still there.) Third pass, 2026-10-12: a Sony α7R II clip and a Samsung portrait clip decode, play and
+   downloads. (The Sony and Samsung clips are in `test media/sony-samsung-2026-10-12/` since 2026-10-14,
+   unpacked from `H:\Archive\Downloads-remainder\robnadj_rob-mid-shot-mp4_2026-10-12_2301.zip`;
+   `test media/` is not in git.) Third pass, 2026-10-12: a Sony α7R II clip and a Samsung portrait clip decode, play and
    sound correctly; the rotated clip exposed a playback deadlock (B-015, fixed) and a software-decoding
    freeze (B-017, gone since the 2026-10-13 sync). This decides how soon we need a fallback decoder (research risk #6).
 3. **Verify the keymap** against the manual (D-017): compare each line of `keymaps/resolve.toml` with

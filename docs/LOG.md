@@ -85,6 +85,7 @@ doc is updated *and* the entry says which section moved.
 | D-029 | 2026-10-14 | ui | The Color page: viewer, Node Editor, clip strip, Primaries wheels and Custom Curves in Resolve's places | active |
 | B-030 | 2026-10-14 | ui | The Color page's clip strip drew its tiles one text line tall: no pictures, no names | fixed |
 | B-031 | 2026-10-14 | ui | An agent's draft had no Accept or Reject on the Color page | fixed |
+| B-032 | 2026-10-14 | build | `target/` grew to 28 GB and filled the disk: Cargo keeps every engine pin's build | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -1674,3 +1675,25 @@ page to accept or reject the grade.
 
 **Fix:** the banner is its own function, drawn above the Edit page's timeline and across the top
 of the Color page. A UI test grades as an agent on the Color page and rejects the draft there.
+
+### B-032 — `target/` grew to 28 GB and filled the disk: Cargo keeps every engine pin's build
+**Area:** build · **Status:** fixed · **Caught by:** the linker failing (LNK1180, "insufficient disk
+space"; LNK1318 on PDB writes) while building D-028
+
+**Symptom:** C: had 0 bytes free and `target/` held 28 GB. HANDOFF still gave the 3.0 GB measured
+on 2026-10-09.
+
+**Wrong turn:** I first deleted `target/debug/incremental` (6.5 GB) and built with
+`CARGO_INCREMENTAL=0`. That got the build going but treated the smaller part. After Truman freed
+space, a `cargo clean` and a build of everything (tests, clippy, both binaries) measured the real
+size: 8.3 GB, of which incremental is 1.0 GB and debug symbols (PDBs) 2.4 GB.
+
+**Cause:** about 20 GB was leftovers. Cargo keeps every artifact it has built and never removes the
+ones a newer build replaces. Most likely the bulk is old engine pins: each sync builds all ~45
+FilmCraft crates again under new hashes, and this machine has built three (its git checkouts are
+9acf816, 2ba0629 and 29d01cf). The 20 GB was not broken down before the clean, so that split is
+not measured.
+
+**Fix:** `cargo clean` after each engine sync, now step 3 of UPSTREAM.md's sync procedure;
+HANDOFF gives the measured size and time. Incremental builds stay on. Debug symbols stay full:
+the stack dumps of B-015 needed them, and 2.4 GB is affordable.
