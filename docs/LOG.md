@@ -103,8 +103,9 @@ doc is updated *and* the entry says which section moved.
 | D-041 | 2026-10-14 | color | The GPU port of FilmCraft's standard effects waits for an Effects panel | active |
 | D-042 | 2026-10-14 | color | G3: Deliver renders through the GPU renderer, so a file matches the viewer | active |
 | D-043 | 2026-10-14 | color | The hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat | active |
-| D-044 | 2026-10-14 | color | Grades render by their own math on every path: graded clips' pictures graded at their source | active (Deliver's own CPU frames: next) |
+| D-044 | 2026-10-14 | color | Grades render by their own math on every path: graded clips' pictures graded at their source | active (Deliver's: D-045) |
 | B-036 | 2026-10-14 | color | The editor stopped when its window was resized while frames rendered (since D-039) | fixed |
+| D-045 | 2026-10-14 | color | Deliver renders the graded copy, so its own CPU frames show grades by their own math | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2554,3 +2555,36 @@ it, and exports and graded sources kept on a device of their own.
 **Seen by Truman:** the window resizing very fast during the stress test, its left edge still and
 its right edge moving about an inch. That was the test itself, run only with a flag. It is
 removed.
+
+### D-045 — Deliver renders the graded copy, so its own CPU frames show grades by their own math
+**Area:** color · **Status:** active · **Doc:** `crates/filmcraft-adapter/src/deliver.rs`;
+`crates/filmcraft-adapter/src/gpu.rs` (`register_sources`, `exporting`)
+
+**Decision:** the rest of D-044. FilmCraft's export draws some frames whole on the CPU without asking
+the registered frame renderer (an adjustment layer, a transition other than dissolves, dips and
+Push). So `deliver.render` no longer exports the project; it exports its graded copy:
+
+- **The graded sources go in the pool.** Every stand-in is put into the session's media pool as a
+  graded source of its real media (`MediaPool::insert`), so FilmCraft's own CPU frames of the copy
+  get graded pictures.
+- **FilmCraft runs the export.** It is FilmCraft's job, with its settings, range and output
+  (`settings_from_params`, `range_param`, `spawn_export`). The output path follows FilmCraft's rules,
+  repeated in `deliver.rs` because FilmCraft's helper for them is private.
+- **GPU frames grade in the shader.** The export's GPU frame renderer finds the copy in a registry
+  (`exporting`), by its project's address, and draws as the viewers do, rather than grading at the
+  source.
+- **When FilmCraft's own export runs instead:** nothing graded, no GPU, `--cpu-render`, or a graded
+  subclip. The pool resolves a subclip to its media item before its own id, so a subclip's stand-in
+  would never be asked for.
+- `deliver.render`'s answer no longer lists `offlineMedia` (FilmCraft's helper for it is private).
+
+**Measured:**
+- One frame inside a Wipe between two clips keyed hard on warm hues, to PNG, against the grade's
+  math applied to the same frame delivered ungraded: 99 % within 0.00, 99.9 % within 1.00 code
+  values. Through FilmCraft's export of the project, the compile's baked key, as before: 99.9 % within
+  17.6.
+- Ten seconds of the graded Sony clip to H.264 1080p: 13.6 s (13.4 s before), so the GPU frames
+  still grade in the shader.
+
+**Checked:** adapter test of the Wipe to PNG (it fails through FilmCraft's export of the project);
+the earlier Deliver tests. 205 tests in the workspace.

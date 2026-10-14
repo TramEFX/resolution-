@@ -106,7 +106,8 @@ thread.
 Every graded clip in the working copy points at a stand-in. Its pictures are graded in the shader
 or, for a clip with other effects and for frames FilmCraft draws itself, graded at their source by
 the renderer (`GradedSource`), so FilmCraft composites already-graded pictures (D-044). Agents'
-frames are the viewers'.
+frames are the viewers'. `deliver.render` exports the copy itself, its graded sources put in the
+media pool, and the export's GPU renderer finds the copy to grade in the shader (D-045).
 
 Deliver uses it too (D-042): the adapter registers `ExportFrames` as FilmCraft's export frame
 renderer, and `deliver.render` asks for GPU rendering. Each export worker's renderer makes the
