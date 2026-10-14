@@ -105,8 +105,13 @@ read, never copied into the repo.
   - [x] G1: the viewers' frames on the GPU, with the grade stage (tone, saturation, real key masks,
         windows) exact to `crates/grade`; FilmCraft's CPU renderer for what it does not cover yet
         (D-036; graded 4K plays at 24 fps on the GPU where the CPU managed 14)
-  - [ ] G2: frames to the screen without a copy back; transitions, blend modes and standard effects
-        on the GPU; chroma siting (D-036 "Limits")
+  - [ ] G2: the rest of the viewers' frames on the GPU, and to the screen without a copy back
+    - [x] Dissolves, dips, titles, captions and clips FilmCraft renders itself; graded clips known
+          by their pictures (D-037)
+    - [ ] Blend modes, Push, colour management of HDR and wide-gamut media
+    - [ ] Standard effects on the GPU (they run on the CPU per layer for now)
+    - [ ] Frames to the screen without a copy back
+    - [ ] Chroma siting; shrinking by more than 4× (D-036 "Limits")
   - [ ] G3: Deliver through the same renderer, so viewer and file are identical
   - [ ] Later: parallel and layer nodes, matte finesse, no clamping between nodes
 

@@ -96,6 +96,7 @@ doc is updated *and* the entry says which section moved.
 | B-034 | 2026-10-14 | color | The GPU renderer blended 8-bit sRGB pixels before decoding them: enlarged pictures went dark between pixels | fixed |
 | B-035 | 2026-10-14 | color | The GPU renderer drew 8-bit camera video about one code value too red and too blue | fixed |
 | D-036 | 2026-10-14 | color | G1 built: the viewers' frames on Resolution's GPU renderer, grades by their own math | active |
+| D-037 | 2026-10-14 | color | G2, step 1: every frame FilmCraft plans as layers is drawn on the GPU; graded clips known by their pictures | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2132,3 +2133,66 @@ at 127.5, not 128: a half-code push towards red and blue. 10-bit video was right
   The threaded playback test now allows for the two renderers' rounding (99 % within 3 code values).
 - By hand, 2026-10-14: the figures above. The graded Sony clip looks the same in the editor on both
   renderers by eye.
+
+### D-037 — G2, step 1: every frame FilmCraft plans as layers is drawn on the GPU; graded clips known by their pictures
+**Area:** color · **Status:** active · **Doc:** ARCHITECTURE "The GPU renderer";
+`crates/filmcraft-adapter/src/gpu.rs`
+
+**Decision:** G1 (D-036) drew a frame on the GPU only when it was a plain stack of clips, because
+FilmCraft's frame plans do not say which clip a layer comes from. G1 paired layers with clips by
+order. Transitions, titles, captions and clips FilmCraft renders itself all add layers, so any of
+them sent the whole frame to the CPU. Now:
+
+- **A graded clip's layer is known by its picture.** In the timeline copy the GPU path plans from,
+  each graded clip we draw points at a stand-in media item, a copy of its media item under a new
+  id. The source provider handed to FilmCraft's planner opens the stand-in's real media and notes
+  which clip each decoded picture is for. A layer drawing that picture is that clip's, wherever
+  the planner put it. Checks:
+  - every picture decoded for a graded clip must be drawn as decoded, without effects or colour
+    management run on it first; otherwise its grade cannot be put back, and the frame goes to the
+    CPU;
+  - two graded clips showing the very same picture send the frame to the CPU.
+- **Every other layer is drawn as FilmCraft planned it:** the solid of a dip, the two clips of a
+  dissolve with their opacities, captions, titles, clips FilmCraft rendered on the CPU, and stills.
+- **Standard effects FilmCraft would run on its GPU** run on the CPU for that layer alone
+  (FilmCraft's own `effect_image`), and the layer is drawn on the GPU. Their GPU port is a later
+  step of G2.
+- **A graded clip with other standard effects or opacity masks** keeps its Lumetri effects in the
+  copy. Its grade comes first in its effect stack, so FilmCraft renders that clip on the CPU,
+  graded, and the GPU draws it like any pre-rendered layer.
+- **Still on the CPU, the whole frame:** a Push transition (`FramePlan::Composite`), blend modes
+  other than Normal, and colour management on FilmCraft's GPU path (HDR or wide-gamut media on a
+  Rec. 709 timeline). FilmCraft also draws an adjustment layer, other transitions and HDR timelines
+  on the CPU itself.
+- **Draft playback** (asked for when playback falls behind) no longer shrinks decoded pictures on
+  the GPU path, since the pictures are how graded clips are known. The CPU path keeps it.
+
+**Considered:** copying the planner's order of layers into the adapter (fragile against each engine
+sync), or asking FilmCraft upstream to name each layer's clip (a patch to carry, and a PR to post).
+The stand-ins need neither.
+
+**Measured** (this PC, the demo timeline with five of its clips graded, at a 1440-pixel viewer):
+
+| | GPU path | CPU only |
+|---|---|---|
+| Frames drawn on the GPU / CPU (26 s) | 617 / 13 (the Push) | 0 / 598 |
+| A frame's job, on average | 42 ms (27 of it decoding) | 85 ms |
+| Exact frame on screen | 97.1 % | 92.0 % |
+
+The demo's media decode in software; most of the rest is the drop shadow and Desert Dunes'
+Lumetri, run on the CPU for their layers. In the editor (default window) both play the demo at
+24.0 fps; 615 of 639 frames were the GPU's, the rest the Push.
+
+Against FilmCraft's CPU frames at a 960-pixel viewer, 99 % of values within 1 code value in every
+case tested: a dip from black (mean 0.22), a dissolve between two graded clips (0.22 early, 0.24
+late), a dip to black from a graded clip into Desert Dunes' own Lumetri (0.48), a graded clip
+under a clip FilmCraft renders on the CPU (0.27), a graded clip with a drop shadow (0.02), and the
+same media on another track with its own grade (0.18).
+
+**Checked:**
+- Adapter tests: the comparisons above; a Push still falls back; draft playback keeps graded
+  frames on the GPU; a clip with a Lumetri of its own is drawn as FilmCraft draws it. Mutation
+  check: taking over graded clips that have other effects fails a test (and at run time the frame
+  falls back, since that clip's picture never reaches a layer).
+- By hand, 2026-10-14: the graded demo in the editor, as measured above; a still mid-dissolve on
+  both renderers: mean 0.17, worst 2 code values, no channel leaning.

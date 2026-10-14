@@ -81,11 +81,16 @@ tone functions as tables, the saturation step, then the qualifier's key and the 
 blending the node's result into its input. The renderer knows nothing of FilmCraft.
 
 The adapter (`gpu.rs`) uses it for the viewers' frames. Each playback snapshot keeps a copy of the
-timeline without the grades' Lumetri effects, and the grades. FilmCraft plans and decodes the frame
-from the copy (`plan_frame`). A plain stack of layers is drawn on the GPU, each graded clip with its
-grade; anything else (transitions, blend modes, adjustment layers, other effects, captions, HDR)
-falls back to FilmCraft's CPU renderer on the real project. `--cpu-render` turns the GPU renderer
-off, and `frame_counts()` says how many frames each drew.
+timeline in which each graded clip we draw has its Lumetri effects taken off and points at a
+stand-in media item. FilmCraft plans and decodes the frame from the copy (`plan_frame`), through a
+source provider that opens the stand-ins' real media and notes which clip each decoded picture is
+for, so a graded clip's layer is known by its picture (D-037). Every layer of a layer plan is drawn
+on the GPU: graded clips with their grade, everything else as FilmCraft planned it (dissolves and
+dips, titles, captions, clips FilmCraft rendered on the CPU); standard effects run on the CPU for
+their layer. Push transitions, blend modes and colour-managed media still send the frame to
+FilmCraft's CPU renderer on the real project, as do the frames FilmCraft itself draws on the CPU
+(adjustment layers, other transitions, HDR timelines). `--cpu-render` turns the GPU renderer off,
+and `frame_counts()` says how many frames each drew.
 
 ## The editor (`apps/resolution-app`)
 
