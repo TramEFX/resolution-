@@ -35,6 +35,9 @@ use resolution_grade::{Grade, Shape};
 pub const TONE_N: usize = 4096;
 /// Numbers per node in the shader's node table (`render.wgsl`).
 const NODE_FLOATS: usize = 104;
+/// Tables per node, of [`TONE_N`] samples each: the three tone functions, then the five hue
+/// curves in `resolution_grade::HSL_CURVES`' order.
+const TABLES: usize = 8;
 /// Windows per node the shader takes.
 pub const MAX_WINDOWS: usize = 8;
 /// The most samples a side the shader takes over a shrunk pixel's footprint: up to 32× smaller,
@@ -944,14 +947,15 @@ fn uniforms(
 }
 
 /// A grade as the shader reads it: [`NODE_FLOATS`] numbers per enabled node (tone on, the
-/// saturation step, the qualifier, the windows in the picture's pixels), and the nodes' tone
-/// tables; and how many nodes. Windows beyond [`MAX_WINDOWS`] are left out.
+/// saturation step, the qualifier, which hue curves are on, the windows in the picture's pixels),
+/// and the nodes' tables ([`TABLES`] each); and how many nodes. Windows beyond [`MAX_WINDOWS`] are
+/// left out.
 pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32)) -> (Vec<f32>, Vec<f32>, usize) {
     let Some(grade) = grade else { return (Vec::new(), Vec::new(), 0) };
     let (w, h) = (w as f32, h as f32);
     let active: Vec<_> = grade.nodes.iter().filter(|n| n.enabled && !n.is_neutral()).collect();
     let mut nodes = Vec::with_capacity(active.len() * NODE_FLOATS);
-    let mut tones = Vec::with_capacity(active.len() * 3 * TONE_N);
+    let mut tones = Vec::with_capacity(active.len() * TABLES * TONE_N);
     for n in &active {
         let mut b = [0f32; NODE_FLOATS];
         let s = n.saturation();
@@ -982,6 +986,15 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32)) -> (Vec<f32>, Vec<f
         }
         let windows: Vec<_> = n.windows.iter().filter(|x| x.enabled).take(MAX_WINDOWS).collect();
         b[20] = windows.len() as f32;
+        // the hue curves that change something, one bit each
+        b[21] = n
+            .curves
+            .hsl()
+            .iter()
+            .enumerate()
+            .filter(|(_, (c, _))| !c.is_identity())
+            .map(|(i, _)| (1 << i) as f32)
+            .sum();
         for (i, win) in windows.iter().enumerate() {
             let o = 24 + i * 10;
             // as the engine's masks place them: sizes in fractions of the picture's width
@@ -1000,6 +1013,11 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32)) -> (Vec<f32>, Vec<f
         nodes.extend_from_slice(&b);
         for c in 0..3 {
             tones.extend((0..TONE_N).map(|i| n.tone(c, i as f32 / (TONE_N - 1) as f32)));
+        }
+        // a curve over hue sampled round the wheel (the shader wraps), the others end to end
+        for (c, periodic) in n.curves.hsl() {
+            let step = if periodic { TONE_N } else { TONE_N - 1 } as f32;
+            tones.extend((0..TONE_N).map(|i| c.eval(i as f32 / step, periodic)));
         }
     }
     (nodes, tones, active.len())

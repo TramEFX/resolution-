@@ -98,6 +98,8 @@ read, never copied into the repo.
       `scopes.read` for agents (D-030)
 - [x] Windows: Linear and Circle, as FilmCraft effect masks, with an on-screen control (D-031)
 - [x] Qualifiers: an HSL key limiting the whole node, baked into a 3D LUT for now (D-032, D-033)
+- [x] Hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat (D-043)
+- [ ] Sat vs Lum; picking a hue curve's points from the viewer
 - [ ] Matte finesse (key denoise and blur), Highlight view, RGB and Luma qualifier modes
 - [ ] Polygon, Curve and Gradient windows; window handles on screen; tracking
 - [ ] Parallel and layer nodes

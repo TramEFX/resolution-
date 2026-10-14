@@ -85,6 +85,42 @@ fn the_rendered_frame_follows_the_grade() {
     assert!(before.iter().zip(&after).any(|(b, a)| (b[0] - a[0]).abs() > 0.02), "the grade changed the picture");
 }
 
+/// The hue curves compiled to Lumetri's HSL curves (LOG D-043): the CPU's render follows the
+/// grade's math.
+#[test]
+fn the_rendered_frame_follows_the_hue_curves() {
+    let mut e = demo();
+    let before = frame(&e, 1920);
+    let controls = json!({
+        "saturation": 60.0, "hue": 54.0,
+        "curves": {
+            "hue_hue": [[0.0, 0.55], [0.33, 0.45], [0.66, 0.5]],
+            "hue_sat": [[0.05, 0.2], [0.4, 0.7], [0.75, 0.5]],
+            "hue_lum": [[0.1, 0.6], [0.6, 0.35]],
+            "lum_sat": [[0.0, 0.3], [0.5, 0.55], [1.0, 0.4]],
+            "sat_sat": [[0.2, 0.5], [0.9, 0.8]]
+        }
+    });
+    adjust(&mut e, controls.clone());
+    let after = frame(&e, 1920);
+    let n = node(controls);
+    let mut off: Vec<f32> = before
+        .iter()
+        .zip(&after)
+        .map(|(b, a)| {
+            let want = n.apply(*b);
+            (0..3).map(|k| (want[k] - a[k]).abs()).fold(0.0, f32::max) * 255.0
+        })
+        .collect();
+    off.sort_by(f32::total_cmp);
+    let (p99, worst) = (off[off.len() * 99 / 100], off[off.len() - 1]);
+    eprintln!("hue curves through Lumetri: 99% within {p99:.2}, worst {worst:.2} code values");
+    // (sampled to the ends' edges: fully saturated colours, many after more Saturation, read
+    // Sat vs Sat's end, not Lumetri's join between its ends)
+    assert!(p99 <= 1.0 && worst <= 1.5, "99% {p99}, worst {worst}");
+    assert!(before.iter().zip(&after).any(|(b, a)| (b[0] - a[0]).abs() > 0.02), "the grade changed the picture");
+}
+
 #[test]
 fn gain_zero_is_black_and_saturation_zero_is_grey() {
     let mut e = demo();

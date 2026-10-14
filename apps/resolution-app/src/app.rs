@@ -2629,6 +2629,26 @@ mod tests {
     }
 
     #[test]
+    fn a_hue_curve_is_chosen_from_the_curves_menu_and_bent_by_dragging() {
+        let mut h = on_color_page();
+        click(&mut h, "Custom ▾");
+        click(&mut h, "Hue vs Sat");
+        pump(&mut h, "the Hue vs Sat curve", |a| a.color.curve_mode == crate::color_page::CurveMode::HueSat);
+        let plot = h.get_by_label("Hue vs Sat curve").rect();
+        // a drag down at the red end of the wheel takes the colour out of reds
+        let red = pos2(plot.left() + plot.width() * 0.05, plot.center().y);
+        drag(&mut h, red, red + vec2(0.0, plot.height() * 0.3));
+        pump(&mut h, "reds less saturated, through the engine", |a| {
+            !a.color.dragging
+                && graded_clip(a).is_some_and(|c| c.graded)
+                && a.color.current().is_some_and(|n| n.curves.hue_sat.eval(0.05, true) < 0.35)
+        });
+        // and the other curves are as they were
+        let n = h.state().color.current().cloned().expect("a node");
+        assert!(n.curves.is_identity() && n.curves.hue_hue.is_empty());
+    }
+
+    #[test]
     fn clicking_a_clip_in_the_strip_grades_that_clip() {
         let mut h = on_color_page();
         let clips = h.state().strip_clips();

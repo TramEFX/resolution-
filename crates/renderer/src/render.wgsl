@@ -38,6 +38,9 @@ struct U {
 
 const TONE_N: u32 = 4096u;
 const NODE_FLOATS: u32 = 104u;
+// Tables per node: three tone functions, then the hue curves (Hue vs Hue, Hue vs Sat, Hue vs Lum,
+// Lum vs Sat, Sat vs Sat).
+const TABLES: u32 = 8u;
 
 struct VOut {
     @builtin(position) pos: vec4<f32>,
@@ -270,8 +273,22 @@ fn tone(n: u32, ch: u32, x: f32) -> f32 {
     let p = clamp(x, 0.0, 1.0) * f32(TONE_N - 1u);
     let i = u32(floor(p));
     let j = min(i + 1u, TONE_N - 1u);
-    let base = (n * 3u + ch) * TONE_N;
+    let base = (n * TABLES + ch) * TONE_N;
     return mix(tones[base + i], tones[base + j], p - floor(p));
+}
+
+// Hue curve `c` of node `n` at hue `x` (turns): sampled at TONE_N points round the wheel.
+fn round_curve(n: u32, c: u32, x: f32) -> f32 {
+    let p = fract(x) * f32(TONE_N);
+    let i = min(u32(floor(p)), TONE_N - 1u);
+    let j = (i + 1u) % TONE_N;
+    let base = (n * TABLES + 3u + c) * TONE_N;
+    return mix(tones[base + i], tones[base + j], p - floor(p));
+}
+
+// Lum vs Sat (`c` 3) or Sat vs Sat (4) of node `n` at `x`: sampled end to end.
+fn held_curve(n: u32, c: u32, x: f32) -> f32 {
+    return tone(n, 3u + c, x);
 }
 
 fn luma(c: vec3<f32>) -> f32 {
@@ -411,16 +428,26 @@ fn grade(v_in: vec3<f32>, sp: vec2<f32>) -> vec3<f32> {
         let amount = nf(n, 1u);
         let boost = nf(n, 2u);
         let turns = nf(n, 3u);
-        if abs(amount - 1.0) > 1e-6 || abs(boost) > 1e-6 || abs(turns) > 1e-6 {
+        let curves = u32(nf(n, 21u));
+        if abs(amount - 1.0) > 1e-6 || abs(boost) > 1e-6 {
             let l = luma(o);
             let spread = clamp(max(max(o.r, o.g), o.b) - min(min(o.r, o.g), o.b), 0.0, 1.0);
             let s = amount * (1.0 + boost * (1.0 - spread));
             o = clamp(vec3(l) + (o - vec3(l)) * s, vec3(0.0), vec3(1.0));
-            if abs(turns) > 1e-6 {
-                var h = rgb_to_hsl(o);
-                h.x = h.x + turns - floor(h.x + turns);
-                o = clamp(hsl_to_rgb(h), vec3(0.0), vec3(1.0));
-            }
+        }
+        // Hue's rotation and the hue curves together, each curve read where the pixel was
+        // (`Node::color`)
+        if abs(turns) > 1e-6 || curves != 0u {
+            let h0 = rgb_to_hsl(o);
+            var hue = h0.x + turns;
+            if (curves & 1u) != 0u { hue += round_curve(n, 0u, h0.x) - 0.5; }
+            var gain = 1.0;
+            if (curves & 2u) != 0u { gain *= 2.0 * round_curve(n, 1u, h0.x); }
+            if (curves & 8u) != 0u { gain *= 2.0 * held_curve(n, 3u, h0.z); }
+            if (curves & 16u) != 0u { gain *= 2.0 * held_curve(n, 4u, h0.y); }
+            var light = h0.z;
+            if (curves & 4u) != 0u { light = clamp(light + (round_curve(n, 2u, h0.x) - 0.5) * 0.5, 0.0, 1.0); }
+            o = clamp(hsl_to_rgb(vec3(fract(hue), clamp(h0.y * gain, 0.0, 1.0), light)), vec3(0.0), vec3(1.0));
         }
         var k = 1.0;
         if nf(n, 4u) > 0.5 {

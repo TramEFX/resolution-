@@ -314,3 +314,88 @@ fn grades_stored_before_qualifiers_still_load() {
     .unwrap();
     assert_eq!(n.qualifier.map(|q| q.hue_center), Some(50.0), "hue goes round: 150 is 50");
 }
+
+// ---- the hue curves (LOG D-043)
+
+fn hsl(rgb: [f32; 3]) -> [f32; 3] {
+    rgb_to_hsl(rgb)
+}
+
+#[test]
+fn a_hue_curve_runs_round_the_wheel_and_the_middle_line_changes_nothing() {
+    let empty = HslCurve::default();
+    assert!(empty.is_identity() && close(empty.eval(0.3, true), 0.5, 0.0));
+    let c = HslCurve(vec![[0.0, 0.8], [0.5, 0.2]]);
+    // the last point joins the first: red at both ends of the wheel
+    assert!(close(c.eval(0.0, true), 0.8, 1e-5) && close(c.eval(1.0, true), 0.8, 1e-5));
+    assert!(close(c.eval(0.999, true), c.eval(0.0, true), 0.01), "no step where the wheel closes");
+    // over lightness or saturation the ends are held instead
+    let held = HslCurve(vec![[0.2, 0.7], [0.8, 0.3]]);
+    assert!(close(held.eval(0.0, false), 0.7, 1e-6) && close(held.eval(1.0, false), 0.3, 1e-6));
+    assert!(HslCurve(vec![[0.1, 0.5], [0.7, 0.5]]).is_identity());
+}
+
+#[test]
+fn hue_vs_sat_takes_the_colour_out_of_one_hue_only() {
+    // reds grey, the rest of the wheel as it was
+    let n = node(json!({ "curves": { "hue_sat": [[0.0, 0.0], [1.0 / 6.0, 0.5], [0.5, 0.5], [5.0 / 6.0, 0.5]] } }));
+    assert!(!n.is_neutral());
+    let red = n.apply([0.8, 0.2, 0.2]);
+    assert!(hsl(red)[1] < 1e-3, "red loses its colour: {red:?}");
+    assert!(close(hsl(red)[2], hsl([0.8, 0.2, 0.2])[2], 1e-4), "and keeps its lightness");
+    let blue = [0.2, 0.3, 0.8];
+    let out = n.apply(blue);
+    assert!((0..3).all(|k| close(out[k], blue[k], 1e-4)), "blue untouched: {out:?}");
+}
+
+#[test]
+fn hue_vs_hue_turns_one_hue_and_hue_vs_lum_lightens_one() {
+    // green turned an eighth of a turn; green lightened by the most Hue vs Lum gives
+    let flat = |x: f32, y: f32| json!([[0.0, 0.5], [x - 1.0 / 6.0, 0.5], [x, y], [x + 1.0 / 6.0, 0.5]]);
+    let green = [0.2, 0.7, 0.2];
+    let n = node(json!({ "curves": { "hue_hue": flat(1.0 / 3.0, 0.625) } }));
+    let out = hsl(n.apply(green));
+    assert!(close(out[0], 1.0 / 3.0 + 0.125, 1e-3), "hue {}", out[0]);
+    let n = node(json!({ "curves": { "hue_lum": flat(1.0 / 3.0, 1.0) } }));
+    assert!(close(hsl(n.apply(green))[2], hsl(green)[2] + 0.25, 1e-3));
+}
+
+#[test]
+fn lum_vs_sat_and_sat_vs_sat_follow_lightness_and_saturation() {
+    // the darkest colours grey; the most saturated ones doubled
+    let n = node(json!({ "curves": { "lum_sat": [[0.0, 0.0], [0.4, 0.5], [1.0, 0.5]] } }));
+    // a dark red (saturation 0.5, lightness 0.04, near the curve's grey end) loses most of it
+    assert!(hsl(n.apply([0.06, 0.02, 0.02]))[1] < 0.1, "a dark red goes nearly grey");
+    let bright = [0.9, 0.5, 0.5];
+    assert!(close(hsl(n.apply(bright))[1], hsl(bright)[1], 1e-4), "a light one keeps its colour");
+    let n = node(json!({ "curves": { "sat_sat": [[0.0, 0.5], [0.3, 0.5], [1.0, 1.0]] } }));
+    let dull = [0.5, 0.45, 0.45];
+    assert!(close(hsl(n.apply(dull))[1], hsl(dull)[1], 1e-3), "a dull colour as it was");
+}
+
+#[test]
+fn hue_rotation_and_hue_vs_hue_add_up_as_one_turn() {
+    let rotated = node(json!({ "hue": 60.0 }));
+    let both = node(json!({ "hue": 60.0, "curves": { "hue_hue": [[0.0, 0.6], [0.5, 0.6]] } }));
+    let c = [0.7, 0.3, 0.2];
+    // the curve adds a tenth of a turn everywhere on top of Hue's tenth
+    let (a, b) = (hsl(rotated.apply(c))[0], hsl(both.apply(c))[0]);
+    assert!(close((b - a).rem_euclid(1.0), 0.1, 1e-3), "{a} then {b}");
+    // and without hue curves a node is what it was before they existed
+    let plain = node(json!({ "saturation": 70.0, "hue": 55.0, "color_boost": 20.0 }));
+    for c in SAMPLES {
+        let (old, new) = (plain.saturation().apply(c), plain.color(c));
+        assert!((0..3).all(|k| close(old[k], new[k], 1e-6)), "{c:?}: {old:?} against {new:?}");
+    }
+}
+
+#[test]
+fn hue_curves_are_tidied_and_grades_stored_before_them_still_load() {
+    let n = node(json!({ "curves": { "hue_sat": [[1.25, 1.4], [0.5, -0.2]], "lum_sat": [[1.5, 0.3]] } }));
+    assert_eq!(n.curves.hue_sat.0, vec![[0.25, 1.0], [0.5, 0.0]], "over hue, 1.25 is a quarter turn");
+    assert_eq!(n.curves.lum_sat.0, vec![[1.0, 0.3]]);
+    let old = r#"{"nodes":[{"label":"","enabled":true,"lift":{"y":0.0,"r":0.0,"g":0.0,"b":0.0},"gamma":{"y":0.0,"r":0.0,"g":0.0,"b":0.0},"gain":{"y":1.0,"r":1.0,"g":1.0,"b":1.0},"offset":{"y":25.0,"r":25.0,"g":25.0,"b":25.0},"contrast":1.0,"pivot":0.435,"saturation":50.0,"hue":50.0,"color_boost":0.0,"temp":0.0,"tint":0.0,"curves":{"y":[],"r":[],"g":[],"b":[]}}]}"#;
+    let g: Grade = serde_json::from_str(old).unwrap();
+    assert!(g.is_neutral());
+    assert_eq!(serde_json::to_string(&g).unwrap(), old, "written back as it was");
+}
