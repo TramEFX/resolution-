@@ -167,7 +167,11 @@ impl Monitor {
     }
 
     /// Shows frames the renderer leaves on egui's own GPU device, without reading them back
-    /// (LOG D-039).
+    /// (LOG D-039). Not used for now: the renderer keeps a device of its own (LOG B-036). On egui's,
+    /// its frame workers submitted work while eframe reconfigured the window's surface, which wgpu
+    /// refuses. Sharing the device again needs the GPU work done on the UI thread, as FilmCraft's
+    /// own viewer does.
+    #[allow(dead_code)]
     pub fn draw_on_gpu(&mut self, render_state: egui_wgpu::RenderState) {
         self.frames.keep_frames_on_gpu(true);
         self.gpu = Some(render_state);

@@ -98,11 +98,13 @@ doc is updated *and* the entry says which section moved.
 | D-036 | 2026-10-14 | color | G1 built: the viewers' frames on Resolution's GPU renderer, grades by their own math | active |
 | D-037 | 2026-10-14 | color | G2, step 1: every frame FilmCraft plans as layers is drawn on the GPU; graded clips known by their pictures | active |
 | D-038 | 2026-10-14 | color | G2, step 2: blend modes, Push and HDR media on the GPU, ported from FilmCraft's compositor | active |
-| D-039 | 2026-10-14 | color | G2, step 3: the viewers show the renderer's frames on the GPU, without a copy back | active |
+| D-039 | 2026-10-14 | color | G2, step 3: the viewers show the renderer's frames on the GPU, without a copy back | off for now (B-036) |
 | D-040 | 2026-10-14 | color | G2, step 4: a shrunk picture averages all its pixels; chroma read as sited left | active |
 | D-041 | 2026-10-14 | color | The GPU port of FilmCraft's standard effects waits for an Effects panel | active |
 | D-042 | 2026-10-14 | color | G3: Deliver renders through the GPU renderer, so a file matches the viewer | active |
 | D-043 | 2026-10-14 | color | The hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat | active |
+| D-044 | 2026-10-14 | color | Grades render by their own math on every path: graded clips' pictures graded at their source | active (Deliver's own CPU frames: next) |
+| B-036 | 2026-10-14 | color | The editor stopped when its window was resized while frames rendered (since D-039) | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2472,3 +2474,83 @@ samples a held curve from just inside 0 to just inside 1, since Lumetri's table 
 - UI test: Hue vs Sat chosen from the menu, a drag at red, reds less saturated through the engine.
 - By hand, 2026-10-14: the Sony clip, as measured above. The blue light and background went grey;
   the magenta and pink highlights kept their colour.
+
+### D-044 — Grades render by their own math on every path: graded clips' pictures graded at their source
+**Area:** color · **Status:** active (Deliver's own CPU frames: next) · **Doc:** `crates/filmcraft-adapter/src/gpu.rs`
+
+**Decision (Truman, 2026-10-14):** before building Color features that Lumetri cannot carry (key
+blur and denoise, Midtone Detail, parallel and layer nodes), Resolution grades each clip's
+pictures itself on every path. FilmCraft's renderers then receive pictures already graded, and
+the Lumetri compile (D-028) stays only so a project still opens sensibly in FilmCraft. The choices
+put to him:
+
+1. grade at the source everywhere (chosen);
+2. keep the Lumetri bridge, the new features missing where FilmCraft draws a frame itself;
+3. build only features Lumetri can carry, and decide later.
+
+**How:**
+- **Stand-ins.** Every graded clip in the working copy now points at a stand-in media item, at
+  ids from 2^60 up, a range no project reaches.
+  - A clip with nothing else on it is graded in the shader as before.
+  - A clip with other effects or opacity masks gets a **`GradedSource`**: the real media's
+    pictures, graded by the GPU renderer at the size they are decoded at (`render_linear`), and
+    handed to FilmCraft as linear-light pictures. FilmCraft then runs the clip's other effects on
+    the graded picture, the grade first in its stack as in Resolve. D-037's rule that such a clip
+    keeps its Lumetri effects is gone.
+- **Frames FilmCraft draws itself** (an adjustment layer, transitions other than dissolves, dips
+  and Push, an HDR timeline, or a frame the GPU declines) come from the copy with every graded
+  clip's pictures graded at their source (`Graded::render_cpu`). This covers the viewers' CPU
+  frames.
+- **Agents' snapshots** (`render_frame`) are the viewers' frames: the GPU path, then the copy with
+  graded sources. Only without a GPU, or with `--cpu-render`, does FilmCraft draw from the real
+  project with the compiled grades.
+- **Not yet:** Deliver's frames that FilmCraft draws whole on the CPU. Its export skips the
+  registered frame renderer for those, so they still take the compile. Next: Deliver exports the
+  copy, with the graded sources registered in the media pool (`MediaPool::insert`), so no FilmCraft
+  change is needed.
+
+**Measured:**
+- A Wipe between two clips keyed hard on a band of warm hues (a sharp key edge), half size,
+  against the math: 99.9 % within 1.00 code value. Through the Lumetri compile, as before this
+  change: 99.9 % within 17.6, where the 33-point table cannot follow the key's edge.
+- An agent's frame against the viewer's, a qualifier grade: identical.
+- The graded demo at a 1440-pixel viewer: every frame on the GPU, the exact frame on every refresh,
+  38.8 ms a frame (38.7 before). V2's drop-shadow clip is now graded at its source.
+
+**Checked:**
+- Adapter tests: the Wipe against the math (it fails through the compile); the agent's frame is
+  the viewer's; a graded clip with other effects stands in and is graded at its source; a foreign
+  Lumetri still gets no stand-in. 204 tests in the workspace.
+- By hand, 2026-10-14: the graded demo in the editor and in `play_bench`, as measured; while doing
+  so, B-036.
+
+### B-036 — The editor stopped when its window was resized while frames rendered (since D-039)
+**Area:** color · **Status:** fixed (D-039's direct path off) · **Caught by:** running it (the
+graded demo's `--play` check for D-044 panicked once, then a stress test reproduced it)
+
+**Symptom:** the editor panicked in eframe's wgpu painter: "Validation Error: In
+Surface::configure: Failed to wait for GPU to come idle before reconfiguring the Surface".
+
+**Cause:** since D-039 the GPU renderer shared egui's wgpu device, so its frame workers (and an
+export's threads) submitted work to the same queue as the window. When eframe reconfigures the
+window's surface (on a resize, and at start-up), wgpu waits for the queue to be idle and refuses if
+another thread submitted meanwhile. Its own source says so ("It can only be non-empty if another
+thread is submitting at the same time"). eframe leaves wgpu's default error handler, which panics.
+
+**Reproduced:** a temporary self-test resized the window every four frames while the graded demo
+played. Two runs in three stopped this way.
+
+**Wrong turn:** an error handler that logged surface errors, with egui told to reconfigure a
+surface left unconfigured. Runs then went past the refused reconfigure, but the next frame drew
+at the new window size into the old-size surface, and wgpu stopped the editor on that instead
+(a scissor rectangle larger than the render target). Two runs in six.
+
+**Fix:** the renderer keeps a device of its own again. Frames reach the viewers as pixels, read
+back as before D-039, which costs about 1.1 ms a frame (D-039's measurement). Under the same stress
+test, six runs in six played to the end. D-039's machinery stays, unused (`Monitor::draw_on_gpu`).
+Sharing the device again needs the GPU work done on the UI thread, as FilmCraft's own viewer does
+it, and exports and graded sources kept on a device of their own.
+
+**Seen by Truman:** the window resizing very fast during the stress test, its left edge still and
+its right edge moving about an inch. That was the test itself, run only with a flag. It is
+removed.

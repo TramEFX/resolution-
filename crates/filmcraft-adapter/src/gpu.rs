@@ -1,13 +1,20 @@
-//! The viewers' frames, and Deliver's, on Resolution's GPU renderer (LOG D-035 to D-042).
+//! The viewers' frames, and Deliver's, on Resolution's GPU renderer (LOG D-035 to D-044).
 //!
-//! Each playback snapshot keeps a copy of its timeline in which every graded clip FilmCraft would
-//! hand over as a plain decoded picture has its grade's Lumetri effects taken off and points at a
-//! stand-in media item of its own: a copy of its media item under a new id. A frame is planned by
-//! FilmCraft (`plan_frame`, which also decodes the pictures) from that copy, through a source
-//! provider that opens each stand-in's real media and notes which clip every picture it decodes
-//! belongs to. So a layer drawing one of those pictures is known to be that clip's, wherever the
-//! planner put it: inside a transition, over or under other tracks, in a flattened nested
-//! timeline.
+//! Each playback snapshot keeps a copy of its timeline in which every graded clip has its
+//! grade's Lumetri effects taken off and points at a stand-in media item of its own: a copy of its
+//! media item under an id of a range the project never reaches. The stand-in's source opens the
+//! real media and either
+//!
+//! - hands over the decoded pictures as they are, noting which clip each is for, when the clip has
+//!   nothing else on it: the GPU renderer grades them as it composites ("in the shader"); or
+//! - hands over pictures already graded by the GPU renderer (a [`GradedSource`]), when the clip has
+//!   other effects or opacity masks, or for frames FilmCraft draws itself: whatever FilmCraft then
+//!   does with them, the grade was applied first, by its own math (LOG D-044).
+//!
+//! A frame is planned by FilmCraft (`plan_frame`, which also decodes the pictures) from that copy.
+//! A layer drawing a picture decoded for a clip graded in the shader is known to be that clip's,
+//! wherever the planner put it: inside a transition, over or under other tracks, in a flattened
+//! nested timeline.
 //!
 //! Resolution's renderer then draws the plan: graded clips with their grade, by the grade's own
 //! math; everything else as FilmCraft planned it (solids for dips, captions, titles and clips
@@ -15,20 +22,20 @@
 //! Push transitions between their two sides). A layer carrying FilmCraft's standard effects has
 //! them run on the CPU for that layer alone (their GPU port is a later step of G2).
 //!
-//! The whole frame is drawn by FilmCraft's CPU renderer, from the real project, compiled grades
-//! and all, when:
+//! The whole frame is drawn by FilmCraft's CPU renderer from the copy, every graded clip's
+//! pictures graded at their source ([`Graded::render_cpu`]), when:
 //!
 //! - FilmCraft would draw it on the CPU anyway (an adjustment layer, a transition other than
 //!   dissolves, dips and Push, an HDR timeline);
 //! - a layer's colour management has no GPU form (log media);
-//! - a graded clip's picture is not drawn as decoded (FilmCraft converted it on the CPU first, or
-//!   it has colour management to run before its grade), so its grade cannot be put back;
-//! - two graded clips show the very same picture (the same media at the same moment), so the
+//! - a picture decoded for a clip graded in the shader is not drawn as decoded (FilmCraft
+//!   converted it on the CPU first, or it has colour management to run before its grade);
+//! - two such clips show the very same picture (the same media at the same moment), so the
 //!   picture does not say which clip it is.
 //!
-//! A graded clip with other standard effects or opacity masks keeps its Lumetri effects in the
-//! copy: the grade comes first in its effect stack, so FilmCraft renders that clip on the CPU,
-//! graded, and the GPU draws it like any pre-rendered layer.
+//! Only without a GPU, or with the GPU renderer turned off, does FilmCraft draw from the real
+//! project, the grades compiled to Lumetri (LOG D-028), which the project keeps so it still opens
+//! sensibly in FilmCraft.
 //!
 //! **Deliver** (G3, LOG D-042): FilmCraft's export takes a registered frame renderer for the frames
 //! it would otherwise render on the CPU. Ours ([`ExportFrames`]) draws them the same way, from a
@@ -44,7 +51,7 @@ use filmcraft_color::{GpuCurve, InputTransform, REFERENCE_WHITE_NITS};
 use filmcraft_engine::export::FrameRenderer;
 use filmcraft_engine::project::{ClipId, EffectInstance, ItemId, ParamValue, Project};
 use filmcraft_engine::render::plan::{FramePlan, PlanLayer, PlanStep, effect_image_with, is_cpu_frame, plan_frame};
-use filmcraft_engine::render::{Image, RenderOptions, SourceProvider};
+use filmcraft_engine::render::{Image, RenderOptions, SourceProvider, render_sequence};
 use filmcraft_engine::time::Tick;
 use filmcraft_frame::{AudioBuffer, Chroma, PixelData, VideoFrame};
 use filmcraft_media::{FrameRequest, MediaInfo, MediaSource, SharedSource, cancel};
@@ -109,50 +116,60 @@ impl GpuPicture for OnGpu {
     }
 }
 
-/// Pictures decoded for stand-ins, each with its clip.
+/// Pictures decoded for stand-ins graded in the shader, each with its clip.
 type Seen = Arc<Mutex<Vec<(Arc<VideoFrame>, ClipId)>>>;
 
-/// A timeline as the GPU renderer draws it.
+/// Stand-in media items' ids start here: far beyond any id a project hands out, so a stand-in
+/// never meets a real item.
+const STAND_IN_IDS: u64 = 1 << 60;
+
+/// A graded clip's stand-in media item in a [`Graded`] copy.
+struct StandIn {
+    /// The clip's real media item.
+    real: ItemId,
+    clip: ClipId,
+    grade: Arc<Grade>,
+    /// The clip has nothing else on it: on the GPU path its pictures are graded in the shader;
+    /// otherwise (other effects, opacity masks) they come graded from a [`GradedSource`].
+    in_shader: bool,
+}
+
+/// A timeline as Resolution renders it.
 pub(crate) struct Graded {
-    /// The project with each graded clip we draw having its Lumetri effects taken off and its
-    /// media item swapped for a stand-in.
+    /// The project with each graded clip's Lumetri effects taken off and its media item swapped
+    /// for a stand-in.
     project: Arc<Project>,
-    /// Stand-in media item → (the real media item, the clip).
-    stand_ins: HashMap<ItemId, (ItemId, ClipId)>,
-    grades: HashMap<ClipId, Grade>,
+    stand_ins: HashMap<ItemId, StandIn>,
 }
 
 impl Graded {
     pub(crate) fn of(project: &Arc<Project>, seq: ItemId) -> Self {
-        let plain = || Self { project: project.clone(), stand_ins: HashMap::new(), grades: HashMap::new() };
+        let plain = || Self { project: project.clone(), stand_ins: HashMap::new() };
         let Some(s) = project.sequence(seq) else { return plain() };
-        // the clips whose Lumetri effects are exactly their grade's (not foreign ones), with no
-        // other standard effects or opacity masks after it
-        let mut grades = HashMap::new();
-        let mut media = Vec::new();
+        // the clips whose Lumetri effects are exactly their grade's (not foreign ones)
+        let mut graded = Vec::new();
         for it in s.video_tracks.iter().flat_map(|t| &t.items) {
             let size = project.source_size(it.item).unwrap_or((s.settings.width, s.settings.height));
             let Some((g, false)) = crate::color::grade_in(project, seq, it.id, size) else { continue };
-            let n = it.effects.iter().take_while(|e| e.effect == "lumetri").count();
-            let others = it.effects[n..].iter().any(|e| e.enabled && e.def().is_some_and(|d| !d.intrinsic));
-            if g.is_neutral() || others || it.has_opacity_masks() {
+            if g.is_neutral() {
                 continue;
             }
-            grades.insert(it.id, g);
-            media.push((it.id, it.item));
+            let n = it.effects.iter().take_while(|e| e.effect == "lumetri").count();
+            let others = it.effects[n..].iter().any(|e| e.enabled && e.def().is_some_and(|d| !d.intrinsic));
+            graded.push((it.id, it.item, g, !others && !it.has_opacity_masks()));
         }
-        if grades.is_empty() {
+        if graded.is_empty() {
             return plain();
         }
         let mut p = (**project).clone();
         let mut stand_ins = HashMap::new();
         let mut swap = HashMap::new();
-        for (clip, item) in media {
+        for (k, (clip, item, grade, in_shader)) in graded.into_iter().enumerate() {
             let Some(mut copy) = p.item(item).cloned() else { continue };
-            let id = ItemId(p.alloc_id());
+            let id = ItemId(STAND_IN_IDS + k as u64);
             copy.id = id;
             p.items.insert(id, copy);
-            stand_ins.insert(id, (item, clip));
+            stand_ins.insert(id, StandIn { real: item, clip, grade: Arc::new(grade), in_shader });
             swap.insert(clip, id);
         }
         if let Some(s) = p.sequence_mut(seq) {
@@ -164,8 +181,25 @@ impl Graded {
                 }
             }
         }
-        grades.retain(|c, _| swap.contains_key(c));
-        Self { project: Arc::new(p), stand_ins, grades }
+        Self { project: Arc::new(p), stand_ins }
+    }
+
+    /// The frame at `t` of timeline `seq` as FilmCraft's CPU renderer draws it from the copy, every
+    /// graded clip's pictures graded at their source (LOG D-044). `None` when there is nothing to
+    /// grade, no GPU, or the GPU renderer is off: then FilmCraft draws from the real project.
+    pub(crate) fn render_cpu(
+        &self,
+        seq: ItemId,
+        t: Tick,
+        opts: RenderOptions,
+        sources: &dyn SourceProvider,
+    ) -> Option<Image> {
+        if self.stand_ins.is_empty() || !GPU_ON.load(Ordering::Relaxed) {
+            return None;
+        }
+        renderer()?;
+        let graded = Grading { inner: sources, stand_ins: &self.stand_ins, seen: None };
+        Some(render_sequence(&self.project, seq, t, opts, &graded))
     }
 
     /// The frame at `t` of timeline `seq`, drawn on the GPU, or `None` when the GPU renderer does
@@ -183,6 +217,23 @@ impl Graded {
         let Drawn::Frame(frame) = self.drawn(seq, t, opts, sources, out)? else { return None };
         GPU_FRAMES.fetch_add(1, Ordering::Relaxed);
         Some(frame)
+    }
+
+    /// The frame at `t` for an agent (LOG D-044): as the viewers draw it, on the GPU or from the
+    /// copy with graded sources, read back; `None` only where FilmCraft must draw from the real
+    /// project (no GPU, or the GPU renderer turned off).
+    pub(crate) fn snapshot(
+        &self,
+        seq: ItemId,
+        t: Tick,
+        opts: RenderOptions,
+        sources: &dyn SourceProvider,
+    ) -> Option<Frame> {
+        if let Some(Drawn::Frame(f)) = self.drawn(seq, t, opts, sources, Out::Pixels) {
+            return Some(f);
+        }
+        let img = self.render_cpu(seq, t, opts, sources)?;
+        Some(Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8()))
     }
 
     /// The frame at `t`, drawn on the GPU, as FilmCraft's CPU renderer hands frames to an export:
@@ -209,7 +260,7 @@ impl Graded {
             return None;
         }
         let seen = Seen::default();
-        let tagging = Tagging { inner: sources, stand_ins: &self.stand_ins, seen: seen.clone() };
+        let tagging = Grading { inner: sources, stand_ins: &self.stand_ins, seen: Some(seen.clone()) };
         // Planned without draft playback's shortcut, which hands over shrunk copies of the decoded
         // pictures: a graded clip's layer is known by its picture.
         let plan = cancel::with_draft(false, || plan_frame(&self.project, seq, t, opts, &tagging));
@@ -246,7 +297,7 @@ impl Graded {
                     if l.fx.is_some() || l.input.is_some() {
                         return None;
                     }
-                    Some(self.grades.get(clip)?)
+                    Some(&*self.stand_ins.values().find(|s| s.clip == *clip)?.grade)
                 }
                 None => None,
             };
@@ -453,24 +504,63 @@ fn managed(t: &InputTransform) -> Option<Managed> {
     })
 }
 
-/// A source provider that opens each stand-in's real media and notes, for every picture decoded
-/// for a stand-in, whose clip it is. The pictures are kept, so their addresses stay theirs.
-struct Tagging<'a> {
+/// A source provider for a [`Graded`] copy: each stand-in opens its clip's real media. With
+/// `seen` (the GPU path), a clip graded in the shader hands over its pictures as decoded, each
+/// noted with its clip (kept, so their addresses stay theirs); every other stand-in hands over
+/// its pictures graded ([`GradedSource`]).
+struct Grading<'a> {
     inner: &'a dyn SourceProvider,
-    stand_ins: &'a HashMap<ItemId, (ItemId, ClipId)>,
-    seen: Seen,
+    stand_ins: &'a HashMap<ItemId, StandIn>,
+    seen: Option<Seen>,
 }
 
-impl SourceProvider for Tagging<'_> {
+impl SourceProvider for Grading<'_> {
     fn source(&self, item: ItemId) -> Option<SharedSource> {
-        match self.stand_ins.get(&item) {
-            Some(&(real, clip)) => {
-                let inner = self.inner.source(real)?;
-                Some(Arc::new(Tagged { inner, clip, seen: self.seen.clone() }))
-            }
-            None => self.inner.source(item),
-        }
+        let Some(s) = self.stand_ins.get(&item) else { return self.inner.source(item) };
+        let inner = self.inner.source(s.real)?;
+        Some(match &self.seen {
+            Some(seen) if s.in_shader => Arc::new(Tagged { inner, clip: s.clip, seen: seen.clone() }),
+            _ => Arc::new(GradedSource { inner, grade: s.grade.clone() }),
+        })
     }
+}
+
+/// A graded clip's source: the real media's pictures, graded by the GPU renderer at the size they
+/// are decoded at, as linear-light premultiplied pictures (LOG D-044). A picture the renderer
+/// cannot grade (no GPU) comes as decoded.
+struct GradedSource {
+    inner: SharedSource,
+    grade: Arc<Grade>,
+}
+
+impl MediaSource for GradedSource {
+    fn info(&self) -> &MediaInfo {
+        self.inner.info()
+    }
+    fn video_frame(&self, req: FrameRequest) -> filmcraft_media::Result<Arc<VideoFrame>> {
+        let f = self.inner.video_frame(req)?;
+        Ok(graded_picture(&f, &self.grade).map_or(f, Arc::new))
+    }
+    fn audio(&self, start: i64, frames: usize, sample_rate: u32) -> filmcraft_media::Result<AudioBuffer> {
+        self.inner.audio(start, frames, sample_rate)
+    }
+    fn audio_stream(
+        &self,
+        stream: usize,
+        start: i64,
+        frames: usize,
+        sample_rate: u32,
+    ) -> filmcraft_media::Result<AudioBuffer> {
+        self.inner.audio_stream(stream, start, frames, sample_rate)
+    }
+}
+
+/// `f` graded by `grade` on the GPU, the same size, linear light and premultiplied.
+fn graded_picture(f: &VideoFrame, grade: &Grade) -> Option<VideoFrame> {
+    let gpu = renderer()?;
+    let l = layer(f, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 1.0, Some(grade))?;
+    let px = gpu.lock().ok()?.render_linear((f.width, f.height), &[Step::Layers(vec![l])])?;
+    Some(VideoFrame { par: f.par, pts: f.pts, ..VideoFrame::rgba_f32(f.width, f.height, px) })
 }
 
 /// A stand-in's source: the real media's, noting each picture it decodes.
