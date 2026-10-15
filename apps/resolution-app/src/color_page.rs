@@ -323,12 +323,26 @@ fn fields(
 /// A number control: its name and value in a field. Drag it sideways to change it; double-click
 /// it to reset it (the caller does both).
 fn number(ui: &mut Ui, look: &Look, cell: Rect, label: &str, value: &str, changed: bool) -> Response {
+    number_shown(ui, look, cell, label, label, value, changed)
+}
+
+/// A number control whose cell shows `shown` for its name, `label` staying its name for
+/// accessibility (the qualifier's columns, whose title already says Hue, Sat or Lum; LOG B-051).
+fn number_shown(
+    ui: &mut Ui,
+    look: &Look,
+    cell: Rect,
+    label: &str,
+    shown: &str,
+    value: &str,
+    changed: bool,
+) -> Response {
     let t = look.theme;
     let r = ui.interact(cell, ui.id().with(("number", label)), Sense::click_and_drag());
     name(&r, WidgetType::DragValue, label);
     let painter = ui.painter();
     painter.rect_filled(cell, look.radius(), if r.hovered() || r.dragged() { t.hover } else { t.field });
-    painter.text(cell.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, label, look.small(), t.dim);
+    painter.text(cell.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, shown, look.small(), t.dim);
     painter.text(
         cell.right_center() - vec2(8.0, 0.0),
         Align2::RIGHT_CENTER,
@@ -2225,6 +2239,8 @@ pub fn qualifier(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let mut asks = Vec::new();
     let t = look.theme;
     palette_header(ui, look, page);
+    // the palette's own width: a row that runs over it must not widen the columns (LOG B-051)
+    let width = ui.max_rect().width();
     let Some(node) = page.current().cloned() else { return asks };
     ui.add_space(6.0);
     let Some(q) = node.qualifier else {
@@ -2251,20 +2267,35 @@ pub fn qualifier(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
                 }
             }
         }
+        // the qualifier's mode, as Resolve's palette chooses it (LOG D-072): Luma is HSL with Hue
+        // and Sat off, so the mode shown is what the switches say
+        let luma = !q.hue_on && !q.sat_on && q.lum_on;
+        for (text, on, set_luma) in [("HSL", !luma, false), ("Luma", luma, true)] {
+            let (b, _) = ui.allocate_exact_size(vec2(52.0, look.skin.button), Sense::hover());
+            if toggle(ui, look, b, text, &format!("Qualifier {text}"), on) {
+                (nq.hue_on, nq.sat_on, nq.lum_on) = (!set_luma, !set_luma, true);
+            }
+        }
         if chrome::text_button(ui, look, "Remove Qualifier", true).clicked() {
             remove = true;
         }
-        ui.label(egui::RichText::new("Click the viewer to pick a colour.").color(t.dim));
+        ui.add(egui::Label::new(egui::RichText::new("Click the viewer to pick a colour.").color(t.dim)).truncate());
     });
     ui.add_space(6.0);
     let area = ui.available_rect_before_wrap();
+    let area = Rect::from_min_size(area.min, vec2(width.min(area.width()), area.height()));
     let col_w = (area.width() - 16.0) / 4.0;
     let row_h = 24.0;
     let fresh = Qualifier::default();
     let matte = ("Matte Finesse", &MATTE[..]);
     let columns = SECTIONS.iter().map(|(title, _, _, fields)| (*title, &fields[..])).chain([matte]);
     for (c, (title, fields)) in columns.enumerate() {
-        let x = area.left() + 8.0 + col_w * c as f32;
+        // Matte Finesse's names are the longest: its column a third wider than the others
+        let (x, col_w) = if c < 3 {
+            (area.left() + 8.0 + col_w * 0.9 * c as f32, col_w * 0.9)
+        } else {
+            (area.left() + 8.0 + col_w * 2.7, col_w * 1.3)
+        };
         let head = Rect::from_min_size(pos2(x, area.top()), vec2(col_w, row_h)).shrink2(vec2(3.0, 2.0));
         match SECTIONS.get(c) {
             Some((_, is_on, flip, _)) => {
@@ -2280,7 +2311,8 @@ pub fn qualifier(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
             let cell = Rect::from_min_size(pos2(x, area.top() + row_h * (k + 1) as f32), vec2(col_w, row_h))
                 .shrink2(vec2(3.0, 2.0));
             let v = (f.get)(&q);
-            let r = number(ui, look, cell, f.name, &format!("{v:.1}"), (v - (f.get)(&fresh)).abs() > 1e-3);
+            let shown = f.name.strip_prefix(title).map_or(f.name, str::trim_start);
+            let r = number_shown(ui, look, cell, f.name, shown, &format!("{v:.1}"), (v - (f.get)(&fresh)).abs() > 1e-3);
             if r.drag_started() {
                 page.begin_drag();
             }

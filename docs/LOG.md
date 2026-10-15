@@ -146,6 +146,8 @@ doc is updated *and* the entry says which section moved.
 | B-050 | 2026-10-15 | engine | A clip of another size than its timeline showed cropped at its own size, not fitted as in Resolve | fixed |
 | D-070 | 2026-10-15 | color | Highlight Difference: how far a node moves each pixel, drawn; its command waits on Truman | active (gain provisional; command proposed) |
 | D-071 | 2026-10-15 | color | The Color page's Mini-Timeline | active |
+| D-072 | 2026-10-15 | color | The qualifier's HSL and Luma modes | active |
+| B-051 | 2026-10-15 | ui | Matte Finesse's numbers ran under the scopes; the qualifier's labels ran into their values | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3984,3 +3986,44 @@ not have yet. No audio tracks, clip names or thumbnails in it.
     only the current clip showed;
   - now in the video colour: V1's six clips with their cuts, V2's clip at 5 s, the graded clip
     bright, and the playhead in it.
+
+### D-072 — The qualifier's HSL and Luma modes
+**Area:** color · **Status:** active · **Doc:** `color_page.rs` (`qualifier`)
+
+**Decision:** Resolve's qualifier has modes. The 21.1 Reference Manual says Luma "is identical to
+the HSL qualifier with H and S turned off", and that the mode "automatically disables the Hue and
+Saturation controls". Our qualifier already has Hue, Sat and Lum switches (D-032). So two buttons
+in the qualifier palette's top row choose the mode:
+- **Luma** turns Hue and Sat off and Lum on;
+- **HSL** turns all three on.
+
+The mode shown is what the switches say: Luma while Hue and Sat are off and Lum is on. Nothing
+new is stored. RGB and 3D modes are not built; RGB would need ranges of its own in the grade.
+
+**Checked:** the qualifier's UI test: Luma, then HSL, each through the engine. With the buttons'
+switches swapped, it fails.
+
+### B-051 — Matte Finesse's numbers ran under the scopes; the qualifier's labels ran into their values
+**Area:** ui · **Status:** fixed · **Caught by:** a screenshot of D-072's buttons on the second
+screen
+
+**Symptom:** the qualifier palette's fourth column, Matte Finesse, ran past the palette and under
+the scopes panel, so its numbers could not be seen. With the columns fitted, the names "Sat Low
+Soft" and "Lum Low Soft" ran into their values.
+
+**Cause:** the palette's top row (On, Invert, the new mode buttons, Remove Qualifier and the hint
+"Click the viewer to pick a colour.") ran over the palette's width. egui widened the area to hold
+it, and the columns took their width from that area. The hint alone may already have pushed it
+over before D-072's buttons; that was not checked on the earlier code.
+
+**Fix:**
+- The columns take the palette's own width, and the hint is cut short with "…" when it does not
+  fit.
+- Inside a column, a name drops what its title already says ("Center", "Low Soft"); its
+  accessible name keeps it all, so tests and agents are unaffected.
+- Matte Finesse, whose names are longest, gets a column a third wider than the others.
+
+**Checked:**
+- The qualifier's UI test: White Clip, Matte Finesse's last number, ends before the scopes panel
+  begins. On the old layout it fails, running 22 points under.
+- By eye: all four columns readable inside the palette.
