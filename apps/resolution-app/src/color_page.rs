@@ -1703,69 +1703,77 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     ui.add_space(4.0);
     let mut changed = false;
     let mut delete = None;
-    for (i, w) in wins.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
-            let label = format!("Window {}", i + 1);
-            let (rect, r) = ui.allocate_exact_size(vec2(110.0, look.skin.button), Sense::click());
-            name(&r, WidgetType::Button, &label);
-            let chosen = page.window == i;
-            ui.painter().rect_filled(
-                rect,
-                look.radius(),
-                if chosen {
-                    t.active_bg
-                } else if r.hovered() {
-                    t.hover
-                } else {
-                    t.field
-                },
-            );
-            ui.painter().text(
-                rect.left_center() + vec2(8.0, 0.0),
-                Align2::LEFT_CENTER,
-                format!("{} {}", shape_name(w.shape), i + 1),
-                look.small(),
-                if chosen { t.accent } else { t.text },
-            );
-            if r.clicked() {
-                page.window = i;
-            }
-            for (text, on, what) in [("On", w.enabled, 0), ("Invert", w.invert, 1)] {
-                let (b, r) = ui.allocate_exact_size(vec2(52.0, look.skin.button), Sense::click());
-                name(&r, WidgetType::Button, &format!("{label} {text}"));
-                ui.painter().rect_filled(
-                    b,
-                    look.radius(),
-                    if on {
-                        t.active_bg
-                    } else if r.hovered() {
-                        t.hover
-                    } else {
-                        t.field
-                    },
-                );
-                ui.painter().text(
-                    b.center(),
-                    Align2::CENTER_CENTER,
-                    text,
-                    look.small(),
-                    if on { t.accent } else { t.dim },
-                );
-                if r.clicked() {
-                    if what == 0 {
-                        w.enabled = !w.enabled;
-                    } else {
-                        w.invert = !w.invert;
+    // the list scrolls past four windows, so the palette keeps its height and the viewer its size
+    // (LOG B-052)
+    let row = look.skin.button + ui.spacing().item_spacing.y;
+    egui::ScrollArea::vertical().id_salt("window list").max_height(4.0 * row).auto_shrink([false, true]).show(
+        ui,
+        |ui| {
+            for (i, w) in wins.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    let label = format!("Window {}", i + 1);
+                    let (rect, r) = ui.allocate_exact_size(vec2(110.0, look.skin.button), Sense::click());
+                    name(&r, WidgetType::Button, &label);
+                    let chosen = page.window == i;
+                    ui.painter().rect_filled(
+                        rect,
+                        look.radius(),
+                        if chosen {
+                            t.active_bg
+                        } else if r.hovered() {
+                            t.hover
+                        } else {
+                            t.field
+                        },
+                    );
+                    ui.painter().text(
+                        rect.left_center() + vec2(8.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        format!("{} {}", shape_name(w.shape), i + 1),
+                        look.small(),
+                        if chosen { t.accent } else { t.text },
+                    );
+                    if r.clicked() {
+                        page.window = i;
                     }
-                    changed = true;
-                }
+                    for (text, on, what) in [("On", w.enabled, 0), ("Invert", w.invert, 1)] {
+                        let (b, r) = ui.allocate_exact_size(vec2(52.0, look.skin.button), Sense::click());
+                        name(&r, WidgetType::Button, &format!("{label} {text}"));
+                        ui.painter().rect_filled(
+                            b,
+                            look.radius(),
+                            if on {
+                                t.active_bg
+                            } else if r.hovered() {
+                                t.hover
+                            } else {
+                                t.field
+                            },
+                        );
+                        ui.painter().text(
+                            b.center(),
+                            Align2::CENTER_CENTER,
+                            text,
+                            look.small(),
+                            if on { t.accent } else { t.dim },
+                        );
+                        if r.clicked() {
+                            if what == 0 {
+                                w.enabled = !w.enabled;
+                            } else {
+                                w.invert = !w.invert;
+                            }
+                            changed = true;
+                        }
+                    }
+                    if chrome::text_button(ui, look, &format!("Delete {label}"), true).clicked() {
+                        delete = Some(i);
+                    }
+                });
             }
-            if chrome::text_button(ui, look, &format!("Delete {label}"), true).clicked() {
-                delete = Some(i);
-            }
-        });
-    }
+        },
+    );
     if let Some(i) = delete {
         wins.remove(i);
         page.window = page.window.min(wins.len().saturating_sub(1));

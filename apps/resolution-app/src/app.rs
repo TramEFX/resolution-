@@ -197,6 +197,9 @@ pub struct ResolutionApp {
     seek_after_load: Option<f64>,
     source_after_load: Option<String>,
     screenshot: Option<(PathBuf, u32)>,
+    /// Keep egui's memory (panel sizes and the like) for next time: not after a self-test, which
+    /// would leave its layout behind in the user's editor (LOG B-053).
+    keep_memory: bool,
     /// Where to move the window on the first frame (`Options::window_at`).
     window_at: Option<[f32; 2]>,
 }
@@ -309,6 +312,7 @@ impl ResolutionApp {
             auto_timeline: !options.import.is_empty(),
             seek_after_load: options.seek,
             source_after_load: options.source,
+            keep_memory: options.window_at.is_none() && options.screenshot.is_none() && options.play_for.is_none(),
             screenshot: options.screenshot.map(|p| (p, 0)),
             window_at: options.window_at,
         }
@@ -2008,6 +2012,10 @@ impl eframe::App for ResolutionApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(THEME_KEY, self.look.theme.id.to_string());
     }
+
+    fn persist_egui_memory(&self) -> bool {
+        self.keep_memory
+    }
 }
 
 #[cfg(test)]
@@ -3329,6 +3337,30 @@ mod tests {
             "{v1:?}"
         );
         assert!(v1.iter().any(|x| x.name == "Push"), "{v1:?}");
+    }
+
+    /// Many windows scroll in their list: the palette, and so the viewer, keep their size (LOG
+    /// B-052).
+    #[test]
+    fn many_windows_scroll_and_the_viewer_keeps_its_size() {
+        let mut h = on_color_page();
+        click(&mut h, "Window palette");
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
+        h.step();
+        let before = h.state().picture_rect.expect("a picture");
+        // nine: more than the palette's 340 points hold, list and numbers together
+        for k in 1..=9 {
+            click(&mut h, "Add Circle");
+            pump(&mut h, "the window, from the engine", |a| {
+                !a.color.dragging && a.color.current().is_some_and(|n| n.windows.len() == k)
+            });
+        }
+        h.step();
+        h.step();
+        let after = h.state().picture_rect.expect("a picture");
+        assert!((after.height() - before.height()).abs() < 1.0, "the viewer went from {before:?} to {after:?}");
+        // the chosen window's numbers are still there
+        assert!(h.query_by_label("Pan").is_some());
     }
 
     #[test]

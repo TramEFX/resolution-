@@ -148,6 +148,8 @@ doc is updated *and* the entry says which section moved.
 | D-071 | 2026-10-15 | color | The Color page's Mini-Timeline | active |
 | D-072 | 2026-10-15 | color | The qualifier's HSL and Luma modes | active |
 | B-051 | 2026-10-15 | ui | Matte Finesse's numbers ran under the scopes; the qualifier's labels ran into their values | fixed |
+| B-052 | 2026-10-15 | ui | Each window added grew the palettes and shrank the Color page's viewer | fixed |
+| B-053 | 2026-10-15 | ui | Self-test runs saved their layout into the user's editor | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4027,3 +4029,40 @@ over before D-072's buttons; that was not checked on the earlier code.
 - The qualifier's UI test: White Clip, Matte Finesse's last number, ends before the scopes panel
   begins. On the old layout it fails, running 22 points under.
 - By eye: all four columns readable inside the palette.
+
+### B-052 — Each window added grew the palettes and shrank the Color page's viewer
+**Area:** ui · **Status:** fixed · **Caught by:** screenshots of the Window palette with four and
+six windows on the second screen
+
+**Symptom:** the Window palette lists every window above the chosen one's numbers. With six
+windows the palettes' panel grew to hold them, and the viewer above went from about 270 points
+tall to 190. Each window more shrank the picture further.
+
+**Cause:** the palettes' panel is resizable, and egui grows such a panel to what its contents take.
+The list had no limit.
+
+**Fix:** the list scrolls past four windows (`ScrollArea`), so the palette keeps its height.
+Resolve's palettes keep theirs too.
+
+**Checked:**
+- UI test: nine windows added through the palette, and the viewer's picture is the same size as
+  before. Without the limit it fails: 229 points tall became 166.
+- By eye: six windows, four rows shown and the rest by scrolling, the numbers below.
+
+### B-053 — Self-test runs saved their layout into the user's editor
+**Area:** ui · **Status:** fixed · **Caught by:** B-052. A later screenshot run opened with the
+palettes still grown by the run before, so eframe had stored that size.
+
+**Symptom:** eframe saves egui's memory (panel sizes, scroll positions) at exit, and self-test runs
+saved theirs too. A self-test that grew a panel, like B-052's six windows, left it grown in the
+user's next session. D-049 already kept self-tests from saving the window's position.
+
+**Fix:** a run with `--window-at`, `--screenshot` or `--play` does not keep egui's memory
+(`persist_egui_memory`). The colour theme is still kept, as `--theme` means it to be.
+
+**Left as it is:** Truman's stored state (`%APPDATA%\Resolution\data\app.ron`, written 16:20 on
+2026-10-15 by this run's screenshots) may hold the grown Color palette height. It was not edited,
+since it may also hold panel sizes he chose. Dragging the palette's top edge back puts it right.
+
+**Checked:** by code; there is no harness for eframe's storage. B-052's fix also stops the growth
+at its source.
