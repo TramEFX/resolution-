@@ -392,7 +392,8 @@ fn lut_id(n: &Node) -> String {
     table.label.clear();
     // nor Denoise, Blur Radius and Midtone Detail, which a table cannot hold (LOG D-046, D-055)
     if let Some(q) = &mut table.qualifier {
-        (q.denoise, q.blur) = (0.0, 0.0);
+        (q.denoise, q.blur, q.morph_radius) = (0.0, 0.0, 0.0);
+        q.morph = resolution_grade::Morph::None;
     }
     table.midtone_detail = 0.0;
     let text = serde_json::to_string(&table).unwrap_or_default();

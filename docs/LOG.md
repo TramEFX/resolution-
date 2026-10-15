@@ -123,6 +123,7 @@ doc is updated *and* the entry says which section moved.
 | D-056 | 2026-10-14 | color | Deliver's speed checked after B-038's fix: unchanged | active |
 | D-057 | 2026-10-14 | ui | Window handles on screen: size, rotation and softness | active |
 | B-041 | 2026-10-14 | ui | A quick drag on the window control missed small handles and polygon corners | fixed |
+| D-058 | 2026-10-14 | color | More matte finesse: Black Clip, White Clip and Morph | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3157,3 +3158,41 @@ handles' 8-pixel reach. D-053's polygon corners had the same flaw.
 
 **Fix:** what a drag takes hold of is found at the press's origin (`press_origin`). The UI test
 passes, and failed before the fix.
+
+### D-058 — More matte finesse: Black Clip, White Clip and Morph
+**Area:** color · **Status:** active · **Doc:** `crates/grade` (`Qualifier::clip`, `Morph`,
+`Qualifier::matte`); `crates/renderer` (`fs_morph`, `fs_clip`); `color_page.rs` (Matte Finesse)
+
+**Decision:** three more of the Qualifier palette's Matte Finesse controls, as the Reference Manual
+describes them. Each is a new qualifier field, written only when set, so older grades load and
+save unchanged.
+
+- **Morph Operation and Morph Radius.**
+  - Shrink takes each pixel's least neighbour, and Grow its most, over a square of the radius.
+  - Opening is shrink then grow: specks smaller than the radius go and the rest stays. Closing is
+    grow then shrink: holes smaller than it fill.
+  - The radius is up to 10 pixels at 1920 wide, in proportion at other widths, at least one when
+    set.
+  - It is spatial: a min or max pass across and one down in the GPU's grade stage, per step.
+- **Black Clip and White Clip,** 0 to 100 (White Clip 100 when unset): levels on the finished
+  matte, its black point raised and its white point lowered.
+  - They work pixel by pixel, so `Node::apply` and a qualified node's baked table have them.
+  - In the shader they put the layer through the grade stage, since the node table has no room
+    left for them.
+- **The order:** the key, Denoise, Clean Black and White, Morph, Blur Radius, then Clip.
+- **On the page:** Morph Radius, Black Clip and White Clip join the Matte Finesse column, in that
+  order, with a Morph Operation button below that steps through None, Shrink, Grow, Opening and
+  Closing.
+
+**Not built:** In/Out Ratio. It moves where a blurred key's edge falls (or, without blur, fills
+holes or removes specks), and no simple, faithful form of it is clear from the manual. Morph's
+Opening and Closing cover its second use.
+
+**Checked:**
+- Grade test: Shrink takes off a speck and an edge's pixel; Grow widens the edge and fills a
+  2-pixel hole; Opening takes off the speck and keeps the block; Closing fills the hole and keeps
+  the edge; Clip's levels; a qualifier without these fields writes none.
+- Renderer test: Opening and Closing with both clips, against `Grade::apply_image`, within 0.24
+  and 0.52 code values. With min and max swapped in the shader, 148 off.
+- UI test: Morph Operation stepped to Shrink; Morph Radius and Black Clip dragged, through the
+  engine.

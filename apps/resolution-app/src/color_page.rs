@@ -17,7 +17,7 @@ use egui::{
     TextureOptions, Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
 };
 use resolution_engine_api::{Frame, PARADE_GAP, Playback, RenderHints, ScopeKind, Scopes, VECTORSCOPE_EXTENT};
-use resolution_grade::{Curve, HslCurve, Node, Qualifier, Shape as WindowShape, Wheel, Window, hsl_to_rgb};
+use resolution_grade::{Curve, HslCurve, Morph, Node, Qualifier, Shape as WindowShape, Wheel, Window, hsl_to_rgb};
 use serde_json::{Map, Value, json};
 
 use crate::chrome;
@@ -1777,12 +1777,25 @@ const SECTIONS: [Section; 3] = [
     ),
 ];
 
-/// Matte Finesse (LOG D-046): the key cleaned, in this order.
-const MATTE: [QualifierField; 4] = [
+/// Matte Finesse (LOG D-046, D-058): the key cleaned, in this order; Morph Operation's button
+/// follows them.
+const MATTE: [QualifierField; 7] = [
     QualifierField { name: "Denoise", get: |q| q.denoise, set: |q, v| q.denoise = v },
     QualifierField { name: "Clean Black", get: |q| q.clean_black, set: |q, v| q.clean_black = v },
     QualifierField { name: "Clean White", get: |q| q.clean_white, set: |q, v| q.clean_white = v },
+    QualifierField { name: "Morph Radius", get: |q| q.morph_radius, set: |q, v| q.morph_radius = v },
     QualifierField { name: "Blur Radius", get: |q| q.blur, set: |q, v| q.blur = v },
+    QualifierField { name: "Black Clip", get: |q| q.black_clip, set: |q, v| q.black_clip = v },
+    QualifierField { name: "White Clip", get: |q| q.white_clip, set: |q, v| q.white_clip = v },
+];
+
+/// Morph Operation's choices, in the order its button steps through them (LOG D-058).
+const MORPHS: [(Morph, &str); 5] = [
+    (Morph::None, "None"),
+    (Morph::Shrink, "Shrink"),
+    (Morph::Grow, "Grow"),
+    (Morph::Opening, "Opening"),
+    (Morph::Closing, "Closing"),
 ];
 
 /// A small on/off button.
@@ -1880,8 +1893,18 @@ pub fn qualifier(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
                 page.end_drag();
             }
         }
+        // after Matte Finesse's numbers, Morph Operation: a click steps to the next
+        if SECTIONS.get(c).is_none() {
+            let cell = Rect::from_min_size(pos2(x, area.top() + row_h * (fields.len() + 1) as f32), vec2(col_w, row_h))
+                .shrink2(vec2(3.0, 2.0));
+            let k = MORPHS.iter().position(|(m, _)| *m == q.morph).unwrap_or(0);
+            let label = format!("Morph: {}", MORPHS[k].1);
+            if toggle(ui, look, cell, &label, "Morph Operation", !q.morph.is_none()) {
+                nq.morph = MORPHS[(k + 1) % MORPHS.len()].0;
+            }
+        }
     }
-    ui.allocate_rect(Rect::from_min_size(area.min, vec2(area.width(), row_h * 5.0)), Sense::hover());
+    ui.allocate_rect(Rect::from_min_size(area.min, vec2(area.width(), row_h * 9.0)), Sense::hover());
     if remove {
         page.adjust(&mut asks, json!({ "qualifier": Value::Null }));
     } else if nq != q {

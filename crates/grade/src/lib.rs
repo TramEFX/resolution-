@@ -358,7 +358,8 @@ impl Node {
         if !self.enabled {
             return rgb;
         }
-        self.apply_keyed(rgb, self.keyed().map(|q| q.clean(q.key(rgb))))
+        // (pixel by pixel: Denoise, Morph and Blur Radius need the neighbours; Clip does not)
+        self.apply_keyed(rgb, self.keyed().map(|q| q.clip(q.clean(q.key(rgb)))))
     }
 
     /// The node applied to one pixel inside its windows, its correction blended by `key` (the
@@ -534,6 +535,60 @@ pub struct Qualifier {
     /// Blur Radius: the key softened by a Gaussian.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub blur: f32,
+    /// Morph Operation and Morph Radius (LOG D-058): the key shrunk, grown, opened (small specks
+    /// gone) or closed (small holes filled), after Clean and before Blur Radius.
+    #[serde(default, skip_serializing_if = "Morph::is_none")]
+    pub morph: Morph,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub morph_radius: f32,
+    /// Black Clip and White Clip (LOG D-058), 0 to 100: the finished matte's levels, last. Black
+    /// Clip raises its black point, White Clip (100, untouched, when unset) lowers its white
+    /// point.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub black_clip: f32,
+    #[serde(default = "hundred", skip_serializing_if = "is_hundred")]
+    pub white_clip: f32,
+}
+
+/// Matte finesse's Morph Operation (LOG D-058).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Morph {
+    #[default]
+    None,
+    /// Each pixel the least of its neighbours: the key's edges drawn in.
+    Shrink,
+    /// The most: its edges pushed out.
+    Grow,
+    /// Shrink then grow: specks smaller than the radius gone, the rest kept.
+    Opening,
+    /// Grow then shrink: holes smaller than the radius filled, the rest kept.
+    Closing,
+}
+
+impl Morph {
+    pub fn is_none(&self) -> bool {
+        *self == Morph::None
+    }
+
+    /// Its passes, in order: `true` takes the most of a pixel's neighbours, `false` the least.
+    pub fn steps(self) -> &'static [bool] {
+        match self {
+            Morph::None => &[],
+            Morph::Shrink => &[false],
+            Morph::Grow => &[true],
+            Morph::Opening => &[false, true],
+            Morph::Closing => &[true, false],
+        }
+    }
+}
+
+fn hundred() -> f32 {
+    100.0
+}
+
+fn is_hundred(v: &f32) -> bool {
+    *v == 100.0
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -564,6 +619,10 @@ impl Default for Qualifier {
             clean_black: 0.0,
             clean_white: 0.0,
             blur: 0.0,
+            morph: Morph::None,
+            morph_radius: 0.0,
+            black_clip: 0.0,
+            white_clip: 100.0,
         }
     }
 }
@@ -616,7 +675,32 @@ impl Qualifier {
 
     /// Whether the matte depends on a pixel's neighbours (Denoise or Blur Radius set).
     pub fn is_spatial(&self) -> bool {
-        self.denoise > 0.0 || self.blur > 0.0
+        self.denoise > 0.0 || self.blur > 0.0 || self.morph_pixels(1920) > 0 || self.is_clipped()
+    }
+
+    /// Whether Black Clip or White Clip changes the matte. They work pixel by pixel, but the
+    /// GPU's grade stage carries them (LOG D-058).
+    pub fn is_clipped(&self) -> bool {
+        self.black_clip > 0.0 || self.white_clip < 100.0
+    }
+
+    /// Black Clip and White Clip on a matte value: stretched between Black Clip / 100 and White
+    /// Clip / 100.
+    pub fn clip(&self, k: f32) -> f32 {
+        if !self.is_clipped() {
+            return k;
+        }
+        let (b, w) = (self.black_clip / 100.0, self.white_clip / 100.0);
+        ((k - b) / (w - b).max(1e-3)).clamp(0.0, 1.0)
+    }
+
+    /// Morph Radius in pixels of a picture `width` wide: up to 10 at 1920, in proportion at other
+    /// widths, at least one when set; 0 without a Morph Operation.
+    pub fn morph_pixels(&self, width: usize) -> usize {
+        if self.morph.is_none() || self.morph_radius <= 0.0 {
+            return 0;
+        }
+        ((self.morph_radius / 100.0 * 10.0 * width as f32 / 1920.0).round() as usize).max(1)
     }
 
     /// Denoise's passes of a three-pixel median across, then down, for a picture `width` pixels
@@ -646,11 +730,19 @@ impl Qualifier {
         for v in &mut k {
             *v = self.clean(*v);
         }
+        let r = self.morph_pixels(w);
+        for &most in self.morph.steps().iter().filter(|_| r > 0) {
+            k = extreme(&k, w, h, r, most, true);
+            k = extreme(&k, w, h, r, most, false);
+        }
         let sigma = self.blur_sigma(w);
         if sigma > 0.0 {
             let weights = gaussian(sigma);
             k = convolve(&k, w, h, &weights, true);
             k = convolve(&k, w, h, &weights, false);
+        }
+        for v in &mut k {
+            *v = self.clip(*v);
         }
         k
     }
@@ -693,6 +785,9 @@ impl Qualifier {
             &mut self.clean_black,
             &mut self.clean_white,
             &mut self.blur,
+            &mut self.morph_radius,
+            &mut self.black_clip,
+            &mut self.white_clip,
         ] {
             *v = v.clamp(0.0, 100.0);
         }
@@ -705,6 +800,20 @@ fn at(k: &[f32], w: usize, h: usize, x: isize, y: isize) -> f32 {
 }
 
 /// The median of each value and its two neighbours across (`across`) or down.
+/// The most (`most`) or the least of each value and its neighbours up to `r` away, across
+/// (`across`) or down: half a square's grow or shrink (LOG D-058).
+fn extreme(k: &[f32], w: usize, h: usize, r: usize, most: bool, across: bool) -> Vec<f32> {
+    let (dx, dy) = if across { (1, 0) } else { (0, 1) };
+    let r = r as isize;
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as isize, (i / w) as isize);
+            let around = (-r..=r).map(|j| at(k, w, h, x + j * dx, y + j * dy));
+            if most { around.fold(0.0, f32::max) } else { around.fold(1.0, f32::min) }
+        })
+        .collect()
+}
+
 fn median3(k: &[f32], w: usize, h: usize, across: bool) -> Vec<f32> {
     let (dx, dy) = if across { (1, 0) } else { (0, 1) };
     (0..w * h)

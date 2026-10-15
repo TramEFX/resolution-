@@ -349,6 +349,8 @@ struct StagePipelines {
     node: wgpu::RenderPipeline,
     highlight: wgpu::RenderPipeline,
     luma: wgpu::RenderPipeline,
+    morph: wgpu::RenderPipeline,
+    clip: wgpu::RenderPipeline,
 }
 
 /// A texture drawn into.
@@ -472,6 +474,8 @@ impl Renderer {
             node: full("node", "fs_node"),
             highlight: full("highlight", "fs_highlight"),
             luma: full("luma", "fs_luma"),
+            morph: full("morph", "fs_morph"),
+            clip: full("clip", "fs_clip"),
         };
         let dummy = device
             .create_texture(&wgpu::TextureDescriptor {
@@ -974,6 +978,15 @@ impl Renderer {
                 }
                 run(enc, &self.stage.clean, &spare, [dummy, &mask.view, dummy, dummy], u([node, 0.0, 0.0, 0.0]), 3);
                 std::mem::swap(&mut mask, &mut spare);
+                // Morph (LOG D-058): the most or the least of each pixel's neighbours, across and down
+                let radius = q.morph_pixels(ww as usize) as f32;
+                for &most in q.morph.steps().iter().filter(|_| radius > 0.0) {
+                    for axis in [0.0, 1.0] {
+                        let g0 = [node, axis, radius, if most { 1.0 } else { 0.0 }];
+                        run(enc, &self.stage.morph, &spare, [dummy, &mask.view, dummy, dummy], u(g0), 3);
+                        std::mem::swap(&mut mask, &mut spare);
+                    }
+                }
                 let sigma = q.blur_sigma(ww as usize);
                 if sigma > 0.0 {
                     for axis in [0.0, 1.0] {
@@ -987,6 +1000,12 @@ impl Renderer {
                         );
                         std::mem::swap(&mut mask, &mut spare);
                     }
+                }
+                // Black Clip and White Clip, last (LOG D-058)
+                if q.is_clipped() {
+                    let g0 = [node, q.black_clip / 100.0, q.white_clip / 100.0, 0.0];
+                    run(enc, &self.stage.clip, &spare, [dummy, &mask.view, dummy, dummy], u(g0), 3);
+                    std::mem::swap(&mut mask, &mut spare);
                 }
             }
             let from_mask = if spatial.is_some() { 1.0 } else { 0.0 };
