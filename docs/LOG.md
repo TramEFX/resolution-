@@ -134,6 +134,7 @@ doc is updated *and* the entry says which section moved.
 | B-043 | 2026-10-15 | engine | Ctrl+T added no transition from the editor | fixed |
 | D-065 | 2026-10-15 | color | A Linear window's Soft 1 to 4: each side's own softness | active (side order and field name provisional) |
 | B-044 | 2026-10-15 | tests | The one-minute edit's UI test timed out in a full run | fixed |
+| D-066 | 2026-10-15 | color | Hue curves: image sampling from the viewer and the six-vector patches | active (widths provisional) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3590,3 +3591,57 @@ had passed.
 **Fix:** it presses Right as many times as there are frames to go, then waits for the playhead.
 The wait checks that each press moved it exactly one frame, none lost or doubled. Three full runs
 of the app's tests passed.
+
+### D-066 — Hue curves: image sampling from the viewer and the six-vector patches
+**Area:** color · **Status:** active; the widths around a sample or a vector are provisional ·
+**Doc:** `color_page.rs` (`curve_sampler`, `sampled`, `patched`, `samples`)
+
+**Decision:** two of Resolve's ways to put points on a hue curve, from the 21.1 Reference
+Manual ("Image Sampling for Hue and Sat Curves" and "Additional Controls in the Hue and Sat
+Curves"):
+- **Image sampling:** with any hue curve open, a click in the viewer, or a drag over a region,
+  puts three points on that curve. They span what was sampled: its hues, saturations or
+  lightnesses, whichever the curve is over.
+  - The outer two sit just beyond the range: a 24th of the wheel over hue, 0.05 otherwise.
+  - The middle one sits in its centre.
+  - Over hue the range is the shortest arc holding every sample, so reds either side of 0 give
+    a range through red.
+  - A drag reads every pixel under it, or an even spread of 4096. A white outline shows the
+    region while dragging.
+- **The six-vector patches:** over hue, six colour buttons in the title strip (Red, Yellow,
+  Green, Cyan, Blue, Magenta) each put three points round their vector. The middle point sits on
+  the vector and the outer two half way to its neighbours.
+
+Every new point sits on the curve as it is, so nothing changes until one is dragged; the curve's
+own points stay. Both go through `color.adjust` as any curve edit does: no new vocabulary.
+
+**Provisional:** the manual says three points but not how far apart. Ours are a guess, to be
+compared with Resolve's.
+
+**Not as Resolve:**
+- The sampler reads the picture as the viewer shows it, after the grade, as the qualifier's
+  picker does (D-032). Resolve samples relative to the node's input. On a node whose own hue
+  curves already move a colour, the sample is of the moved colour.
+- The manual's list of curves that sample leaves out Sat vs Lum; ours samples on all six.
+
+**Checked:**
+- Unit tests:
+  - hues either side of red span the arc through red;
+  - on a bent curve, its points kept and the new ones on it;
+  - lightness and saturation ranges held inside 0 to 1, and nothing sampled adds nothing;
+  - the Yellow and Red patches' points;
+  - each curve reads hue, saturation or lightness;
+  - a region reads only the pixels under it, a click one pixel.
+- UI test: with Hue vs Sat open, a click in the viewer puts three points on it, the middle at the
+  hue of the pixel under the pointer, and changes nothing. Then the Yellow button adds its three.
+- Mutation checks, each caught:
+  - the hue range the long way round;
+  - the points off the curve;
+  - an outer point on the wrong side;
+  - a narrower patch;
+  - Lum vs Sat reading hue;
+  - the region ignored;
+  - the sampler missing from the viewer;
+  - the buttons a vector off.
+- Not looked at by eye. At the UI tests' 1600-pixel window, the six buttons fit between the
+  palettes' names and the curve menu, but only just.
