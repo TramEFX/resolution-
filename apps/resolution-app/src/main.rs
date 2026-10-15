@@ -4,7 +4,7 @@
 //! resolution-app [--demo | --project <path.fcproj>] [--import <file>]… [--seek <seconds>]
 //!                [--mute] [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>]
 //!                [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>]
-//!                [--highlight grey|bw]
+//!                [--highlight grey|bw] [--journal <file.jsonl>]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
@@ -17,7 +17,8 @@
 //! with both) and quits. `--window-at` puts the window's top left corner at that position, in
 //! the screens' own pixels as Windows lays them out (LOG D-049): self-tests go on a screen of
 //! their own, away from the user's. `--highlight` starts with the Color page's Highlight view on
-//! (LOG D-048), flat grey or black and white, for self-tests of it.
+//! (LOG D-048), flat grey or black and white, for self-tests of it. `--journal` writes the action
+//! journal to a file as it goes: a line of JSON as each command starts and ends (LOG D-054).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
@@ -25,6 +26,7 @@ mod chrome;
 mod color_page;
 mod deliver;
 mod icons;
+mod journal;
 mod keys;
 mod model;
 mod monitor;
@@ -34,7 +36,7 @@ mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw]";
+                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw] [--journal <file>]";
 
 fn options() -> Result<(app::Options, bool, bool), String> {
     let mut o = app::Options::default();
@@ -57,6 +59,7 @@ fn options() -> Result<(app::Options, bool, bool), String> {
             "--page" => o.page = Some(value("--page")?),
             "--screenshot" => o.screenshot = Some(value("--screenshot")?.into()),
             "--window-at" => o.window_at = Some(position(&value("--window-at")?)?),
+            "--journal" => o.journal = Some(value("--journal")?.into()),
             "--highlight" => {
                 o.highlight = Some(match value("--highlight")?.as_str() {
                     "grey" | "gray" => false,

@@ -9,6 +9,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 
 use resolution_agent_link::{Call, Response, WireError};
+
+use crate::journal::{Ended, Journal, Who};
 use resolution_engine_api::{Engine, EngineEvent, Outcome, Playback};
 use serde_json::{Value, json};
 
@@ -118,18 +120,29 @@ pub struct Worker {
     tx: Sender<Request>,
     rx: Receiver<Reply>,
     handle: Option<JoinHandle<()>>,
+    /// What the engine thread ran (LOG D-054); read by tests, and by a panel to come.
+    #[cfg_attr(not(test), allow(dead_code))]
+    journal: Journal,
 }
 
 impl Worker {
-    /// Start the engine thread. `repaint` wakes the UI when replies are waiting.
-    pub fn spawn(engine: Box<dyn Engine + Send>, repaint: impl Fn() + Send + 'static) -> Self {
+    /// Start the engine thread, noting what it runs in `journal`. `repaint` wakes the UI when
+    /// replies are waiting.
+    pub fn spawn(engine: Box<dyn Engine + Send>, journal: Journal, repaint: impl Fn() + Send + 'static) -> Self {
         let (tx, requests) = mpsc::channel();
         let (replies, rx) = mpsc::channel();
+        let noted = journal.clone();
         let handle = thread::Builder::new()
             .name("engine".into())
-            .spawn(move || serve(engine, &requests, &replies, &repaint))
+            .spawn(move || serve(engine, &requests, &replies, &repaint, &noted))
             .ok();
-        Self { tx, rx, handle }
+        Self { tx, rx, handle, journal }
+    }
+
+    /// The action journal (LOG D-054).
+    #[cfg(test)]
+    pub fn journal(&self) -> &Journal {
+        &self.journal
     }
 
     pub fn run(&self, id: &str, params: Value) {
@@ -181,6 +194,7 @@ fn serve(
     requests: &Receiver<Request>,
     replies: &Sender<Reply>,
     repaint: &dyn Fn(),
+    journal: &Journal,
 ) {
     let _ = replies.send(snapshot(engine.as_mut()));
     repaint();
@@ -193,12 +207,20 @@ fn serve(
             match request {
                 Request::Quit => return,
                 Request::Run { id, params } => {
+                    let seq = journal.start(Who::User, &id, &params);
                     // A panic inside the engine fails this command; the editor keeps running.
                     let result = catch_unwind(AssertUnwindSafe(|| engine.execute(&id, params)))
                         .unwrap_or_else(|_| {
                             Err(resolution_engine_api::EngineError::Engine("the engine panicked".into()))
                         })
                         .map_err(|e| e.to_string());
+                    journal.end(
+                        seq,
+                        match &result {
+                            Ok(o) => Ended::Ok { undo: o.undo_label.clone() },
+                            Err(e) => Ended::Err(e.clone()),
+                        },
+                    );
                     if let (Some(d), Ok(o)) = (draft.as_mut(), &result) {
                         d.record(history_step(&id, &o.result, o.undo_label.as_deref(), false));
                     }
@@ -212,6 +234,18 @@ fn serve(
                         Call::Redo => Some(("edit.redo".to_string(), false)),
                         _ => None,
                     };
+                    // what the agent asked, for the journal: its commands and frames, not its polling
+                    let noted = match &call {
+                        Call::Execute { id, params } => Some((id.clone(), params.clone())),
+                        Call::Undo => Some(("edit.undo".to_string(), Value::Null)),
+                        Call::Redo => Some(("edit.redo".to_string(), Value::Null)),
+                        Call::RenderFrame { at_seconds, max_side } => Some((
+                            "(render a frame)".to_string(),
+                            json!({ "at_seconds": at_seconds, "max_side": max_side }),
+                        )),
+                        _ => None,
+                    };
+                    let seq = noted.map(|(id, params)| journal.start(Who::Agent, &id, &params));
                     let response = if call == Call::DrainEvents {
                         Response::Ok(serde_json::to_value(std::mem::take(&mut agent_events)).unwrap_or_default())
                     } else if let Call::Execute { id, params } = call {
@@ -223,6 +257,16 @@ fn serve(
                     if let (Some((id, outcome)), Some(d), Response::Ok(v)) = (&history, draft.as_mut(), &response) {
                         let result = if *outcome { &v["result"] } else { v };
                         d.record(history_step(id, result, v["undo_label"].as_str(), true));
+                    }
+                    if let Some(seq) = seq {
+                        journal.end(
+                            seq,
+                            match &response {
+                                Response::Ok(v) => Ended::Ok { undo: v["undo_label"].as_str().map(str::to_string) },
+                                Response::Err(e) if e.why.is_empty() => Ended::Err(e.what.clone()),
+                                Response::Err(e) => Ended::Err(format!("{}: {}", e.what, e.why)),
+                            },
+                        );
                     }
                     let edits = history.is_some();
                     if edits {
@@ -243,7 +287,17 @@ fn serve(
                 }
                 Request::Decide { accept } => {
                     if let Some(d) = draft.take() {
-                        let (message, error) = match decide(engine.as_mut(), &d, accept) {
+                        let what = if accept { "(accept the agent's draft)" } else { "(reject the agent's draft)" };
+                        let seq = journal.start(Who::User, what, &json!({ "draft": d.draft }));
+                        let decided = decide(engine.as_mut(), &d, accept);
+                        journal.end(
+                            seq,
+                            match &decided {
+                                Ok(()) => Ended::Ok { undo: None },
+                                Err(e) => Ended::Err(e.to_string()),
+                            },
+                        );
+                        let (message, error) = match decided {
                             Ok(()) if accept => (format!("Accepted the agent's draft of {}", d.name), false),
                             Ok(()) => (format!("Rejected the agent's draft of {}", d.name), false),
                             Err(e) => (format!("The agent's draft: {e}"), true),
@@ -407,7 +461,7 @@ mod tests {
 
     #[test]
     fn runs_commands_off_the_ui_thread_and_hands_out_playback() {
-        let w = Worker::spawn(Box::new(FilmCraftEngine::new()), || {});
+        let w = Worker::spawn(Box::new(FilmCraftEngine::new()), Journal::in_memory(), || {});
         w.run("raw.filmcraft/file.openDemoProject", json!({}));
         let playback = wait_for(&w, |r| match r {
             Reply::Snapshot { timeline: Some(_), playback: Some(p), .. } => Some(p),

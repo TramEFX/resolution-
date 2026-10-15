@@ -141,6 +141,6 @@ directions are the first candidates.
 
 ## Tools
 
-- [ ] **Action journal** (D-034, Truman's idea): every command, who sent it, how long it ran and
-      how it ended, live in a panel, savable for bug reports, readable by agents; for finding
-      failures and freezes. Build it when testing and debugging features begins in earnest.
+- [x] **Action journal, its core** (D-034, D-054): every command, who sent it, how long it ran and
+      how it ended, noted by the engine thread; `--journal` writes it to a file as it goes
+- [ ] The journal live in a panel, and readable by agents (D-054 sets out the options)

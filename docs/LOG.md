@@ -91,7 +91,7 @@ doc is updated *and* the entry says which section moved.
 | D-031 | 2026-10-14 | color | Windows: Linear and Circle windows on a node, compiled to FilmCraft effect masks | active |
 | D-032 | 2026-10-14 | color | Qualifiers: baked into a 3D LUT for now; real key masks in our own GPU renderer are the goal | done (built: D-033; real keys: D-036, D-044) |
 | D-033 | 2026-10-14 | color | The qualifier as built: Resolve's HSL ranges, a qualified node baked into a 33-point project LUT | active (the LUT: the compile's only since D-044) |
-| D-034 | 2026-10-14 | tools | An action journal: every command, who sent it, how long it took and how it ended, for finding failures and freezes | planned |
+| D-034 | 2026-10-14 | tools | An action journal: every command, who sent it, how long it took and how it ended, for finding failures and freezes | built in part: D-054 |
 | D-035 | 2026-10-14 | color | Our own GPU renderer: the viewer's frames, with Resolution's grade math run exactly on the GPU | active (G1 to G3 built: D-036 to D-042) |
 | B-034 | 2026-10-14 | color | The GPU renderer blended 8-bit sRGB pixels before decoding them: enlarged pictures went dark between pixels | fixed |
 | B-035 | 2026-10-14 | color | The GPU renderer drew 8-bit camera video about one code value too red and too blue | fixed |
@@ -118,6 +118,7 @@ doc is updated *and* the entry says which section moved.
 | D-052 | 2026-10-14 | color | The Gradient window: the picture divided by a line, the side above it keyed | active |
 | B-040 | 2026-10-14 | color | Soft windows in the Lumetri compile stray from the grade's math at their soft edge | known (compile only) |
 | D-053 | 2026-10-14 | color | The Polygon window: corners in the window's own space, edited on screen | active (point format provisional, for Truman's review) |
+| D-054 | 2026-10-14 | tools | The action journal's core: the engine thread notes every command; `--journal` writes it to a file | active (panel and agents' access: for Truman) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3013,3 +3014,38 @@ outside softness for polygons.
   1.0.
 - UI test: Add Polygon, a corner dragged out, a click on the surface adds a fifth on the bottom
   side, and a middle click removes it.
+
+### D-054 — The action journal's core: the engine thread notes every command; `--journal` writes it to a file
+**Area:** tools · **Status:** active; its panel and agents' access wait for Truman · **Doc:**
+`apps/resolution-app/src/journal.rs`; `worker.rs`; HANDOFF §2
+
+**Decision:** D-034's journal, the part that needs no new command id:
+- **What it notes:** the engine thread notes every command it runs, with who sent it, when it
+  started, how long it ran, and how it ended (its undo step, or its error).
+  - From the user: every vocabulary command.
+  - From agents: their commands, undo, redo and frame renders, but not their polling.
+  - The user's accepting or rejecting an agent's draft, described in brackets.
+- **Where:** the newest 2000 entries are kept in memory. With `--journal <file>`, each start and
+  each end is also written as a line of JSON and flushed at once. A freeze leaves a start without
+  an end, and the file stays current if the editor stops. Parameters are written in full to the
+  file and cut to 400 characters in memory.
+
+**Why only the core:** a panel showing it needs a front-end id to open it, and agents reading it
+over MCP need a query id or a tool parameter. Both are stable API (invariant 4), so they are
+options for Truman (the overnight run's rule):
+1. `workspace.journal` (a floating panel, live, with Save) and `journal.read` (a query: the last N
+   entries, or those since a number);
+2. the same panel without an id, as a debug tool, and agents given the file's path instead;
+3. no panel: the file only.
+
+The first is the recommendation: it keeps every action a command, and agents debugging the editor
+see what the user sees.
+
+**Checked:**
+- Unit tests: a start and an end noted as they happen, in memory and as lines of the file, an
+  unfinished command left open, an error, the newest 2000 kept, long parameters cut.
+- UI tests: the demo's opening and two commands noted as the user's, one ending in an error; an
+  agent's `color.adjust` noted as the agent's, with its undo step. With the user's commands noted
+  as the agent's, the test fails.
+- A two-second `--play` of the demo on the second screen with `--journal`: the file has the
+  demo's opening (3 ms) and the stop's `playhead.set`, each with its start and end.

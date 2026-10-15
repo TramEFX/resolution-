@@ -28,6 +28,7 @@ use crate::chrome::{self, State};
 use crate::color_page::{self, ColorPage, ScopeView, Thumbs};
 use crate::deliver::{self, Deliver};
 use crate::icons::Icon;
+use crate::journal::Journal;
 use crate::model::{self, GradeView, Kind, MediaItem, SourceClip, Timeline};
 use crate::monitor::{Monitor, Shown, Sound};
 use crate::theme::{self, Look, Theme};
@@ -73,6 +74,9 @@ pub struct Options {
     /// Start with the Highlight view on, `true` in black and white (`--highlight`, for
     /// self-tests; LOG D-048).
     pub highlight: Option<bool>,
+    /// Also write the action journal to this file, a line of JSON per start and end
+    /// (`--journal`, LOG D-054).
+    pub journal: Option<PathBuf>,
 }
 
 /// Commands that run at the frame on screen without stopping playback.
@@ -202,7 +206,16 @@ impl ResolutionApp {
         let ctx = cc.egui_ctx.clone();
         let engine = FilmCraftEngine::new();
         let scopes = engine.scopes();
-        let worker = Worker::spawn(Box::new(engine), move || ctx.request_repaint());
+        // the action journal (LOG D-054); a file that cannot be made leaves it in memory
+        let (journal, journal_problem) = match options.journal.as_deref().map(|p| (p, Journal::new(Some(p)))) {
+            None => (Journal::in_memory(), None),
+            Some((_, Ok(j))) => (j, None),
+            Some((p, Err(e))) => (Journal::in_memory(), Some(format!("No journal file at {}: {e}", p.display()))),
+        };
+        if let Some(problem) = &journal_problem {
+            eprintln!("{problem}");
+        }
+        let worker = Worker::spawn(Box::new(engine), journal, move || ctx.request_repaint());
         if options.demo {
             worker.run("raw.filmcraft/file.openDemoProject", json!({}));
         }
@@ -2764,6 +2777,14 @@ mod tests {
         pump(&mut h, "the draft, graded, on the Color page", |a| {
             a.draft.is_some() && a.color.current().is_some_and(|n| n.saturation == 70.0)
         });
+        // the journal has the agent's command, with its undo step (LOG D-054)
+        let noted = h.state().worker.journal().entries();
+        assert!(
+            noted.iter().any(|e| e.who == crate::journal::Who::Agent
+                && e.command == "color.adjust"
+                && matches!(&e.ended, Some((_, crate::journal::Ended::Ok { undo: Some(_) })))),
+            "{noted:?}"
+        );
         // the user decides here, without going back to the Edit page
         click(&mut h, "Reject Draft");
         pump(&mut h, "the original back, ungraded", |a| {
@@ -2860,6 +2881,25 @@ mod tests {
         }
         h.step();
         pump(&mut h, "four corners again", |a| points(a).len() == 4);
+    }
+
+    #[test]
+    fn the_journal_notes_each_command_who_sent_it_and_how_it_ended() {
+        use crate::journal::{Ended, Who};
+        let mut h = demo();
+        h.state().worker.run("playhead.set", json!({ "frame": 12 }));
+        h.state().worker.run("timeline.noSuchCommand", json!({}));
+        let ended = |a: &ResolutionApp, id: &str| {
+            a.worker.journal().entries().into_iter().find(|e| e.command == id).and_then(|e| e.ended)
+        };
+        pump(&mut h, "both commands ended", |a| {
+            ended(a, "playhead.set").is_some() && ended(a, "timeline.noSuchCommand").is_some()
+        });
+        assert!(matches!(ended(h.state(), "playhead.set"), Some((ms, Ended::Ok { .. })) if ms >= 0.0));
+        assert!(matches!(ended(h.state(), "timeline.noSuchCommand"), Some((_, Ended::Err(_)))));
+        let entries = h.state().worker.journal().entries();
+        assert!(entries.iter().all(|e| e.who == Who::User));
+        assert_eq!(entries[0].command, "raw.filmcraft/file.openDemoProject", "the demo opened first, as a command");
     }
 
     #[test]
