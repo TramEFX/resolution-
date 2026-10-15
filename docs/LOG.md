@@ -128,6 +128,7 @@ doc is updated *and* the entry says which section moved.
 | D-060 | 2026-10-14 | engine | Fit to Fill: the source retimed to fill the timeline's In to Out | active |
 | D-061 | 2026-10-15 | color | The Curve window: a closed Catmull-Rom curve through its points | active (format with D-053's, provisional) |
 | D-062 | 2026-10-15 | color | The Highlight view for clips graded at their source, and frames FilmCraft draws itself | active |
+| B-042 | 2026-10-15 | ui | The timeline did not show transitions | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3329,3 +3330,33 @@ black and white with a node that keys everything:
 - on the GPU path and in FilmCraft's own render, over 1000 pixels changed, at least nine in ten
   of them white;
 - with the highlight not handed to the source, nothing changed and the test fails.
+
+### B-042 — The timeline did not show transitions
+**Area:** ui · **Status:** fixed · **Caught by:** rehearsing the one-minute edit (below), then
+by eye on the second screen
+
+**Symptom:** a dissolve added with Add Video Only Transition was there in the engine's timeline,
+but the Edit page drew nothing. The demo's four transitions on V1 were never shown either.
+
+**Cause:** the model read each track's clips but not its transitions, and the timeline drew none.
+
+**Fix:** each track keeps its transitions (start, end, the effect's name: "Cross Dissolve" for
+`cross_dissolve`). The timeline draws them over their cuts: a box with a diagonal, named when
+there is room. The box sits in the lower part of the lane so the clips' names stay readable.
+Seeing them is all for now: selecting a transition to change or delete it is not built.
+
+**The rehearsal:** the one-minute edit (ROADMAP step 2's bar) run through the engine with the
+Sony and Samsung clips (`scripts/rehearse-edit.py`):
+- a new timeline at 23.976;
+- ranges marked in the source viewer, then Insert, Overwrite, Append at End, Place on Top (a
+  cutaway on V2, its sound on A2) and an Insert mid-timeline;
+- two splits and a ripple delete of the second between;
+- a 12-frame ripple trim and a 6-frame roll, both by the frame;
+- a dissolve, a marker, undo and redo;
+- Deliver to H.264 1080p.
+
+All 19 steps worked. A1 followed V1 exactly. The file is 799 frames, 33.3 s of 1920 × 1080 H.264
+with AAC sound, as long as the timeline. Only the missing transitions turned up.
+
+**Checked:** UI test: the demo's four V1 transitions in the model, the dissolve at 4.46 to 5.46 s.
+By eye: the demo's transitions on V1 and its audio crossfade on A1, the clips' names readable.

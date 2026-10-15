@@ -3006,6 +3006,21 @@ mod tests {
         });
     }
 
+    /// The timeline shows transitions (LOG B-042): the demo's, from the engine's timeline.
+    #[test]
+    fn the_timeline_has_the_demos_transitions() {
+        let h = demo();
+        let tl = h.state().timeline.clone().expect("the demo timeline");
+        let v1 = &tl.video[0].transitions;
+        assert_eq!(v1.len(), 4, "a dip in, a dissolve, a dip out and a Push: {v1:?}");
+        assert!(
+            v1.iter()
+                .any(|x| x.name == "Cross Dissolve" && (x.start - 4.46).abs() < 0.05 && (x.end - 5.46).abs() < 0.05),
+            "{v1:?}"
+        );
+        assert!(v1.iter().any(|x| x.name == "Push"), "{v1:?}");
+    }
+
     #[test]
     fn a_gradient_window_is_added_without_a_size() {
         let mut h = on_color_page();

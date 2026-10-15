@@ -289,6 +289,21 @@ pub fn show(
                 placed.push(Placed { row: n, track, clip: c, rect: shown });
             }
         }
+        // transitions over their cuts: a box with a diagonal, named when there is room, in the lower
+        // part of the lane so the clips' names stay readable (LOG B-042)
+        for x in &track.transitions {
+            let (x0, x1) = (x_of(x.start).max(lane_x), x_of(x.end).min(lane.right()));
+            if x1 <= x0 {
+                continue;
+            }
+            let r = Rect::from_x_y_ranges(x0..=x1, (lane.top() + lane.height() * 0.42)..=(lane.bottom() - 5.0));
+            painter.rect_filled(r, look.radius(), t.panel.gamma_multiply(0.85));
+            painter.rect_stroke(r, look.radius(), Stroke::new(1.0, t.text), egui::StrokeKind::Inside);
+            painter.line_segment([r.left_bottom(), r.right_top()], Stroke::new(1.0, t.dim));
+            if r.width() > 70.0 {
+                painter.text(r.center(), Align2::CENTER_CENTER, &x.name, look.small(), t.text);
+            }
+        }
         if track.locked {
             hatch(&painter.with_clip_rect(*lane), *lane, t.line);
         }
