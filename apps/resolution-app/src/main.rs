@@ -4,6 +4,7 @@
 //! resolution-app [--demo | --project <path.fcproj>] [--import <file>]… [--seek <seconds>]
 //!                [--mute] [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>]
 //!                [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>]
+//!                [--highlight grey|bw]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
@@ -15,7 +16,8 @@
 //! quits; `--screenshot` saves the window as a PNG once a frame is on screen (after the play test,
 //! with both) and quits. `--window-at` puts the window's top left corner at that position, in
 //! the screens' own pixels as Windows lays them out (LOG D-049): self-tests go on a screen of
-//! their own, away from the user's.
+//! their own, away from the user's. `--highlight` starts with the Color page's Highlight view on
+//! (LOG D-048), flat grey or black and white, for self-tests of it.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
@@ -32,7 +34,7 @@ mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>]";
+                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw]";
 
 fn options() -> Result<(app::Options, bool, bool), String> {
     let mut o = app::Options::default();
@@ -55,6 +57,13 @@ fn options() -> Result<(app::Options, bool, bool), String> {
             "--page" => o.page = Some(value("--page")?),
             "--screenshot" => o.screenshot = Some(value("--screenshot")?.into()),
             "--window-at" => o.window_at = Some(position(&value("--window-at")?)?),
+            "--highlight" => {
+                o.highlight = Some(match value("--highlight")?.as_str() {
+                    "grey" | "gray" => false,
+                    "bw" => true,
+                    other => return Err(format!("--highlight: `{other}` is not grey or bw")),
+                })
+            }
             other => return Err(format!("unknown argument `{other}`")),
         }
     }

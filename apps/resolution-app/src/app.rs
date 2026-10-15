@@ -70,6 +70,9 @@ pub struct Options {
     /// Move the window here once it is open: its top left corner, in the screen's own pixels
     /// (`--window-at`, LOG D-049).
     pub window_at: Option<[f32; 2]>,
+    /// Start with the Highlight view on, `true` in black and white (`--highlight`, for
+    /// self-tests; LOG D-048).
+    pub highlight: Option<bool>,
 }
 
 /// Commands that run at the frame on screen without stopping playback.
@@ -244,7 +247,11 @@ impl ResolutionApp {
             _agent_link: agent_link,
             draft: None,
             deliver: Deliver::new(),
-            color: ColorPage::default(),
+            color: {
+                let mut c = ColorPage::default();
+                c.highlight = options.highlight;
+                c
+            },
             thumbs: {
                 let ctx = cc.egui_ctx.clone();
                 Thumbs::new(move || ctx.request_repaint())
