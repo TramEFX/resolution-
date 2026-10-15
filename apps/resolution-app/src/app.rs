@@ -2292,6 +2292,29 @@ mod tests {
         assert_eq!(h.state().active, Viewer::Timeline);
     }
 
+    /// Shift+F12 appends the source to the end of the timeline, and F12 places it on top (LOG
+    /// D-059): Resolve's keys, through the engine.
+    #[test]
+    fn shift_f12_appends_and_f12_places_on_top() {
+        let mut h = demo();
+        let item = h.state().media.iter().find(|m| m.name == "City_Night_Drive.mp4").cloned().expect("demo clip");
+        h.state_mut().open_media(&item);
+        pump(&mut h, "the clip in the source viewer", |a| a.source_clip.is_some() && a.source_viewer.program.is_some());
+        let clips = v1_clips(h.state());
+        h.key_press_modifiers(Modifiers::SHIFT, Key::F12);
+        pump(&mut h, "a clip appended on V1", |a| v1_clips(a) == clips + 1);
+        // the whole clip, 14 s: V2's clip is in its way, so it goes on the first free track above
+        let above = |a: &ResolutionApp| {
+            a.timeline.as_ref().map_or(0, |t| t.video.iter().skip(1).map(|tr| tr.clips.len()).sum::<usize>())
+        };
+        let before = above(h.state());
+        h.state().worker.run("playhead.set", json!({ "seconds": 1.0 }));
+        pump(&mut h, "the playhead at a second", |a| a.timeline.as_ref().is_some_and(|t| t.playhead_frame < 30));
+        h.key_press(Key::F12);
+        pump(&mut h, "a clip placed on a track above V1", |a| above(a) == before + 1);
+        assert_eq!(v1_clips(h.state()), clips + 1, "V1 as it was");
+    }
+
     #[test]
     fn the_source_viewer_plays_on_its_own() {
         let mut h = demo();

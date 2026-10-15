@@ -68,12 +68,13 @@ read, never copied into the repo.
 - [x] **Step 2:** source viewer next to the record viewer with In/Out and F9/F10 (D-021); track
       headers (D-019); trimming by drag in Selection and Trim modes (D-020); snapping; zoom and
       scrolling (D-023); audio waveforms (D-022); markers on the ruler; New Timeline (D-024).
-      F11 (replace) and F12 (place on top) remain, under the edit types below.
+      F11 to F12 and the Shift edits are below (D-059).
 - [ ] **Step 2's bar:** Truman cuts a one-minute piece from the Sony and Samsung clips
 - [x] **Step 3:** minimal Deliver page: presets, a render queue and Render All over the engine's
       export (`deliver.render`, D-025)
-- [ ] Resolve edit types the engine lacks: place on top, ripple overwrite, fit to fill,
-      append at end, replace; Trim mode semantics; dynamic trim
+- [x] Resolve's Replace (F11), Place on Top (F12), Ripple Overwrite (Shift+F10) and Append at End
+      (Shift+F12), composed from FilmCraft's commands (D-059)
+- [ ] Fit to Fill (Shift+F11); Trim mode semantics; dynamic trim
 - [ ] Faster playback where it is slow: frames are composited on the GPU since D-036 to D-038;
       standard effects on the GPU (D-041), proxies for footage too slow to decode (D-013 "Known
       limits")
