@@ -348,6 +348,7 @@ struct StagePipelines {
     blur: wgpu::RenderPipeline,
     node: wgpu::RenderPipeline,
     highlight: wgpu::RenderPipeline,
+    luma: wgpu::RenderPipeline,
 }
 
 /// A texture drawn into.
@@ -470,6 +471,7 @@ impl Renderer {
             blur: full("blur", "fs_blur"),
             node: full("node", "fs_node"),
             highlight: full("highlight", "fs_highlight"),
+            luma: full("luma", "fs_luma"),
         };
         let dummy = device
             .create_texture(&wgpu::TextureDescriptor {
@@ -870,9 +872,9 @@ impl Renderer {
         }
     }
 
-    /// Records the grade stage of `l` (LOG D-046), when its grade has a node whose qualifier cleans
-    /// its key over the picture (Denoise, Blur Radius), or the layer is shown in the Highlight
-    /// view (D-048): the layer drawn at its working size (as big as it shows, at most its own size)
+    /// Records the grade stage of `l` (LOG D-046), when its grade has a node that needs a pixel's
+    /// neighbours (a qualifier cleaned over the picture, Denoise or Blur Radius; Midtone Detail,
+    /// D-055), or the layer is shown in the Highlight view (D-048): the layer drawn at its working size (as big as it shows, at most its own size)
     /// as straight, display-encoded colour, then graded node by node, each node's matte made in a
     /// mask first where it needs one (and the highlighted node's, kept for the last pass). The
     /// graded texture and its size; `None` for a layer graded as it is composited.
@@ -887,8 +889,7 @@ impl Renderer {
         let active = active_nodes(grade, highlight.map(|h| h.node));
         // the highlighted node among those drawn
         let lit = highlight.and_then(|h| active.iter().position(|(i, _)| *i == h.node));
-        if lit.is_none() && !active.iter().any(|(_, n)| n.keyed().is_some_and(resolution_grade::Qualifier::is_spatial))
-        {
+        if lit.is_none() && !active.iter().any(|(_, n)| n.is_spatial()) {
             return None;
         }
         let [a, b, c, d, ..] = l.matrix;
@@ -990,7 +991,21 @@ impl Renderer {
             }
             let from_mask = if spatial.is_some() { 1.0 } else { 0.0 };
             let m = if spatial.is_some() { &mask.view } else { dummy };
-            run(enc, &self.stage.node, &next, [&image.view, m, dummy, dummy], u([node, 0.0, 0.0, from_mask]), 3);
+            // Midtone Detail (LOG D-055): the node's input luma, blurred across and down
+            let mut detail = None;
+            if n.midtone_detail != 0.0 {
+                let (mut a, mut b) = (self.target(size, ACCUM_FORMAT, usage), self.target(size, ACCUM_FORMAT, usage));
+                run(enc, &self.stage.luma, &a, [&image.view, dummy, dummy, dummy], u([node, 0.0, 0.0, 0.0]), 3);
+                let sigma = resolution_grade::Node::detail_sigma(ww as usize);
+                for axis in [0.0, 1.0] {
+                    run(enc, &self.stage.blur, &b, [dummy, &a.view, dummy, dummy], u([node, axis, sigma, 0.0]), 3);
+                    std::mem::swap(&mut a, &mut b);
+                }
+                detail = Some(a);
+            }
+            let d = detail.as_ref().map_or(dummy, |t: &Target| &t.view);
+            let g0 = [node, n.midtone_detail / 100.0, resolution_grade::DETAIL_EDGE, from_mask];
+            run(enc, &self.stage.node, &next, [&image.view, m, d, dummy], u(g0), 3);
             std::mem::swap(&mut image, &mut next);
             if lit == Some(i) && spatial.is_some() {
                 held = Some(std::mem::replace(&mut mask, self.target(size, ACCUM_FORMAT, usage)));

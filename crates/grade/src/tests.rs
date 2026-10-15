@@ -569,3 +569,54 @@ fn a_polygon_window_keeps_three_to_128_corners_and_other_shapes_none() {
     assert_eq!(window(json!(many), "polygon").points.len(), MAX_POLYGON_POINTS);
     assert!(window(json!([[0.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]), "circle").points.is_empty());
 }
+
+#[test]
+fn shadows_and_highlights_move_the_ends_and_keep_black_white_and_mid_grey() {
+    let ramp: Vec<f32> = (0..=200).map(|i| i as f32 / 200.0).collect();
+    for (s, h) in [(100.0, 0.0), (-100.0, 0.0), (0.0, 100.0), (0.0, -100.0), (60.0, -40.0)] {
+        let n = node(json!({ "shadows": s, "highlights": h }));
+        assert!(!n.is_neutral() && !n.is_spatial());
+        let out: Vec<f32> = ramp.iter().map(|x| n.tone(0, *x)).collect();
+        assert!(close(out[0], 0.0, 1e-6) && close(out[100], 0.5, 1e-6) && close(out[200], 1.0, 1e-6), "{s} {h}");
+        assert!(out.windows(2).all(|p| p[1] >= p[0] - 1e-6), "rising, at Shadows {s} and Highlights {h}");
+    }
+    // raised Shadows lighten the dark tones, most a third of the way to mid grey
+    let n = node(json!({ "shadows": 100.0 }));
+    assert!(close(n.tone(0, 1.0 / 6.0), 1.0 / 6.0 + 0.5 / 3.0 * 4.0 / 9.0, 1e-5));
+    assert!(close(n.tone(0, 0.8), 0.8, 1e-6), "the highlights untouched");
+    // lowered Highlights pull the light tones down
+    assert!(node(json!({ "highlights": -100.0 })).tone(0, 0.85) < 0.8);
+}
+
+#[test]
+fn midtone_detail_sharpens_an_edge_and_lowered_softens_only_faint_detail() {
+    // a dark and a light half, with a faint ripple on the dark one
+    let (w, h) = (400usize, 8usize);
+    let px: Vec<[f32; 3]> = (0..w * h)
+        .map(|i| {
+            let x = i % w;
+            let v = if x < 200 { 0.35 + 0.01 * ((x % 4) as f32 - 1.5) } else { 0.65 };
+            [v; 3]
+        })
+        .collect();
+    let row = |p: &[[f32; 3]], x: usize| p[4 * w + x][0];
+    let up = Grade { nodes: vec![node(json!({ "midtone_detail": 100.0 }))] };
+    assert!(up.nodes[0].is_spatial() && !up.nodes[0].is_neutral());
+    let mut sharp = px.clone();
+    up.apply_image(&mut sharp, w, h);
+    assert!(
+        row(&sharp, 197) < row(&px, 197) - 0.01 && row(&sharp, 202) > row(&px, 202) + 0.01,
+        "more contrast at the edge"
+    );
+    assert!((row(&sharp, 390) - row(&px, 390)).abs() < 1e-3, "flat far from it");
+    // per pixel it is left out
+    assert_eq!(up.apply(px[0]), px[0]);
+    let down = Grade { nodes: vec![node(json!({ "midtone_detail": -100.0 }))] };
+    let mut soft = px.clone();
+    down.apply_image(&mut soft, w, h);
+    let ripple = |p: &[[f32; 3]]| {
+        (100..104).map(|x| row(p, x)).fold(0.0f32, f32::max) - (100..104).map(|x| row(p, x)).fold(1.0f32, f32::min)
+    };
+    assert!(ripple(&soft) < ripple(&px) * 0.8, "the faint ripple softened: {} from {}", ripple(&soft), ripple(&px));
+    assert!((row(&soft, 205) - row(&px, 205)).abs() < 0.01, "the strong edge's side kept");
+}

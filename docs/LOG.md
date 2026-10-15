@@ -119,6 +119,8 @@ doc is updated *and* the entry says which section moved.
 | B-040 | 2026-10-14 | color | Soft windows in the Lumetri compile stray from the grade's math at their soft edge | known (compile only) |
 | D-053 | 2026-10-14 | color | The Polygon window: corners in the window's own space, edited on screen | active (point format provisional, for Truman's review) |
 | D-054 | 2026-10-14 | tools | The action journal's core: the engine thread notes every command; `--journal` writes it to a file | active (panel and agents' access: for Truman) |
+| D-055 | 2026-10-14 | color | Primaries: Shadows, Highlights and Midtone Detail | active |
+| D-056 | 2026-10-14 | color | Deliver's speed checked after B-038's fix: unchanged | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3049,3 +3051,67 @@ see what the user sees.
   as the agent's, the test fails.
 - A two-second `--play` of the demo on the second screen with `--journal`: the file has the
   demo's opening (3 ms) and the stop's `playhead.set`, each with its start and end.
+
+### D-055 — Primaries: Shadows, Highlights and Midtone Detail
+**Area:** color · **Status:** active · **Doc:** `crates/grade` (`shadows_highlights`,
+`Node::detailed`, `Node::is_spatial`); `crates/renderer` (the grade stage, `fs_luma`, `fs_node`);
+`apps/resolution-app/src/color_page.rs`
+
+**Decision:** three of the Primaries palette's adjustment-bar controls Resolve has and we did not,
+each -100 to 100 with 0 neutral, as the Reference Manual gives them. Each is a new node field,
+written only when set, so older grades load and save unchanged.
+
+- **Shadows and Highlights** move the darkest and the lightest tones while black, white and mid
+  grey stay.
+  - Below mid grey, a tone moves by Shadows / 100 × 0.5·t·(1 − t)², with t its distance from
+    black over the distance to mid grey. That is most a third of the way up: 0.074 at full
+    Shadows. Above mid grey, the same mirrored from white, by Highlights.
+  - Every value in range keeps the tone function rising.
+  - They are part of each channel's tone function, after Contrast and before the curves. So the
+    GPU's tables, the Lumetri compile and the math all have them with nothing more.
+  - Our formulas follow the manual's description; Resolve's are unknown.
+- **Midtone Detail** is local contrast.
+  - The node's input luma minus that luma blurred (a Gaussian, 10 pixels at 1920 wide, in
+    proportion) is added to each channel by Midtone Detail / 100, weighted towards the midtones by
+    4·l·(1 − l).
+  - Lowered, it pulls towards the blur, less where there is more detail and not at all past 0.08,
+    so low-detail regions soften and edges stay, as the manual says.
+  - It needs a pixel's neighbours: it runs in the GPU's grade stage (D-046), as a luma pass and
+    two blur passes before the node's pass. It is left out of `Node::apply` (pixel by pixel), of
+    the Lumetri compile and of a qualified node's table, as Denoise is.
+- **On the page:** Mid/Detail (Resolve's label) at the end of the top bar; Shadows and Highlights
+  between Color Boost and Saturation on the bottom one; Reset Primaries resets them too.
+
+**Not built:** Lum Mix. It sets how Y-only and YRGB adjustments mix, and our wheels' master and
+channel adjustments are not kept apart that way.
+
+**Checked:**
+- Grade tests: black, white and mid grey kept and the tone rising at every extreme; the peak
+  value; lowered Highlights darken near white. Midtone Detail sharpens an edge and leaves flat
+  regions; per pixel it does nothing; lowered, it softens a faint ripple and keeps the strong edge.
+- Renderer tests: Shadows and Highlights on noise within 1 code value of the math. Midtone Detail
+  at ±80 against `Grade::apply_image` within 0.94 and 1.01, and clearly different from the grade
+  without it. With its sign flipped in the shader, the test fails.
+- Compile test: Shadows and Highlights through FilmCraft's render, within 1 code value.
+- UI test: the three dragged through the engine.
+- By eye on the second screen: the Sony clip with Shadows 60, Highlights -40 and Midtone Detail
+  80: shadow detail lifted and edges crisper, subtle as they should be; the bars' labels fit.
+
+### D-056 — Deliver's speed checked after B-038's fix: unchanged
+**Area:** color · **Status:** active · **Doc:** B-038
+
+**Decision:** keep `apart` (B-038). It starts a thread for each export frame and runs the
+frame's work on a pool of its own, so its cost needed measuring.
+
+**Measured, 2026-10-14 (overnight), this PC:** 10 s (241 frames) of the Sony clip graded
+(Saturation 70, Gain 1.1, Lift 0.02) to H.264 1080p through the CLI, three runs each:
+
+| Build | Export |
+|---|---|
+| main, with `apart` | 17.1 to 17.3 s |
+| main, `apart` bypassed | 17.1 to 17.4 s |
+| D-045's commit, before B-038 | 17.6 to 17.9 s |
+
+`apart` costs nothing measurable. All three are slower than D-045's 13.6 s for "the graded Sony
+clip". That figure's exact grade is not recorded, and other programs (OBS, Reaper) were running
+tonight. D-045's own build was as slow, so the gap is not a regression.

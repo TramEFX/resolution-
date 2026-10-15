@@ -171,15 +171,19 @@ struct FieldSpec {
     decimals: usize,
 }
 
-const TOP_BAR: [FieldSpec; 4] = [
+const TOP_BAR: [FieldSpec; 5] = [
     FieldSpec { name: "Temp", key: "temp", step: 10.0, decimals: 1 },
     FieldSpec { name: "Tint", key: "tint", step: 0.5, decimals: 2 },
     FieldSpec { name: "Contrast", key: "contrast", step: 0.005, decimals: 3 },
     FieldSpec { name: "Pivot", key: "pivot", step: 0.002, decimals: 3 },
+    // Midtone Detail, as Resolve's bar names it (LOG D-055)
+    FieldSpec { name: "Mid/Detail", key: "midtone_detail", step: 0.5, decimals: 2 },
 ];
 
-const BOTTOM_BAR: [FieldSpec; 3] = [
+const BOTTOM_BAR: [FieldSpec; 5] = [
     FieldSpec { name: "Color Boost", key: "color_boost", step: 0.5, decimals: 2 },
+    FieldSpec { name: "Shadows", key: "shadows", step: 0.5, decimals: 2 },
+    FieldSpec { name: "Highlights", key: "highlights", step: 0.5, decimals: 2 },
     FieldSpec { name: "Saturation", key: "saturation", step: 0.25, decimals: 2 },
     FieldSpec { name: "Hue", key: "hue", step: 0.25, decimals: 2 },
 ];
@@ -191,14 +195,17 @@ fn field_value(n: &Node, key: &str) -> f32 {
         "contrast" => n.contrast,
         "pivot" => n.pivot,
         "color_boost" => n.color_boost,
+        "shadows" => n.shadows,
+        "highlights" => n.highlights,
+        "midtone_detail" => n.midtone_detail,
         "saturation" => n.saturation,
         _ => n.hue,
     }
 }
 
-/// The Primaries palette in Wheels mode: Temp, Tint, Contrast and Pivot above; the Lift, Gamma,
-/// Gain and Offset wheels, each with its master ring and YRGB numbers; Color Boost, Saturation
-/// and Hue below.
+/// The Primaries palette in Wheels mode: Temp, Tint, Contrast, Pivot and Midtone Detail above;
+/// the Lift, Gamma, Gain and Offset wheels, each with its master ring and YRGB numbers; Color
+/// Boost, Shadows, Highlights, Saturation and Hue below.
 pub fn primaries(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let mut asks = Vec::new();
     let header = chrome::panel_header(ui, look, "Primaries - Color Wheels", None);
@@ -209,10 +216,24 @@ pub fn primaries(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     if chrome::header_button(ui, look, header, crate::icons::Icon::Reset, "Reset Primaries") {
         let d = serde_json::to_value(Node::default()).unwrap_or_default();
         let mut controls = Map::new();
-        for k in
-            ["lift", "gamma", "gain", "offset", "contrast", "pivot", "saturation", "hue", "color_boost", "temp", "tint"]
-        {
-            controls.insert(k.to_string(), d[k].clone());
+        for k in [
+            "lift",
+            "gamma",
+            "gain",
+            "offset",
+            "contrast",
+            "pivot",
+            "saturation",
+            "hue",
+            "color_boost",
+            "temp",
+            "tint",
+            "shadows",
+            "highlights",
+            "midtone_detail",
+        ] {
+            // (the controls added later are not written while neutral: 0)
+            controls.insert(k.to_string(), d.get(k).cloned().unwrap_or(json!(0.0)));
         }
         page.adjust(&mut asks, Value::Object(controls));
     }

@@ -610,3 +610,38 @@ fn a_polygon_window_limits_the_grade_to_its_corners() {
     assert!(at(&out, 100, 30) < 3 && at(&out, 100, 92) < 3, "black inside, turned");
     assert!(at(&out, 80, 90).abs_diff(128) <= 1 && at(&out, 100, 70).abs_diff(128) > 100, "outside, turned");
 }
+
+/// Shadows and Highlights (LOG D-055) are in the tone functions: on the GPU as their math.
+#[test]
+fn shadows_and_highlights_match_their_math() {
+    let Some(r) = renderer() else { return };
+    let px = noise(64 * 64);
+    let g = Grade { nodes: vec![node(json!({ "shadows": 70.0, "highlights": -60.0, "gain": {"y": 1.1} }))] };
+    let out = r.render((64, 64), &[rgba_layer(64, 64, &px, Some(&g))]).unwrap();
+    let e = worst(&px, &out, |c| g.apply(c));
+    assert!(e <= 1.0, "the GPU strays from the math by {e} code values");
+}
+
+/// Midtone Detail (LOG D-055) in the grade stage, against the CPU's `Grade::apply_image`, raised
+/// and lowered, drawn one to one.
+#[test]
+fn midtone_detail_matches_its_math() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (768u32, 64u32);
+    let px = red_block(w, h);
+    for md in [80.0, -80.0] {
+        let g = Grade {
+            nodes: vec![node(json!({ "midtone_detail": md, "saturation": 60.0 })), node(json!({ "contrast": 1.1 }))],
+        };
+        let out = r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap();
+        let mut cpu: Vec<[f32; 3]> = px.chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect();
+        g.apply_image(&mut cpu, w as usize, h as usize);
+        let worst = off_by(&cpu, &out);
+        eprintln!("Midtone Detail {md}: worst {worst:.2} code values");
+        assert!(worst <= 1.5, "Midtone Detail {md}: {worst} code values off");
+        // and it did something: pixel by pixel (without it) is far off somewhere
+        let plain: Vec<[f32; 3]> =
+            px.chunks(4).map(|p| g.apply([p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0))).collect();
+        assert!(off_by(&plain, &out) > 5.0, "Midtone Detail {md} changed nothing");
+    }
+}
