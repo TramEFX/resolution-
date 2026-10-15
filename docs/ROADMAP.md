@@ -112,7 +112,8 @@ read, never copied into the repo.
 - [x] Gradient window (D-052)
 - [x] Polygon window: corners dragged, added and removed on screen (D-053)
 - [x] Window handles on screen: size, rotation, softness (D-057)
-- [ ] Curve window; tracking
+- [x] Curve window, smooth through its points (D-061)
+- [ ] Curve windows' own Bézier handles; tracking
 - [ ] Parallel and layer nodes
 - [ ] **Our own GPU renderer** (D-035, Truman's choice), replacing the Lumetri compile for grades:
   - [x] G1: the viewers' frames on the GPU, with the grade stage (tone, saturation, real key masks,

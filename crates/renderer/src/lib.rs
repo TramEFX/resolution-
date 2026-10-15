@@ -1261,7 +1261,8 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
                     Shape::Linear => 0.0,
                     Shape::Circle => 1.0,
                     Shape::Gradient => 2.0,
-                    Shape::Polygon => 3.0,
+                    // a curve is drawn as the polygon of its flattened outline (LOG D-061)
+                    Shape::Polygon | Shape::Curve => 3.0,
                 },
                 win.center[0] * w,
                 win.center[1] * h,
@@ -1272,14 +1273,19 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
                 win.opacity / 100.0,
                 if win.invert { 1.0 } else { 0.0 },
             ]);
-            if win.shape == Shape::Polygon {
+            if win.shape.has_points() {
                 // turned and placed as the shader's other shapes are: x' = x·cos − y·sin
                 b[o + 9] = (after_tables + corners.len()) as f32;
                 let (rx, ry) = (win.size[0] * w / 2.0, win.size[1] * w / 2.0);
                 let (sin, cos) = win.rotation.to_radians().sin_cos();
                 let (cx, cy) = (win.center[0] * w, win.center[1] * h);
-                corners.push(win.points.len() as f32);
-                for p in &win.points {
+                let points = if win.shape == Shape::Curve {
+                    resolution_grade::curve_corners(&win.points)
+                } else {
+                    win.points.clone()
+                };
+                corners.push(points.len() as f32);
+                for p in &points {
                     let (x, y) = (p[0] * rx, p[1] * ry);
                     corners.extend([cx + x * cos - y * sin, cy + x * sin + y * cos]);
                 }

@@ -659,3 +659,27 @@ fn morph_shrinks_grows_opens_and_closes_the_key_and_clip_sets_its_levels() {
     }
     assert_eq!(serde_json::from_value::<Qualifier>(j).unwrap(), base);
 }
+
+#[test]
+fn a_curve_runs_smoothly_through_its_points_and_closes() {
+    let square = Window::new(Shape::Curve).points;
+    assert_eq!(square.len(), 4);
+    let spans = curve_spans(&square);
+    assert_eq!(spans.len(), 4);
+    for (i, s) in spans.iter().enumerate() {
+        assert_eq!((s[0], s[3]), (square[i], square[(i + 1) % 4]), "through each point, closed");
+    }
+    // the tangent at a point is a sixth of the line from the point before to the point after
+    assert!((spans[0][1][0] - (-1.0 + 2.0 / 6.0)).abs() < 1e-6 && (spans[0][1][1] - (-1.0 - 2.0 / 6.0)).abs() < 1e-6);
+    // through a square's corners it bulges past each side's middle by a quarter
+    let corners = curve_corners(&square);
+    assert_eq!(corners.len(), 4 * 16);
+    let top = corners.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+    assert!((top + 1.25).abs() < 1e-3, "{top}");
+    // many points share the corners out
+    let many: Vec<[f32; 2]> = (0..100).map(|i| [(i as f32 / 15.9).cos(), (i as f32 / 15.9).sin()]).collect();
+    assert_eq!(curve_corners(&many).len(), 200);
+    let j = serde_json::to_value(Window::new(Shape::Curve)).unwrap();
+    assert_eq!(j["shape"], "curve");
+    assert_eq!(node(json!({ "windows": [j] })).windows[0].points.len(), 4, "a curve keeps its points");
+}

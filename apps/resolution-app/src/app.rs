@@ -2986,6 +2986,27 @@ mod tests {
     }
 
     #[test]
+    fn a_curves_points_are_dragged_on_screen() {
+        let mut h = on_color_page();
+        click(&mut h, "Window palette");
+        click(&mut h, "Add Curve");
+        let points =
+            |a: &ResolutionApp| a.color.current().and_then(|n| n.windows.first().map(|w| (w.shape, w.points.clone())));
+        pump(&mut h, "a curve of four points, from the engine", |a| {
+            !a.color.dragging && points(a).is_some_and(|(s, p)| s == resolution_grade::Shape::Curve && p.len() == 4)
+        });
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
+        h.step();
+        let osc = h.get_by_label("Window on-screen control").rect();
+        let (c, rx, ry) = (osc.center(), 0.4 * osc.width() / 2.0, 0.25 * osc.width() / 2.0);
+        let right_bottom = c + vec2(rx, ry);
+        drag(&mut h, right_bottom, right_bottom + vec2(25.0, 15.0));
+        pump(&mut h, "the point dragged out", |a| {
+            !a.color.dragging && points(a).is_some_and(|(_, p)| p[2][0] > 1.05 && p[2][1] > 1.05)
+        });
+    }
+
+    #[test]
     fn a_gradient_window_is_added_without_a_size() {
         let mut h = on_color_page();
         click(&mut h, "Window palette");
