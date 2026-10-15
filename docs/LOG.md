@@ -142,6 +142,7 @@ doc is updated *and* the entry says which section moved.
 | B-045 | 2026-10-15 | ui | Menu buttons drew a box where their "▾" should be | fixed |
 | B-048 | 2026-10-15 | ui | "Outside Soft" ran into its value in the Window palette | fixed |
 | D-069 | 2026-10-15 | tools | `--palette` and `--bars` self-test flags; D-063, D-065, D-066 and D-067 seen by eye | active |
+| B-049 | 2026-10-15 | engine | Agents could not learn most of a node's controls: `color.adjust`'s description stopped at D-028 | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3850,3 +3851,29 @@ grey and brighter inside each window, screenshots at the Color page:
 - Not compared with Resolve itself.
 
 **Checked:** unit test of `--palette`'s names, curves included, and unknown names refused.
+
+### B-049 — Agents could not learn most of a node's controls: `color.adjust`'s description stopped at D-028
+**Area:** engine · **Status:** fixed · **Caught by:** review, checking that agents can reach this
+run's new window fields (the AI-native invariant)
+
+**Symptom:** the vocabulary's description of `color.adjust`, which is all an agent reads about it,
+listed the Primaries, the four Custom Curves and the label. It left out everything added since:
+- Shadows, Highlights and Midtone Detail (D-055);
+- the hue curves (D-043, D-047);
+- the qualifier and its matte finesse (D-032, D-046, D-058);
+- the windows and every field of theirs (D-031, D-052, D-053, D-061, D-063, D-065).
+
+The engine took them all. An agent only found them in `color.inspect`'s answer, and only those
+already set: the optional fields are not written until they are.
+
+**Fix:** the description names every control, with its range or neutral where that is not plain:
+- the hue curves' middle line;
+- the qualifier's fields and Morph's choices;
+- each window field and which shapes have it.
+
+It also says how a call combines with the node: objects merge, lists such as `windows` replace.
+Nothing new is accepted; the parameters are as they were.
+
+**Checked:** adapter test: a node with every optional part set is serialised, and each of its keys,
+each window shape and each Morph choice must be in the description. It also checks those names are
+the grade's own. Against the old description the test fails, first on `hue_hue`.
