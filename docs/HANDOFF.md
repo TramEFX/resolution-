@@ -1,6 +1,6 @@
 # Picking up locally
 
-Where things stand and how to continue on your own machine. Last updated 2026-10-14 (GPU renderer G1 to G3, hue curves, matte finesse).
+Where things stand and how to continue on your own machine. Last updated 2026-10-15 (the first unattended run: windows, edits, matte finesse, the journal).
 
 ## 1. Set up (once)
 
