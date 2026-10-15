@@ -136,6 +136,7 @@ doc is updated *and* the entry says which section moved.
 | B-044 | 2026-10-15 | tests | The one-minute edit's UI test timed out in a full run | fixed |
 | D-066 | 2026-10-15 | color | Hue curves: image sampling from the viewer and the six-vector patches | active (widths provisional) |
 | D-067 | 2026-10-15 | color | The Primaries palette's Bars mode | active |
+| D-068 | 2026-10-15 | engine | Vocabulary additions proposed as one batch: edit points, Resolve's unbound keys, the Inspector | proposed, for Truman |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3681,3 +3682,71 @@ this test uses 0.05 s.
 - Mutation checks, each caught: a drag down raising, every bar setting Y, no reset, a menu that
   does nothing, the bars never drawn.
 - Not looked at by eye. At 1600 × 920 a bar is 183 points tall.
+
+### D-068 — Vocabulary additions proposed as one batch: edit points, Resolve's unbound keys, the Inspector
+**Area:** engine · **Status:** proposed, for Truman; nothing built · **Doc:**
+`crates/engine-api/src/commands.rs` (where they would go); D-051 (the keys), D-064 (dynamic trim)
+
+**Why a batch:** the work left on the Edit page now needs new vocabulary ids, which are stable API
+and Truman's to choose. D-051 listed Resolve keys with no command, and D-064 found that dynamic
+trim and Add Transition wait on edit-point selection. The Inspector needs ids to set a clip's
+properties. Approved together, a later run can build them all.
+
+Each id below names the key it takes (21.1 Reference Manual, as D-051 checked it), and the
+FilmCraft command it would map to (`map.rs`) or "adapter" where the adapter would compose it.
+Names follow the vocabulary's own: `playhead.previousFrame`, `timeline.rippleDelete`.
+
+**1. Edit points** (D-064's prerequisite):
+
+| Id | Key | Maps to |
+|---|---|---|
+| `timeline.selectEditPoint {clip, edge, kind?, add?}` | a click on an edge | `trim.selectEditPoint` |
+| `timeline.selectNearestEdit` | V | `trim.selectNearest` |
+| `timeline.cycleEditPointType` | U | `trim.toggleType` |
+| `timeline.nudgeBack`, `timeline.nudgeForward` | Comma, Period | `trim.backward`, `trim.forward` |
+| `timeline.nudgeBackMany`, `timeline.nudgeForwardMany` | Shift+Comma, Shift+Period (5 frames) | `trim.backwardMany`, `trim.forwardMany` |
+| `timeline.extendEdit` | E | `trim.extendToPlayhead` |
+| `timeline.trimStartToPlayhead`, `timeline.trimEndToPlayhead` | Shift+[, Shift+] | adapter, from `timeline.trimEdge` |
+
+**2. Dynamic trim** (D-064 option A): `trim.shuttle {direction, slow?}`, `trim.stop` and
+`trim.cancel`, mapped to `trim.shuttle`, `trim.shuttleStop` and `trim.cancelDynamic`. W
+(`mode.dynamicTrim`) stays the front end's toggle and routes J, K and L to them while it is on.
+
+**3. The rest of D-051's keys:**
+
+| Id | Key | Maps to |
+|---|---|---|
+| `playhead.goToIn`, `playhead.goToOut` | Shift+I, Shift+O | `markers.goToIn`, `markers.goToOut` |
+| `playhead.previousSecond`, `playhead.nextSecond` | Shift+Left, Shift+Right | adapter (`playhead.set`) |
+| `timeline.selectClipAtPlayhead` | Shift+V | adapter (`timeline.select`) |
+| `timeline.rippleCut` | Mod+Shift+X | adapter (`edit.cut`, then `edit.rippleDelete`) |
+| `marker.modify`, `marker.delete` | Shift+M, Alt+M | `markers.edit`, `markers.clearCurrent` |
+| `marker.addAndModify` | Mod+M | front end (`marker.add`, then its dialog) |
+| `playback.fastReverse`, `playback.fastForward`, `playback.slow` | Shift+J, Shift+L, Shift+K | front end |
+
+Alt+1 to 8 (video destination to that track) needs either eight ids or a key binding that
+carries parameters (`params = { track = "V1" }`). Parameters are the keymap-format change already
+waiting on Truman (D-051's page-scoped bindings), and scale better; recommended.
+
+**4. The Inspector** (its Edit page panel is empty today). FilmCraft sets a clip's transform,
+crop and opacity with `effects.setParam` on its `motion` and opacity effects. Three ways to name
+that:
+- **(a) Grouped ids (recommended):**
+  - `clip.setTransform {clip, zoom?, position?, rotation?, anchor?, flip?}`;
+  - `clip.setCrop {clip, left?, right?, top?, bottom?, softness?}`;
+  - `clip.setComposite {clip, mode?, opacity?}`.
+
+  These are Resolve's Inspector sections. Each is easy for an agent to find and gets its own risk
+  tier, and the parameter names stay ours if the engine's change.
+- **(b) One generic id:** `clip.setProperty {clip, property, value}`, with Inspector labels as
+  property names. It is smaller, but its parameters' meaning moves out of the vocabulary.
+- **(c) `raw.filmcraft/effects.setParam`:** no new ids, but FilmCraft's parameter names cross into
+  agents' calls and the front end. That breaks the rule that no FilmCraft type crosses the
+  `Engine` trait.
+
+Reading the values back would come from `timeline.inspect`, extended with each clip's transform,
+crop and composite.
+
+**Waiting on Truman:** yes or no to each group, names changed where he likes. With 1 to 3
+approved, the keymap's bindings are added as each id is built. The Alt+1 to 8 choice rides on the
+keymap-format decision.
