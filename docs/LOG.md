@@ -130,6 +130,7 @@ doc is updated *and* the entry says which section moved.
 | D-062 | 2026-10-15 | color | The Highlight view for clips graded at their source, and frames FilmCraft draws itself | active |
 | B-042 | 2026-10-15 | ui | The timeline did not show transitions | fixed |
 | D-063 | 2026-10-15 | color | Inside and Outside Softness for Polygon and Curve windows | active (field names provisional) |
+| D-064 | 2026-10-15 | edit | Dynamic Trim mode: what it takes, and two ways to build it | proposed, for Truman |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3403,3 +3404,64 @@ is no handle for the Inside Soft; it is set by its number.
   handle sits at the Outside Soft and dragged lower reaches further, the rest kept.
 - Mutation checks: each test fails with its part broken (defaults, clamping, the shader's ramp,
   the widths swapped, the expansion reversed, the handle, the fields).
+
+### D-064 — Dynamic Trim mode: what it takes, and two ways to build it
+**Area:** edit · **Status:** proposed, for Truman; not built, since it needs new vocabulary ids ·
+**Doc:** `mode.dynamicTrim` (the vocabulary's last Missing command, `map.rs`); FilmCraft's
+`crates/engine/src/trim.rs`
+
+**What Resolve does** (21.1 Reference Manual, "Dynamic Trimming Using JKL Controls"):
+1. Select one or more edit points or clips. With none selected, the edit nearest the smart
+   indicator is used.
+2. W turns the mode on. The playhead turns yellow while it is on, and J, K and L trim instead of
+   playing.
+3. The mode trims edit points, or it slips or slides clips (chosen from the tool's menu).
+4. U steps through the edit point's types.
+5. J and L trim while the program plays, with sound from every track, faster when pressed again.
+   K with J or L trims slowly, and K while tapping J or L trims a frame at a time.
+6. Space plays around the edit. Up and Down move to another edit, and W turns the mode off.
+
+**What Resolution lacks:**
+- **Edit-point selection.** Today a trim is a mouse drag sent as one `timeline.trimEdge` or
+  `timeline.rollEdit`. Nothing selects an edit and keeps it selected. The same gap limits Add
+  Transition, which `map.rs` marks Approx for this reason, and keyboard trimming with nudges.
+- **Ids for selecting edits.** The vocabulary has none for selecting the nearest edit (V), for
+  stepping its type (U) or for shuttling it.
+
+**What FilmCraft has:**
+- Selected edit points: `trim.selectEditPoint`, `trim.selectNearest` and `trim.toggleType`.
+- Dynamic trimming: `trim.shuttle` (J, L), `trim.shuttleStop` (K, which commits the whole trim as
+  one undo step), `trim.cancelDynamic` and `trim.playAround`.
+- `trim.tick {clock}`, which advances a dynamic trim and is called once a frame.
+
+The timeline changes live while it runs.
+
+**Option A, the engine's (recommended):**
+- New ids map onto FilmCraft's:
+  - `timeline.selectEditPoint {clip, edge, kind, add?}` (a click on an edge);
+  - `timeline.selectNearestEdit` (V);
+  - `timeline.cycleEditPointType` (U);
+  - `trim.shuttle {direction, slow?}`, `trim.stop` and `trim.cancel`.
+- `mode.dynamicTrim` is the front end's toggle, and routes J, K and L to the trim ids while it is
+  on.
+- The adapter ticks the trim from its own clock, as it runs playback, so the journal and agents
+  see one command a key press, not one a frame.
+- It is what Resolve does: the cut plays as it moves, with sound.
+- The cost is the largest: selection drawn on the timeline, the mode, the routing, and the clock
+  tied to playback.
+
+**Option B, the front end's:**
+- J and L move the selected edge as a keyboard drag, previewed as a mouse trim is.
+- K sends one `timeline.trimEdge`, `rollEdit`, `slipClip` or `slideClip` with the total, so only
+  the edit-point ids are new.
+- It is smaller, but the cut does not play while it moves. That loses the point of the feature,
+  trimming while watching the program play.
+
+**Either way, first:** edit-point selection with its ids (select, nearest, type), drawn green on
+the timeline as Resolve draws it. Add Transition, nudge trims (`,` and `.`) and Extend Edit
+(E) need it as well. Dynamic trim builds on that afterwards.
+
+**Waiting on Truman:**
+- The ids above: their names, their parameters, and whether edit points are engine state, as
+  FilmCraft keeps them, or the front end's.
+- A or B.
