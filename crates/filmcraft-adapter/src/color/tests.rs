@@ -260,6 +260,26 @@ fn a_window_limits_the_node_to_its_shape() {
     assert!(at(&outside, 30, 30).iter().all(|v| *v < 0.01), "and black outside");
 }
 
+/// A Gradient window (LOG D-052) through the compile: the half above its line, a quarter turn
+/// clockwise the right half.
+#[test]
+fn a_gradient_window_compiles_to_its_half_of_the_picture() {
+    let mut e = demo();
+    let before = frame(&e, 1920);
+    let gradient = json!({"shape": "gradient", "enabled": true, "invert": false, "center": [0.5, 0.5], "size": [1.0, 1.0],
+        "rotation": 0.0, "softness": 0.0, "opacity": 100.0});
+    adjust(&mut e, json!({"gain": {"y": 0.0}, "windows": [gradient.clone()]}));
+    let f = frame(&e, 1920);
+    assert!(at(&f, 960, 300).iter().all(|v| *v < 0.01), "black above the line");
+    assert_eq!(at(&f, 960, 800), at(&before, 960, 800), "untouched below it");
+    let mut turned = gradient;
+    turned["rotation"] = json!(90.0);
+    adjust(&mut e, json!({"windows": [turned]}));
+    let f = frame(&e, 1920);
+    assert!(at(&f, 1500, 540).iter().all(|v| *v < 0.01), "a quarter turn: black on the right");
+    assert_eq!(at(&f, 400, 540), at(&before, 400, 540), "untouched on the left");
+}
+
 #[test]
 fn a_turned_linear_window_turns_its_rectangle() {
     let w = |rotation: f32| {

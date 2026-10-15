@@ -538,3 +538,12 @@ fn the_highlight_view_shows_what_a_node_keys() {
         assert_eq!(got, want, "node {at}");
     }
 }
+
+#[test]
+fn a_gradient_window_is_written_as_gradient() {
+    let w = Window::new(Shape::Gradient);
+    let j = serde_json::to_value(w).unwrap();
+    assert_eq!(j["shape"], "gradient");
+    let back: Window = serde_json::from_value(j).unwrap();
+    assert_eq!(back, w);
+}

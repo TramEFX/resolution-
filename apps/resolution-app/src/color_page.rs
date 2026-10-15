@@ -1303,10 +1303,11 @@ fn shape_name(s: WindowShape) -> &'static str {
     match s {
         WindowShape::Linear => "Linear",
         WindowShape::Circle => "Circle",
+        WindowShape::Gradient => "Gradient",
     }
 }
 
-/// The Window palette: add a Linear or Circle window to the current node; each window's row
+/// The Window palette: add a Linear, Circle or Gradient window to the current node; each window's row
 /// chooses it and turns it on or off, inverts or deletes it; the chosen window's numbers below.
 /// The viewer shows the windows' outlines while this palette is open.
 pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
@@ -1322,7 +1323,7 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        for shape in [WindowShape::Linear, WindowShape::Circle] {
+        for shape in [WindowShape::Linear, WindowShape::Circle, WindowShape::Gradient] {
             if chrome::text_button(ui, look, &format!("Add {}", shape_name(shape)), true).clicked() {
                 wins.push(Window::new(shape));
                 page.window = wins.len() - 1;
@@ -1411,7 +1412,10 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
         let row_h = 26.0;
         let cell_w = (area.width() - 16.0) / 4.0;
         let fresh = Window::new(w.shape);
-        for (k, f) in WINDOW_FIELDS.iter().enumerate() {
+        // a gradient has no size
+        let fields =
+            WINDOW_FIELDS.iter().filter(|f| w.shape != WindowShape::Gradient || !matches!(f.name, "Size" | "Aspect"));
+        for (k, f) in fields.enumerate() {
             let (row, col) = (k / 4, k % 4);
             let cell = Rect::from_min_size(
                 pos2(area.left() + 8.0 + cell_w * col as f32, area.top() + row_h * row as f32),
@@ -1463,6 +1467,11 @@ fn outline(w: &Window, pic: Rect) -> Vec<Pos2> {
             (0..72).map(|i| i as f32 / 72.0 * TAU).map(|a| turn(rx * a.cos(), ry * a.sin())).collect()
         }
         WindowShape::Linear => vec![turn(-rx, -ry), turn(rx, -ry), turn(rx, ry), turn(-rx, ry)],
+        // the keyed side, reaching well past the picture: on screen, its line across it
+        WindowShape::Gradient => {
+            let far = 4.0 * pic.width().max(pic.height());
+            vec![turn(-far, -far), turn(far, -far), turn(far, 0.0), turn(-far, 0.0)]
+        }
     }
 }
 
@@ -1491,7 +1500,15 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
     for (i, o) in outlines.iter().enumerate() {
         let chosen = i == page.window;
         let colour = if chosen { look.theme.accent } else { Color32::from_white_alpha(150) };
-        painter.add(Shape::closed_line(o.clone(), Stroke::new(if chosen { 2.0 } else { 1.0 }, colour)));
+        let stroke = Stroke::new(if chosen { 2.0 } else { 1.0 }, colour);
+        painter.add(Shape::closed_line(o.clone(), stroke));
+        // a gradient's centre, and a tick towards the side it keys
+        if let Some(w) = node.windows.get(i).filter(|w| w.shape == WindowShape::Gradient) {
+            let c = pic.min + vec2(w.center[0] * pic.width(), w.center[1] * pic.height());
+            let (sin, cos) = w.rotation.to_radians().sin_cos();
+            painter.circle_stroke(c, 5.0, stroke);
+            painter.line_segment([c, c + vec2(sin, -cos) * 28.0], stroke);
+        }
     }
     let r = ui.interact(screen, ui.id().with("window osc"), Sense::drag());
     name(&r, WidgetType::Other, "Window on-screen control");

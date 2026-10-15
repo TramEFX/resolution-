@@ -1219,7 +1219,11 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
             let o = 24 + i * 10;
             // as the engine's masks place them: sizes in fractions of the picture's width
             b[o..o + 9].copy_from_slice(&[
-                if win.shape == Shape::Circle { 1.0 } else { 0.0 },
+                match win.shape {
+                    Shape::Linear => 0.0,
+                    Shape::Circle => 1.0,
+                    Shape::Gradient => 2.0,
+                },
                 win.center[0] * w,
                 win.center[1] * h,
                 win.size[0] * w / 2.0,

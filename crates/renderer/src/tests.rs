@@ -553,3 +553,31 @@ fn the_highlight_view_shows_a_windows_shape() {
     assert!(at(100, 50) > 250 && at(100, 50 - 25) > 250, "white inside the circle");
     assert!(at(5, 5) < 5 && at(100, 50 - 35) < 5, "black outside it");
 }
+
+/// The Gradient window (LOG D-052): the half above its line keyed at Rotate 0, the right half a
+/// quarter turn clockwise, and a ramp across the line when soft.
+#[test]
+fn a_gradient_window_keys_one_side_of_its_line() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (200u32, 100u32);
+    let px: Vec<u8> = (0..w * h).flat_map(|_| [128u8, 128, 128, 255]).collect();
+    let draw = |win: Window| {
+        let mut n = node(json!({"gain": {"y": 0.0}}));
+        n.windows = vec![win];
+        let g = Grade { nodes: vec![n] };
+        r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap()
+    };
+    let at = |out: &[u8], x: u32, y: u32| out[((y * w + x) * 4) as usize];
+    let hard = Window { softness: 0.0, ..Window::new(resolution_grade::Shape::Gradient) };
+    let out = draw(hard);
+    assert!(at(&out, 100, 40) < 3 && at(&out, 10, 5) < 3, "black above the line");
+    assert!(at(&out, 100, 60).abs_diff(128) <= 1 && at(&out, 190, 95).abs_diff(128) <= 1, "untouched below");
+    let out = draw(Window { rotation: 90.0, ..hard });
+    assert!(at(&out, 150, 10) < 3 && at(&out, 150, 90) < 3, "a quarter turn: black on the right");
+    assert!(at(&out, 50, 50).abs_diff(128) <= 1, "untouched on the left");
+    // soft: 0.2 of 200 pixels, 40 across the line, half way on it
+    let out = draw(Window { softness: 0.2, ..hard });
+    let col: Vec<u8> = (0..h).map(|y| at(&out, 100, y)).collect();
+    assert!(col.windows(2).all(|p| p[1] >= p[0]), "brighter downwards: {col:?}");
+    assert!(col[0] < 3 && col[99].abs_diff(128) <= 1 && (40..90).contains(&col[50]), "{col:?}");
+}

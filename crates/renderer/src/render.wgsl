@@ -397,8 +397,12 @@ fn coverage(n: u32, sp: vec2<f32>) -> f32 {
         let cs = cos(rot);
         let sn = sin(rot);
         let q = vec2(d.x * cs + d.y * sn, -d.x * sn + d.y * cs);
+        let shape = nf(n, o);
         var dist: f32;
-        if nf(n, o) > 0.5 {
+        if shape > 1.5 {
+            // a Gradient (LOG D-052): keyed above its line, at Rotate 0
+            dist = q.y;
+        } else if shape > 0.5 {
             dist = (length(q / r) - 1.0) * min(r.x, r.y);
         } else {
             dist = max(abs(q.x) - r.x, abs(q.y) - r.y);

@@ -89,6 +89,24 @@ fn a_graded_clip_draws_on_the_gpu_as_its_compiled_grade_does() {
     assert!(frame_counts().0 > before.0, "counted as a GPU frame");
 }
 
+/// A Gradient window (LOG D-052) on the GPU against its compiled mask. Hard, they agree. Soft,
+/// they differ at the soft edge (B-040): FilmCraft blends a masked effect in linear light along
+/// a smoothstep, the grade blends its signal along a straight ramp.
+#[test]
+fn a_gradient_draws_on_the_gpu_as_its_compiled_mask_does() {
+    for (softness, mean_at_most, p99_at_most) in [(0.0, 1.0, 3.0), (0.2, 3.0, 25.0)] {
+        let mut e = demo();
+        let gradient = json!({"shape": "gradient", "enabled": true, "invert": false, "center": [0.5, 0.4],
+            "size": [1.0, 1.0], "rotation": 20.0, "softness": softness, "opacity": 100.0});
+        adjust(&mut e, json!({"gain": {"y": 0.4}, "windows": [gradient]}));
+        let Some((gpu, cpu)) = both(&e) else { return };
+        let (mean, p99) = differ(&gpu, &cpu);
+        // measured 2026-10-14: hard, mean 0.14 and 99 % 1.0; soft, mean 2.44 and 99 % 22.0
+        eprintln!("gradient, softness {softness}: mean {mean:.2}, 99% {p99:.1} code values");
+        assert!(mean < mean_at_most && p99 <= p99_at_most, "softness {softness}: mean {mean}, 99% {p99}");
+    }
+}
+
 #[test]
 fn a_qualifier_draws_on_the_gpu_close_to_its_baked_lut() {
     let mut e = demo();

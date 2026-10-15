@@ -666,6 +666,10 @@ pub enum Shape {
     Linear,
     /// Resolve's Circle window: an ellipse.
     Circle,
+    /// Resolve's Gradient window (LOG D-052): the picture divided by a line through the window's
+    /// centre, the side above it keyed (at Rotate 0; turning clockwise with Rotate), soft across
+    /// the line. Its size is not used.
+    Gradient,
 }
 
 /// A window (LOG D-031): limits its node's correction to a shape on the clip's picture, with a
@@ -680,7 +684,7 @@ pub struct Window {
     /// Apply the correction outside the shape instead.
     pub invert: bool,
     pub center: [f32; 2],
-    /// Width and height.
+    /// Width and height (not used by a Gradient).
     pub size: [f32; 2],
     /// Degrees, clockwise.
     pub rotation: f32,
@@ -696,6 +700,7 @@ impl Window {
         let size = match shape {
             Shape::Circle => [0.33, 0.33],
             Shape::Linear => [0.4, 0.25],
+            Shape::Gradient => [1.0, 1.0],
         };
         Self {
             shape,
@@ -704,7 +709,8 @@ impl Window {
             center: [0.5, 0.5],
             size,
             rotation: 0.0,
-            softness: 0.02,
+            // a gradient is soft: a fifth of the picture's width across its line
+            softness: if shape == Shape::Gradient { 0.2 } else { 0.02 },
             opacity: 100.0,
         }
     }

@@ -107,7 +107,8 @@ read, never copied into the repo.
 - [x] The Highlight view: Highlight and Highlight B/W of the current node (D-048)
 - [ ] More matte finesse (Black and White Clip, In/Out Ratio, Morph), Highlight Difference, RGB
       and Luma qualifier modes
-- [ ] Polygon, Curve and Gradient windows; window handles on screen; tracking
+- [x] Gradient window (D-052)
+- [ ] Polygon and Curve windows; window handles on screen; tracking
 - [ ] Parallel and layer nodes
 - [ ] **Our own GPU renderer** (D-035, Truman's choice), replacing the Lumetri compile for grades:
   - [x] G1: the viewers' frames on the GPU, with the grade stage (tone, saturation, real key masks,
