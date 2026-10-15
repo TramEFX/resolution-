@@ -111,6 +111,7 @@ doc is updated *and* the entry says which section moved.
 | D-047 | 2026-10-14 | color | Sat vs Lum, with a node carrying it baked into a table in the compile | active |
 | B-038 | 2026-10-14 | color | A Deliver render could stop at 0 %: export frames waited for renderers their own threads held | fixed here; upstream #1531, #1956 (fix in PR #861) |
 | D-048 | 2026-10-14 | color | The Highlight view: a front-end viewer option, drawn by the GPU's grade stage | active |
+| D-049 | 2026-10-14 | tools | `--window-at`: the editor's self-tests open on a screen of their own | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2809,3 +2810,27 @@ test: a key with no correction, Alt+Shift+H shows only greys, white and black, t
 beside it for the scopes, Shift+H flat grey, Shift+H again off. 219 tests in the workspace.
 
 **Not checked by eye** in the editor yet.
+
+### D-049 — `--window-at`: the editor's self-tests open on a screen of their own
+**Area:** tools · **Status:** active · **Doc:** `apps/resolution-app/src/main.rs`; memory note on
+test windows
+
+**Decision (Truman, 2026-10-14):** visual test runs (`--play`, `--screenshot`) go on his second
+screen, not the one he works on. `resolution-app --window-at X,Y` puts the window's top left
+corner at X,Y in the screens' own pixels, as Windows lays them out. His second screen is at
+-1920,165 (1920 × 1080, 100 %), left of the main one (3440 × 1440 at 150 %). The window is not kept
+there for the next ordinary start (`persist_window` off).
+
+**Facts found:**
+- eframe reads the window's last position back even with `persist_window` off, and that wins over
+  `ViewportBuilder::with_position`. So the editor moves its window on the first frame instead
+  (`ViewportCommand::OuterPosition`), before it is shown.
+- egui's positions are points, scaled by the screen the window is on. The flag's pixels are
+  divided by the window's scale, so the same numbers work whatever the scaling.
+- A DPI-unaware process (PowerShell by default) sees the main screen as 2293 × 960; per-monitor
+  aware, it is 3440 × 1440. Screen positions for the flag come from the latter.
+
+**Checked:** run with `--window-at -1920,165 --screenshot`, the window's first visible position
+was on the second screen at -1920,165 (read with `GetWindowRect` and `Screen.FromHandle`), and the
+screenshot is right. A test of the flag's parsing.
+

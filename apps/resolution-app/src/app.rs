@@ -67,6 +67,9 @@ pub struct Options {
     /// Where to write the agent link's file, so `resolution mcp --editor` can reach this editor
     /// (LOG D-026); `None` opens no link (tests).
     pub agent_link: Option<PathBuf>,
+    /// Move the window here once it is open: its top left corner, in the screen's own pixels
+    /// (`--window-at`, LOG D-049).
+    pub window_at: Option<[f32; 2]>,
 }
 
 /// Commands that run at the frame on screen without stopping playback.
@@ -179,6 +182,8 @@ pub struct ResolutionApp {
     seek_after_load: Option<f64>,
     source_after_load: Option<String>,
     screenshot: Option<(PathBuf, u32)>,
+    /// Where to move the window on the first frame (`Options::window_at`).
+    window_at: Option<[f32; 2]>,
 }
 
 impl ResolutionApp {
@@ -270,6 +275,7 @@ impl ResolutionApp {
             seek_after_load: options.seek,
             source_after_load: options.source,
             screenshot: options.screenshot.map(|p| (p, 0)),
+            window_at: options.window_at,
         }
     }
 
@@ -1812,6 +1818,13 @@ impl ResolutionApp {
 impl eframe::App for ResolutionApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // eframe opens the window where it was last (it reads that back even when told not to
+        // keep it), so a window put elsewhere on purpose is moved once it is open; egui's
+        // positions are points of the screen the window is on, which may be scaled
+        if let Some([x, y]) = self.window_at.take() {
+            let ppp = ctx.pixels_per_point();
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x / ppp, y / ppp)));
+        }
         for reply in self.worker.poll() {
             self.apply(reply);
         }
