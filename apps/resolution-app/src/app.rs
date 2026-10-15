@@ -2855,6 +2855,24 @@ mod tests {
         assert_eq!(lift.y, 0.0, "the master is untouched");
     }
 
+    /// A long chain of nodes is scaled to fit the Node Editor: every node in it (LOG B-054).
+    #[test]
+    fn a_long_node_chain_fits_the_node_editor() {
+        let mut h = on_color_page();
+        for k in 2..=8 {
+            h.key_press_modifiers(Modifiers::ALT, Key::S);
+            pump(&mut h, "the node, from the engine", |a| {
+                a.color.view.as_ref().is_some_and(|v| v.grade.nodes.len() == k)
+            });
+        }
+        h.step();
+        let right = h.get_by_label("Delete Node").rect().right().max(1600.0 - 16.0);
+        for k in 1..=8 {
+            let node = h.get_by_label(&format!("Node {k:02}")).rect();
+            assert!(node.right() <= right, "node {k} at {node:?} runs past {right}");
+        }
+    }
+
     #[test]
     fn node_keys_add_select_and_disable_nodes() {
         let mut h = on_color_page();
@@ -3348,13 +3366,15 @@ mod tests {
         pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
         h.step();
         let before = h.state().picture_rect.expect("a picture");
-        // nine: more than the palette's 340 points hold, list and numbers together
-        for k in 1..=9 {
-            click(&mut h, "Add Circle");
-            pump(&mut h, "the window, from the engine", |a| {
-                !a.color.dragging && a.color.current().is_some_and(|n| n.windows.len() == k)
-            });
-        }
+        // nine, through the engine at once: more than the palette's 340 points hold, list and
+        // numbers together (adding them one click at a time sometimes lost a click under load:
+        // LOG B-054's notes)
+        let clip = h.state().color.clip.expect("a clip");
+        let windows = vec![resolution_grade::Window::new(resolution_grade::Shape::Circle); 9];
+        h.state().worker.run("color.adjust", json!({ "clip": clip, "node": 1, "controls": { "windows": windows } }));
+        pump(&mut h, "nine windows, from the engine", |a| {
+            !a.color.dragging && a.color.current().is_some_and(|n| n.windows.len() == 9)
+        });
         h.step();
         h.step();
         let after = h.state().picture_rect.expect("a picture");
