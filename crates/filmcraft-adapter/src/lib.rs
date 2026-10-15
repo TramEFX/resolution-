@@ -336,7 +336,7 @@ mod tests {
     fn unknown_and_missing_commands_are_errors() {
         let mut e = FilmCraftEngine::new();
         assert!(matches!(e.execute("nope.nothing", json!({})), Err(EngineError::UnknownCommand(_))));
-        assert!(matches!(e.execute("edit.fitToFill", json!({})), Err(EngineError::Unsupported(..))));
+        assert!(matches!(e.execute("mode.dynamicTrim", json!({})), Err(EngineError::Unsupported(..))));
     }
 
     #[test]

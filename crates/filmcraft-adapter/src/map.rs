@@ -115,7 +115,7 @@ pub const MAP: &[(&str, Target)] = &[
     ("edit.replace", Adapter),
     ("edit.placeOnTop", Adapter),
     ("edit.rippleOverwrite", Adapter),
-    ("edit.fitToFill", Missing("no fit-to-fill edit")),
+    ("edit.fitToFill", Adapter),
     ("edit.appendAtEnd", Adapter),
     ("timeline.select", Engine("timeline.select")),
     ("timeline.split", Engine("sequence.addEdit")),

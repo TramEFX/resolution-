@@ -668,7 +668,7 @@ mod tests {
         let mut s = demo();
         let e = s.run("timeline.rippledelete", json!({}), false, false).unwrap_err();
         assert!(e.contains("timeline.rippleDelete") || e.contains("search_commands"), "{e}");
-        assert!(s.run("edit.fitToFill", json!({}), false, false).unwrap_err().contains("cannot do it headless"));
+        assert!(s.run("mode.dynamicTrim", json!({}), false, false).unwrap_err().contains("cannot do it headless"));
     }
 
     #[test]

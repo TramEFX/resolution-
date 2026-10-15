@@ -125,6 +125,7 @@ doc is updated *and* the entry says which section moved.
 | B-041 | 2026-10-14 | ui | A quick drag on the window control missed small handles and polygon corners | fixed |
 | D-058 | 2026-10-14 | color | More matte finesse: Black Clip, White Clip and Morph | active |
 | D-059 | 2026-10-14 | engine | Replace, Place on Top, Ripple Overwrite and Append at End, composed from FilmCraft's commands | active |
+| D-060 | 2026-10-14 | engine | Fit to Fill: the source retimed to fill the timeline's In to Out | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3246,3 +3247,30 @@ timeline's; it stays in the map as missing. The vocabulary now has 83 commands r
 
 **Wrong turn:** the UI test first expected F12's clip on V2. The whole source, 14 s, meets V2's
 clip, so it rightly went to V3. The test now looks above V1.
+
+### D-060 — Fit to Fill: the source retimed to fill the timeline's In to Out
+**Area:** engine · **Status:** active · **Doc:** `crates/filmcraft-adapter/src/edits.rs`
+
+**Decision:** the last of D-059's edits, Resolve's Fit to Fill (Shift+F11). The source's In to Out
+takes the timeline's In to Out on the destination tracks, its speed changed to fit: slower when
+the timeline's range is longer, faster when shorter. It is one undo step (`edit_group`), in this
+order:
+
+1. The timeline's In to Out is lifted, on the destination tracks only. FilmCraft's lift takes
+   every targeted track, which would cut other tracks too, such as the demo's music. The Out
+   frame is in the range, as FilmCraft takes it.
+2. The source is placed after the last clip, where its changed length meets nothing.
+3. It and its linked sound get the speed (`clip.speedDuration`).
+4. It is moved into the gap, its sound with it (`timeline.move`, linked).
+
+The timeline's In and Out are kept, and the playhead ends after the edit. Fit to Fill needs a
+timeline In and Out; without both it says so. The vocabulary now has 84 commands running
+headless, 32 front-end, 1 missing (dynamic trim).
+
+**Checked:** adapter test on the demo, 48 source frames into 84 timeline frames (57 %) and into
+24 (200 %):
+- the clip in place at the timeline's In, its length the range's within a frame, its speed;
+- the clip it was cut into kept before it, and everything after as it was;
+- the music on A2 untouched, nothing left past the end, one undo step.
+
+With the speed inverted, it fails.

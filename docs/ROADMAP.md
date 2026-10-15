@@ -74,7 +74,8 @@ read, never copied into the repo.
       export (`deliver.render`, D-025)
 - [x] Resolve's Replace (F11), Place on Top (F12), Ripple Overwrite (Shift+F10) and Append at End
       (Shift+F12), composed from FilmCraft's commands (D-059)
-- [ ] Fit to Fill (Shift+F11); Trim mode semantics; dynamic trim
+- [x] Fit to Fill (Shift+F11; D-060)
+- [ ] Trim mode semantics; dynamic trim
 - [ ] Faster playback where it is slow: frames are composited on the GPU since D-036 to D-038;
       standard effects on the GPU (D-041), proxies for footage too slow to decode (D-013 "Known
       limits")
