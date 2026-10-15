@@ -65,6 +65,9 @@ pub struct ColorPage {
     pub palette: Palette,
     /// The window chosen in the Window palette (an index into the current node's windows).
     pub window: usize,
+    /// A window just added and chosen, on that node: kept chosen while grades from before it still
+    /// arrive (LOG B-056).
+    pub new_window: Option<(usize, usize)>,
     /// The on-screen control is moving the chosen window.
     moving_window: bool,
     /// The on-screen control is moving this corner of the chosen polygon window.
@@ -1718,7 +1721,14 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     palette_header(ui, look, page);
     let Some(node) = page.current().cloned() else { return asks };
     let mut wins = node.windows.clone();
-    page.window = page.window.min(wins.len().saturating_sub(1));
+    match page.new_window {
+        // a grade from before the window added: it stays chosen
+        Some((node, w)) if node == page.node && w >= wins.len() => {}
+        _ => {
+            page.new_window = None;
+            page.window = page.window.min(wins.len().saturating_sub(1));
+        }
+    }
     let set = |page: &mut ColorPage, asks: &mut Vec<Ask>, wins: &[Window]| {
         page.adjust(asks, json!({ "windows": wins }));
     };
@@ -1731,6 +1741,7 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
             if chrome::text_button(ui, look, &format!("Add {}", shape_name(shape)), true).clicked() {
                 wins.push(Window::new(shape));
                 page.window = wins.len() - 1;
+                page.new_window = Some((page.node, page.window));
                 set(page, &mut asks, &wins);
             }
         }

@@ -388,6 +388,10 @@ impl ResolutionApp {
                 if matches!(id.as_str(), "color.addSerialNode" | "color.appendNode") {
                     self.color.added();
                 }
+                // an adjustment that failed may have been a window's adding (LOG B-056)
+                if id == "color.adjust" && result.is_err() {
+                    self.color.new_window = None;
+                }
                 // renders report on the Deliver page, not as "done"
                 match id.as_str() {
                     "deliver.render" => {
@@ -1601,6 +1605,7 @@ impl ResolutionApp {
             self.color.view = None;
             self.color.node = 0;
             self.color.new_node = None;
+            self.color.new_window = None;
             self.color.asked = None;
         }
         if let Some(c) = clip
@@ -3507,6 +3512,25 @@ mod tests {
         assert!((after.height() - before.height()).abs() < 1.0, "the viewer went from {before:?} to {after:?}");
         // the chosen window's numbers are still there
         assert!(h.query_by_label("Pan").is_some());
+    }
+
+    /// A window added straight after another change is the one chosen (LOG B-056).
+    #[test]
+    fn a_window_added_straight_after_a_change_is_chosen() {
+        let mut h = on_color_page();
+        click(&mut h, "Window palette");
+        click(&mut h, "Add Circle");
+        let windows = |a: &ResolutionApp| a.color.current().map_or(0, |n| n.windows.len());
+        pump(&mut h, "one window", |a| !a.color.dragging && windows(a) == 1);
+        // a drag on its Size, and at once a second window
+        let field = h.get_by_label("Size").rect();
+        drag(&mut h, field.center(), field.center() + vec2(30.0, 0.0));
+        click(&mut h, "Add Linear");
+        pump(&mut h, "two windows", |a| !a.color.dragging && windows(a) == 2);
+        for _ in 0..10 {
+            h.step();
+        }
+        assert_eq!(h.state().color.window, 1, "the new window is the one chosen");
     }
 
     #[test]
