@@ -384,6 +384,10 @@ impl ResolutionApp {
                 {
                     self.color.take(v, out.revision);
                 }
+                // the add's own answer settles which node is current (LOG B-055)
+                if matches!(id.as_str(), "color.addSerialNode" | "color.appendNode") {
+                    self.color.added();
+                }
                 // renders report on the Deliver page, not as "done"
                 match id.as_str() {
                     "deliver.render" => {
@@ -1596,6 +1600,7 @@ impl ResolutionApp {
             self.color.clip = clip;
             self.color.view = None;
             self.color.node = 0;
+            self.color.new_node = None;
             self.color.asked = None;
         }
         if let Some(c) = clip
@@ -1660,11 +1665,13 @@ impl ResolutionApp {
             }
             "color.addSerialNode" => {
                 self.color.node = n + 1;
+                self.color.new_node = Some(n + 1);
                 json!({ "clip": clip, "node": node })
             }
             "color.addNodeBefore" | "color.resetNode" => json!({ "clip": clip, "node": node }),
             "color.appendNode" => {
                 self.color.node = count;
+                self.color.new_node = Some(count);
                 json!({ "clip": clip })
             }
             "color.deleteNode" => {
@@ -3117,6 +3124,69 @@ mod tests {
         h.key_press_modifiers(Modifiers::SHIFT, Key::H);
         pump(&mut h, "the picture again", |a| {
             a.color.highlight.is_none() && a.timeline_viewer.shown.is_some_and(|k| k.highlight.is_none())
+        });
+    }
+
+    /// A short grade as a colourist makes one, through keys and the mouse only, on two clips:
+    /// the Color page's side of the one-minute edit (LOG D-075). A balance on node 1, a node added
+    /// with Alt+S, a circle window on it, its key picked in the viewer and seen in Highlight, the
+    /// next clip graded from the strip, then back, and Ctrl+Z on the last change.
+    #[test]
+    fn a_short_grade_through_the_keys_and_mouse() {
+        let mut h = on_color_page();
+        let first = h.state().color.clip.expect("a clip");
+        let nodes = |a: &ResolutionApp| a.color.view.as_ref().map_or(0, |v| v.grade.nodes.len());
+        // node 1: the Gain ring down a little
+        let ring = h.get_by_label("Gain master").rect();
+        drag(&mut h, ring.center(), ring.center() - vec2(40.0, 0.0));
+        pump(&mut h, "node 1 darker", |a| !a.color.dragging && a.color.current().is_some_and(|n| n.gain.y < 0.97));
+        // Alt+S: node 2, current
+        h.key_press_modifiers(Modifiers::ALT, Key::S);
+        pump(&mut h, "node 2, current", |a| nodes(a) == 2 && a.color.node == 1);
+        // a circle window on node 2, and its saturation down
+        click(&mut h, "Window palette");
+        click(&mut h, "Add Circle");
+        pump(&mut h, "a window on node 2", |a| {
+            !a.color.dragging && a.color.current().is_some_and(|n| n.windows.len() == 1)
+        });
+        // the key picked in the viewer
+        click(&mut h, "Qualifier palette");
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
+        h.step();
+        let picker = h.get_by_label("Qualifier picker").rect();
+        click_at(&mut h, picker.center());
+        pump(&mut h, "a key on node 2", |a| a.color.current().is_some_and(|n| n.keyed().is_some()));
+        assert_eq!(h.state().color.node, 1, "still node 2");
+        // node 1 kept its balance, node 2 has its window and key
+        let view = h.state().color.view.clone().expect("a grade");
+        assert!(view.grade.nodes[0].gain.y < 0.97 && view.grade.nodes[0].windows.is_empty());
+        assert!(view.grade.nodes[1].windows.len() == 1 && view.grade.nodes[1].keyed().is_some());
+        // Highlight on and off
+        h.key_press_modifiers(Modifiers::SHIFT, Key::H);
+        pump(&mut h, "the Highlight view", |a| a.timeline_viewer.shown.is_some_and(|k| k.highlight.is_some()));
+        h.key_press_modifiers(Modifiers::SHIFT, Key::H);
+        pump(&mut h, "the picture again", |a| a.timeline_viewer.shown.is_some_and(|k| k.highlight.is_none()));
+        // the next clip from the strip: its own grade, one node
+        let second = h.state().strip_clips().swap_remove(1);
+        click(&mut h, &format!("Clip 02 {}", second.name));
+        pump(&mut h, "the second clip's grade", |a| {
+            a.color.clip == Some(second.id) && a.color.view.as_ref().is_some_and(|v| v.clip == second.id)
+        });
+        assert_eq!(nodes(h.state()), 1, "a clip of its own: one node");
+        // and back: the first clip's two nodes, as they were
+        let first_name = h.state().strip_clips()[0].name.clone();
+        click(&mut h, &format!("Clip 01 {first_name}"));
+        pump(&mut h, "the first clip's grade again", |a| {
+            a.color.clip == Some(first) && a.color.view.as_ref().is_some_and(|v| v.clip == first)
+        });
+        assert_eq!(nodes(h.state()), 2);
+        // Ctrl+Z: the key goes, the window stays
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        pump(&mut h, "the key undone", |a| {
+            a.color
+                .view
+                .as_ref()
+                .is_some_and(|v| v.grade.nodes.get(1).is_some_and(|n| n.keyed().is_none() && n.windows.len() == 1))
         });
     }
 

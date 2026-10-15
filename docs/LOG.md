@@ -153,6 +153,8 @@ doc is updated *and* the entry says which section moved.
 | B-054 | 2026-10-15 | ui | Nodes past the fourth ran off the Node Editor's edge | fixed |
 | D-073 | 2026-10-15 | ui | The timeline's video clips show the picture at their head | active (Resolve's default view unchecked) |
 | D-074 | 2026-10-15 | ui | Keys for the node resets and Save Project As | active |
+| D-075 | 2026-10-15 | tests | A short grade rehearsed through the Color page's keys and mouse | active |
+| B-055 | 2026-10-15 | ui | Alt+S right after a change left the old node current | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4145,3 +4147,44 @@ still goes to the timeline's start; the keymap is not page-scoped yet.
 - Key test: each chord reaches its command.
 - UI test: Shift+Home resets a graded node through the engine.
 - With Shift+Home bound elsewhere, both fail.
+
+### D-075 — A short grade rehearsed through the Color page's keys and mouse
+**Area:** tests · **Status:** active · **Doc:** `app.rs` (`a_short_grade_through_the_keys_and_mouse`)
+
+**Decision:** the Color page's side of B-043's one-minute edit test. Each step had a test of its
+own; together they had none. A UI test grades two clips as a colourist would, through keys and the
+mouse only:
+1. Gain's ring dragged down on node 1, then Alt+S for node 2.
+2. A circle window on node 2, and its key picked in the viewer.
+3. Highlight on and off with Shift+H.
+4. The next clip from the strip, its own one-node grade, then back to the first with its two nodes
+   as they were.
+5. Ctrl+Z takes back the key and keeps the window.
+
+It found B-055 at its second step.
+
+### B-055 — Alt+S right after a change left the old node current
+**Area:** ui · **Status:** fixed · **Caught by:** D-075's rehearsal
+
+**Symptom:** Alt+S straight after an adjustment added node 2, but node 1 stayed current. The next
+adjustments went to node 1, the wrong node, with nothing to show it but the Node Editor's outline.
+Alt+S on an untouched clip, as the node-key test does it, was fine.
+
+**Cause:** Alt+S makes the new node current at once, before the engine has it. The adjustment's own
+answer, still on its way, brought the one-node grade, and taking it clamped the current node back
+into range: node 1. When the two-node grade came, nothing moved it back.
+
+**Fix:** a node asked for (Add Serial Node, Append Node) is remembered. Grades that arrive without
+it leave the current node alone; every colour command answers with its grade, in order, so those
+are from before. The add's own answer settles it. If the node still is not there, the add failed,
+and the current node is put back in range. A node chosen by hand meanwhile stays chosen.
+
+**Checked:**
+- D-075's UI test.
+- Unit test (`ColorPage::take` and `added`):
+  - a grade from before keeps the new node current;
+  - the add's answer clears it;
+  - a failed add puts the current node back in range;
+  - a node chosen meanwhile stays chosen;
+  - without an add, a shorter grade still clamps.
+- Mutation check: clamping on grades from before fails both tests.
