@@ -128,6 +128,8 @@ stage (D-046), and Sat vs Lum, the last of Resolve's hue curves (D-047; the othe
 The qualifier's matte can be seen in the viewer: the Highlight view, flat grey or black and
 white (D-048).
 
+To try the one-minute edit yourself, [ONE-MINUTE-EDIT.md](ONE-MINUTE-EDIT.md) lists what works and what doesn't yet.
+
 Not started, for Truman to pick from:
 parallel and layer nodes, the one-minute-edit bar (rehearsed through the engine with
 `scripts/rehearse-edit.py`, 19 steps fine; B-042; and through the editor's keys and mouse in a UI
