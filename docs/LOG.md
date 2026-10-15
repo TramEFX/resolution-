@@ -115,6 +115,8 @@ doc is updated *and* the entry says which section moved.
 | D-050 | 2026-10-14 | tools | `--highlight` self-test flag; the Highlight view, matte finesse and Sat vs Lum seen by eye on the Sony clip | active |
 | B-039 | 2026-10-14 | ui | The keymap had Add Video Only and Add Audio Only Transition on each other's keys | fixed |
 | D-051 | 2026-10-14 | ui | The keymap checked against the 21.1 Reference Manual: 69 of 78 bindings confirmed | active |
+| D-052 | 2026-10-14 | color | The Gradient window: the picture divided by a line, the side above it keyed | active |
+| B-040 | 2026-10-14 | color | Soft windows in the Lumetri compile stray from the grade's math at their soft edge | known (compile only) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2909,3 +2911,58 @@ the Color page's node keys, Delete and Forward Delete, Split).
   - Alt+1 to 8, destination tracks.
 
   Each needs a new vocabulary id first.
+
+### D-052 — The Gradient window: the picture divided by a line, the side above it keyed
+**Area:** color · **Status:** active · **Doc:** `crates/grade` (`Shape::Gradient`);
+`crates/renderer/src/render.wgsl` (`coverage`); `crates/filmcraft-adapter/src/color.rs` (`mask`);
+`apps/resolution-app/src/color_page.rs`
+
+**Decision:** Resolve's fifth window, the Gradient. The Reference Manual describes it as a
+two-handled control dividing the screen in two, with centre, angle and feathering, good for
+skies. Ours:
+- **The shape:** `Shape::Gradient`, an added value. Grades stored before it load and save
+  unchanged.
+- **What it keys:** the side above a line through the window's centre at Rotate 0. Rotate turns
+  it clockwise, so at 90 the right side is keyed.
+- **Softness** is the width of a ramp across the line, as a fraction of the picture's width,
+  centred on the line as the other windows' edges are. New gradients start at 0.2, since a
+  gradient is usually soft. Its size is not used.
+- **On the GPU:** the window's distance from its edge is the turned y.
+- **In the compile:** a rectangle on the keyed side reaching four picture-sizes past the line.
+- **On the page:** an Add Gradient button in the Window palette, which hides Size and Aspect for
+  a gradient. The viewer shows the gradient's line across the picture, a ring at its centre and a
+  tick towards the side it keys. Drag on the keyed side to move it.
+
+**Not yet:** dragging the line's handles to turn it or change its softness on screen. Rotate and
+Softness are numbers in the palette.
+
+**Checked:**
+- Renderer test: above the line black and below it untouched; a quarter turn makes it the right
+  side; soft, a rising ramp half way at the line. With the keyed side flipped in the shader, it
+  fails.
+- Compile test through FilmCraft's render: the same halves. Flipped in the compile, it fails.
+- The GPU against the compile: hard, mean 0.14 code values, 99 % within 1.0; soft, see B-040.
+- Grade test: written as `"gradient"`. UI test: Add Gradient, without Size and Aspect.
+
+### B-040 — Soft windows in the Lumetri compile stray from the grade's math at their soft edge
+**Area:** color · **Status:** known; the compile only (D-044) · **Caught by:** test (the Gradient
+window's GPU-against-compile test, D-052)
+
+**Symptom:** a soft Gradient (softness 0.2, Gain 0.4) on the demo frame: the GPU against
+FilmCraft's render of the compile, mean 2.44 code values, 99 % within 22.0. Hard, they agree
+(0.14 and 1.0).
+
+**Cause:**
+- **The blend:** FilmCraft applies an effect through a mask by blending the original and the
+  effected picture in linear light. The grade blends its display-encoded signal (`Node::apply`).
+- **The ramp:** FilmCraft's feather falls off along a smoothstep, centred on the edge as ours is,
+  where the grade's ramp is straight.
+
+Switching the shader's ramp to a smoothstep only took the 99 % figure from 22 to 18, so most of
+it is the blend, which the compile cannot change. The experiment was not kept.
+
+This applies to the soft edge of every window shape since D-031, measured here on a gradient. It
+matters only where the compile is what's shown: FilmCraft, and renders without a GPU.
+
+**Not fixed:** the GPU path is the grade's own math, the reference. The test keeps both figures
+(hard agreeing, soft within its measured bound), so a change in either shows.

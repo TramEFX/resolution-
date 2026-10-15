@@ -2823,6 +2823,20 @@ mod tests {
     }
 
     #[test]
+    fn a_gradient_window_is_added_without_a_size() {
+        let mut h = on_color_page();
+        click(&mut h, "Window palette");
+        click(&mut h, "Add Gradient");
+        let windows = |a: &ResolutionApp| a.color.current().map(|n| n.windows.clone()).unwrap_or_default();
+        pump(&mut h, "a gradient window on node 01, from the engine", |a| {
+            !a.color.dragging && windows(a).first().is_some_and(|w| w.shape == resolution_grade::Shape::Gradient)
+        });
+        h.step();
+        assert!(h.query_by_label("Size").is_none() && h.query_by_label("Aspect").is_none(), "a gradient has no size");
+        assert!(h.query_by_label("Rotate").is_some() && h.query_by_label("Softness").is_some());
+    }
+
+    #[test]
     fn the_qualifier_picks_a_colour_from_the_viewer_and_takes_its_ranges() {
         let mut h = on_color_page();
         click(&mut h, "Qualifier palette");

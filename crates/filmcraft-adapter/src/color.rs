@@ -438,6 +438,12 @@ fn mask(win: &Window, (w, h): (u32, u32), n: usize) -> Mask {
     let mut path = match win.shape {
         Shape::Circle => MaskPath::ellipse(c, r),
         Shape::Linear => MaskPath::rect(c.x - r.x, c.y - r.y, c.x + r.x, c.y + r.y),
+        // the keyed side of a Gradient (LOG D-052): a rectangle above its line, reaching well
+        // past the picture
+        Shape::Gradient => {
+            let far = 4.0 * w.max(h);
+            MaskPath::rect(c.x - far, c.y - far, c.x + far, c.y)
+        }
     };
     let a = f64::from(win.rotation).to_radians();
     if a != 0.0 {
