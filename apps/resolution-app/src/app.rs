@@ -1965,8 +1965,15 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn demo() -> Harness<'static, ResolutionApp> {
+        demo_stepping(1.0 / 4.0)
+    }
+
+    /// The demo, its UI stepped `dt` seconds at a time: a double-click needs its clicks within
+    /// 0.3 s, and the harness's default step is 0.25 s, one queued event a step.
+    fn demo_stepping(dt: f32) -> Harness<'static, ResolutionApp> {
         let mut h = Harness::builder()
             .with_size(egui::vec2(1600.0, 920.0))
+            .with_step_dt(dt)
             .build_eframe(|cc| ResolutionApp::new(cc, Options { demo: true, mute: true, ..Default::default() }));
         pump(&mut h, "the demo timeline", |a| a.timeline.is_some());
         h
@@ -2724,7 +2731,10 @@ mod tests {
 
     /// The demo on the Color page, with the grade of the clip under the playhead.
     fn on_color_page() -> Harness<'static, ResolutionApp> {
-        let mut h = demo();
+        color_page_of(demo())
+    }
+
+    fn color_page_of(mut h: Harness<'static, ResolutionApp>) -> Harness<'static, ResolutionApp> {
         h.key_press_modifiers(Modifiers::SHIFT, Key::Num6);
         pump(&mut h, "Shift+6 and the clip's grade", |a| a.page == Page::Color && a.color.view.is_some());
         h
@@ -3102,6 +3112,52 @@ mod tests {
         let entries = h.state().worker.journal().entries();
         assert!(entries.iter().all(|e| e.who == Who::User));
         assert_eq!(entries[0].command, "raw.filmcraft/file.openDemoProject", "the demo opened first, as a command");
+    }
+
+    /// The Primaries' Bars mode (LOG D-067): chosen from the mode menu, a bar dragged up raises its
+    /// own channel only, by its reach for the whole bar; double-clicked, it is neutral again.
+    #[test]
+    fn the_primaries_bars_set_each_channel_on_its_own() {
+        let mut h = color_page_of(demo_stepping(0.05));
+        click(&mut h, "Wheels ▾");
+        click(&mut h, "Color Bars");
+        pump(&mut h, "the bars", |a| a.color.bars);
+        h.step();
+        let bar = h.get_by_label("Gain R bar").rect();
+        // a quarter of the bar up: up to half of Gain's reach of 1 (egui starts a drag a few
+        // points after the press, and drops the movement before it)
+        drag(&mut h, bar.center(), bar.center() - vec2(0.0, bar.height() / 4.0));
+        let gain = |a: &ResolutionApp| a.color.current().map(|n| n.gain);
+        pump(&mut h, "more red gain, from the engine", |a| !a.color.dragging && gain(a).is_some_and(|g| g.r > 1.15));
+        let g = gain(h.state()).expect("a node");
+        assert!(g.r <= 1.5 + 1e-3, "no further than the pointer went: {g:?}");
+        assert_eq!((g.y, g.g, g.b), (1.0, 1.0, 1.0), "the other channels kept");
+        // a bar dragged down lowers it: Lift's blue
+        let bar = h.get_by_label("Lift B bar").rect();
+        drag(&mut h, bar.center(), bar.center() + vec2(0.0, bar.height() / 8.0));
+        pump(&mut h, "less blue lift", |a| !a.color.dragging && a.color.current().is_some_and(|n| n.lift.b < -0.05));
+        // double-clicked: back to neutral
+        let bar = h.get_by_label("Gain R bar").rect();
+        h.event(egui::Event::PointerMoved(bar.center()));
+        h.step();
+        for pressed in [true, false, true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: bar.center(),
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        h.step();
+        pump(&mut h, "red gain neutral again", |a| {
+            !a.color.dragging && gain(a).is_some_and(|g| (g.r - 1.0).abs() < 1e-6)
+        });
+        // and back to the wheels
+        click(&mut h, "Bars ▾");
+        click(&mut h, "Color Wheels");
+        pump(&mut h, "the wheels", |a| !a.color.bars);
+        h.step();
+        assert!(h.query_by_label("Gain wheel").is_some());
     }
 
     #[test]

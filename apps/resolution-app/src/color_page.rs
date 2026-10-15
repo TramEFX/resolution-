@@ -47,6 +47,8 @@ pub struct ColorPage {
     pub channel: usize,
     /// What the Curves palette shows: the Custom Curves or a hue curve.
     pub curve_mode: CurveMode,
+    /// The Primaries palette shows its wheels, or its bars (LOG D-067).
+    pub bars: bool,
     /// The clip and revision of the last `color.inspect` asked for.
     pub asked: Option<(u64, u64)>,
     /// A control is being dragged.
@@ -208,12 +210,31 @@ fn field_value(n: &Node, key: &str) -> f32 {
     }
 }
 
-/// The Primaries palette in Wheels mode: Temp, Tint, Contrast, Pivot and Midtone Detail above;
-/// the Lift, Gamma, Gain and Offset wheels, each with its master ring and YRGB numbers; Color
-/// Boost, Shadows, Highlights, Saturation and Hue below.
+/// The Primaries palette: Temp, Tint, Contrast, Pivot and Midtone Detail above; Color Boost,
+/// Shadows, Highlights, Saturation and Hue below; between them Lift, Gamma, Gain and Offset, as
+/// wheels (each with its master ring and YRGB numbers) or as bars (LOG D-067), from the mode menu
+/// in the title strip.
 pub fn primaries(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let mut asks = Vec::new();
-    let header = chrome::panel_header(ui, look, "Primaries - Color Wheels", None);
+    let title = if page.bars { "Primaries - Color Bars" } else { "Primaries - Color Wheels" };
+    let header = chrome::panel_header(ui, look, title, None);
+    // the mode, from a menu left of the reset button
+    let chooser = Rect::from_min_max(
+        pos2(header.right() - 16.0 - look.skin.button - 96.0, header.top()),
+        pos2(header.right() - 12.0 - look.skin.button, header.bottom()),
+    );
+    within(ui, chooser, |ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.menu_button(if page.bars { "Bars ▾" } else { "Wheels ▾" }, |ui| {
+                for (bars, label) in [(false, "Color Wheels"), (true, "Color Bars")] {
+                    if ui.selectable_label(page.bars == bars, label).clicked() {
+                        page.bars = bars;
+                        ui.close();
+                    }
+                }
+            });
+        });
+    });
     let Some(node) = page.current().cloned() else {
         hint(ui, look, "Move the playhead onto a clip to grade it.");
         return asks;
@@ -251,7 +272,11 @@ pub fn primaries(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let w = wheels.width() / 4.0;
     for (k, spec) in WHEELS.iter().enumerate() {
         let col = Rect::from_min_size(pos2(wheels.left() + w * k as f32, wheels.top()), vec2(w, wheels.height()));
-        wheel(ui, look, col, spec, wheel_of(&node, spec.field), page, &mut asks);
+        if page.bars {
+            bars(ui, look, col, spec, wheel_of(&node, spec.field), page, &mut asks);
+        } else {
+            wheel(ui, look, col, spec, wheel_of(&node, spec.field), page, &mut asks);
+        }
     }
     fields(ui, look, bottom, &BOTTOM_BAR, &node, page, &mut asks);
     ui.allocate_rect(area, Sense::hover());
@@ -413,6 +438,65 @@ fn wheel(ui: &mut Ui, look: &Look, col: Rect, spec: &WheelSpec, w: &Wheel, page:
             look.mono(11.0),
             if changed { t.accent } else { t.dim },
         );
+    }
+}
+
+/// How far a Primaries bar reaches each side of neutral: twice its wheel's reach (LOG D-067).
+fn bar_reach(spec: &WheelSpec) -> f32 {
+    2.0 * spec.scale
+}
+
+/// One group of Primaries bars (LOG D-067): Lift, Gamma, Gain or Offset as four vertical sliders,
+/// Y, R, G and B, neutral at the middle. Drag one up or down (by the bar's height for its whole
+/// reach, Shift for a tenth of that), double-click it to reset it; its value under it.
+fn bars(ui: &mut Ui, look: &Look, col: Rect, spec: &WheelSpec, w: &Wheel, page: &mut ColorPage, asks: &mut Vec<Ask>) {
+    let t = look.theme;
+    let painter = ui.painter_at(col);
+    painter.text(pos2(col.center().x, col.top() + 8.0), Align2::CENTER_CENTER, spec.name, look.small(), t.dim);
+    let (top, bottom) = (col.top() + 22.0, col.bottom() - 34.0);
+    let reach = bar_reach(spec);
+    let fine = ui.input(|i| i.modifiers.shift);
+    for (k, (letter, key, v, colour)) in
+        [("Y", "y", w.y, t.text), ("R", "r", w.r, RED), ("G", "g", w.g, GREEN), ("B", "b", w.b, BLUE)]
+            .into_iter()
+            .enumerate()
+    {
+        let x = col.left() + 10.0 + (col.width() - 20.0) * (k as f32 + 0.5) / 4.0;
+        let bar = Rect::from_min_max(pos2(x - 7.0, top), pos2(x + 7.0, bottom.max(top + 20.0)));
+        let r = ui.interact(bar.expand2(vec2(4.0, 0.0)), ui.id().with(("bar", spec.field, k)), Sense::click_and_drag());
+        name(&r, WidgetType::Slider, &format!("{} {letter} bar", spec.name));
+        painter.rect_filled(bar, look.radius(), if r.hovered() || r.dragged() { t.hover } else { t.field });
+        // from neutral, at the middle, to the value
+        let y_of = |v: f32| bar.center().y - ((v - spec.neutral) / reach).clamp(-1.0, 1.0) * bar.height() / 2.0;
+        let (a, b) = (y_of(spec.neutral), y_of(v));
+        painter.rect_filled(
+            Rect::from_min_max(pos2(bar.left() + 2.0, a.min(b)), pos2(bar.right() - 2.0, a.max(b).max(a.min(b) + 1.0))),
+            CornerRadius::ZERO,
+            colour.gamma_multiply(0.8),
+        );
+        painter.line_segment([pos2(bar.left(), a), pos2(bar.right(), a)], Stroke::new(1.0, t.line));
+        let changed = (v - spec.neutral).abs() > 1e-4;
+        painter.text(pos2(x, bottom + 10.0), Align2::CENTER_CENTER, letter, look.small(), colour);
+        painter.text(
+            pos2(x, bottom + 25.0),
+            Align2::CENTER_CENTER,
+            format!("{v:.2}"),
+            look.mono(11.0),
+            if changed { t.accent } else { t.dim },
+        );
+        if r.drag_started() {
+            page.begin_drag();
+        }
+        if r.double_clicked() {
+            page.adjust(asks, obj(spec.field, obj(key, json!(spec.neutral))));
+        } else if r.dragged() && r.drag_delta().y != 0.0 {
+            // up raises it
+            let per_point = 2.0 * reach / bar.height().max(1.0) * if fine { 0.1 } else { 1.0 };
+            page.adjust(asks, obj(spec.field, obj(key, json!(v - r.drag_delta().y * per_point))));
+        }
+        if r.drag_stopped() {
+            page.end_drag();
+        }
     }
 }
 
