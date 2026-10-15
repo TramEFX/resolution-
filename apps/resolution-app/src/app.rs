@@ -3595,6 +3595,62 @@ mod tests {
         }
     }
 
+    /// The Edit page's tools and keys in a row, as an editor tidies a cut (LOG D-076): markers at
+    /// two places and Shift+Up and Shift+Down between them (the demo's own markers around them), D to turn a clip off and on, Blade mode
+    /// to cut a clip, A back to selection, then Ctrl+Z through it all.
+    #[test]
+    fn the_edit_pages_tools_in_a_row() {
+        let mut h = demo();
+        pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
+        let tl = |a: &ResolutionApp| a.timeline.clone().expect("a timeline");
+        let frame = |a: &ResolutionApp| a.playhead_frame();
+        // markers at frames 24 and 96, beside the demo's own (a key press is taken at the next
+        // step, so each is stepped in before the playhead moves on)
+        let had = tl(h.state()).markers.len();
+        for (k, f) in [(1, 24), (2, 96)] {
+            h.state().worker.run("playhead.set", json!({ "frame": f }));
+            pump(&mut h, "the playhead there", |a| frame(a) == f);
+            h.key_press(Key::M);
+            pump(&mut h, "the marker", |a| tl(a).markers.len() == had + k);
+        }
+        // Shift+Up to the first, Shift+Down to the second
+        h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowUp);
+        pump(&mut h, "Shift+Up to the first marker", |a| frame(a) == 24);
+        h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowDown);
+        pump(&mut h, "Shift+Down to the second", |a| frame(a) == 96);
+        // D turns the selected clip off, and on again
+        let (c, r) = v2_clip(h.state());
+        click_at(&mut h, r.center());
+        pump(&mut h, "the V2 clip selected", |a| tl(a).selected().is_some_and(|(_, s)| s.id == c.id));
+        h.key_press(Key::D);
+        pump(&mut h, "the clip off", |a| !v2_clip(a).0.enabled);
+        h.key_press(Key::D);
+        pump(&mut h, "the clip on again", |a| v2_clip(a).0.enabled);
+        // B, a click on the clip: two clips on V2; A: the selection tool again
+        h.key_press(Key::B);
+        h.step();
+        let (_, r) = v2_clip(h.state());
+        click_at(&mut h, r.center());
+        pump(&mut h, "V2 cut in two", |a| tl(a).video[1].clips.len() == 2);
+        h.key_press(Key::A);
+        h.step();
+        assert_eq!(h.state().mode, EditMode::Selection);
+        // Ctrl+Z back through the cut, the two D presses and the markers
+        for want in ["V2 whole again", "the clip off again", "the clip on", "one marker", "the demo's markers"] {
+            h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+            pump(&mut h, want, |a| {
+                let t = tl(a);
+                match want {
+                    "V2 whole again" => t.video[1].clips.len() == 1,
+                    "the clip off again" => !t.video[1].clips[0].enabled,
+                    "the clip on" => t.video[1].clips[0].enabled,
+                    "one marker" => t.markers.len() == had + 1,
+                    _ => t.markers.len() == had,
+                }
+            });
+        }
+    }
+
     #[test]
     fn edit_mode_keys_change_the_tool() {
         let mut h = demo();
