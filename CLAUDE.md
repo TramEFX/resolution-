@@ -62,8 +62,20 @@ How it runs:
 
    HANDOFF, the LOG index and memory are brought up to date before it.
 
+Learned on the first run (2026-10-14/15):
+- **The usage cap, not the clock, ended it.** It ran out about 1.5 hours into a five-hour window,
+  after 11 PRs.
+- **Check-ins don't help once the cap is out.** They queued, and with them the wrap-up, and all
+  arrived together at the next prompt the next day. So the morning report did not exist until
+  then.
+- **So keep the report current after every PR**, in the queue file and the memory note. Write
+  the log and HANDOFF as each PR merges, never only at the end, and leave nothing half-done on
+  main at any moment.
+
 To refine:
 - Keep the queue file in the repo (`docs/runs/`), so it outlives the session.
+- Pace the work to the cap, or not: a quick burn finishes as much, but leaves no one to answer
+  the check-ins.
 - How big an item should be, and how often to check in.
 - Whether subagents in worktrees are worth their cost for parallel items.
 - How to measure what a night achieved.
