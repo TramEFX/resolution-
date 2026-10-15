@@ -72,6 +72,8 @@ pub struct Options {
     /// Move the window here once it is open: its top left corner, in the screen's own pixels
     /// (`--window-at`, LOG D-049).
     pub window_at: Option<[f32; 2]>,
+    /// Make the window this size once it is open, in points (`--window-size`).
+    pub window_size: Option<[f32; 2]>,
     /// Start with the Highlight view on, `true` in black and white (`--highlight`, for
     /// self-tests; LOG D-048).
     pub highlight: Option<bool>,
@@ -207,6 +209,8 @@ pub struct ResolutionApp {
     keep_memory: bool,
     /// Where to move the window on the first frame (`Options::window_at`).
     window_at: Option<[f32; 2]>,
+    /// And the size to make it (`Options::window_size`).
+    window_size: Option<[f32; 2]>,
 }
 
 impl ResolutionApp {
@@ -322,9 +326,13 @@ impl ResolutionApp {
             auto_timeline: !options.import.is_empty(),
             seek_after_load: options.seek,
             source_after_load: options.source,
-            keep_memory: options.window_at.is_none() && options.screenshot.is_none() && options.play_for.is_none(),
+            keep_memory: options.window_at.is_none()
+                && options.window_size.is_none()
+                && options.screenshot.is_none()
+                && options.play_for.is_none(),
             screenshot: options.screenshot.map(|p| (p, 0)),
             window_at: options.window_at,
+            window_size: options.window_size,
         }
     }
 
@@ -1712,10 +1720,13 @@ impl ResolutionApp {
         self.scope_view.follow(ui.ctx(), self.timeline_viewer.graded_picture());
         self.draft_banner(ui);
         let mut asks = Vec::new();
+        // the palettes take at most two fifths of the window to start with, so a laptop's screen
+        // leaves the viewer room (LOG B-058)
+        let palettes = (ui.available_height() * 0.4).clamp(220.0, 340.0);
         egui::Panel::bottom("color-palettes")
             .resizable(true)
-            .default_size(340.0)
-            .min_size(260.0)
+            .default_size(palettes)
+            .min_size(220.0)
             .frame(fill(t.panel))
             .show(ui, |ui| {
                 let rect = ui.max_rect();
@@ -1948,6 +1959,9 @@ impl eframe::App for ResolutionApp {
             let ppp = ctx.pixels_per_point();
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x / ppp, y / ppp)));
         }
+        if let Some([w, h]) = self.window_size.take() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+        }
         for reply in self.worker.poll() {
             self.apply(reply);
         }
@@ -2070,8 +2084,13 @@ mod tests {
     /// The demo, its UI stepped `dt` seconds at a time: a double-click needs its clicks within
     /// 0.3 s, and the harness's default step is 0.25 s, one queued event a step.
     fn demo_stepping(dt: f32) -> Harness<'static, ResolutionApp> {
+        demo_at(egui::vec2(1600.0, 920.0), dt)
+    }
+
+    /// The demo in a window of `size` points.
+    fn demo_at(size: egui::Vec2, dt: f32) -> Harness<'static, ResolutionApp> {
         let mut h = Harness::builder()
-            .with_size(egui::vec2(1600.0, 920.0))
+            .with_size(size)
             .with_step_dt(dt)
             .build_eframe(|cc| ResolutionApp::new(cc, Options { demo: true, mute: true, ..Default::default() }));
         pump(&mut h, "the demo timeline", |a| a.timeline.is_some());
@@ -3531,6 +3550,20 @@ mod tests {
             h.step();
         }
         assert_eq!(h.state().color.window, 1, "the new window is the one chosen");
+    }
+
+    /// On a laptop's screen, 1366 × 768, the Color page leaves the viewer room, and the scopes'
+    /// buttons become one menu instead of running over the Curves palette (LOG B-058).
+    #[test]
+    fn the_color_page_fits_a_laptops_screen() {
+        let mut h = color_page_of(demo_at(egui::vec2(1366.0, 768.0), 0.25));
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
+        h.step();
+        let pic = h.state().picture_rect.expect("a picture");
+        eprintln!("the viewer's picture at 1366 x 768: {pic:?}");
+        assert!(pic.height() >= 150.0, "the viewer's picture is {pic:?}");
+        let (scopes, curves) = (h.get_by_label("Waveform ⏷").rect(), h.get_by_label("Custom ⏷").rect());
+        assert!(scopes.left() >= curves.right(), "{scopes:?} runs over {curves:?}");
     }
 
     #[test]

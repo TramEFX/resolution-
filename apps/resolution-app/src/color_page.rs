@@ -1438,8 +1438,25 @@ pub fn scopes_panel(ui: &mut Ui, look: &Look, view: &mut ScopeView) {
     let room = ui.available_width() - 20.0 - buttons;
     let header =
         chrome::panel_header(ui, look, if room > width("Scopes", look.medium()) + 12.0 { "Scopes" } else { "" }, None);
+    // too narrow for the four buttons: one menu, named for the scope shown (LOG B-058)
+    if room < 0.0 {
+        let menu =
+            Rect::from_min_max(pos2(header.left() + 6.0, header.top()), pos2(header.right() - 6.0, header.bottom()));
+        within(ui, menu, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button(format!("{} {}", view.kind.label(), crate::theme::MENU_MARK), |ui| {
+                    for kind in ScopeKind::ALL {
+                        if ui.selectable_label(view.kind == kind, kind.label()).clicked() {
+                            view.kind = kind;
+                            ui.close();
+                        }
+                    }
+                });
+            });
+        });
+    }
     let mut x = header.right() - 10.0;
-    for kind in ScopeKind::ALL.into_iter().rev() {
+    for kind in ScopeKind::ALL.into_iter().rev().filter(|_| room >= 0.0) {
         let w = width(kind.label(), look.small()) + 12.0;
         let b = Rect::from_min_max(pos2(x - w, header.top() + 4.0), pos2(x, header.bottom() - 4.0));
         x -= w + 3.0;
