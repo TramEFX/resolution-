@@ -107,6 +107,21 @@ fn a_gradient_draws_on_the_gpu_as_its_compiled_mask_does() {
     }
 }
 
+/// A Polygon window (LOG D-053), hard-edged and turned, on the GPU against its compiled mask.
+#[test]
+fn a_polygon_draws_on_the_gpu_as_its_compiled_mask_does() {
+    let mut e = demo();
+    let mut polygon = serde_json::to_value(resolution_grade::Window::new(resolution_grade::Shape::Polygon)).unwrap();
+    polygon["softness"] = json!(0.0);
+    polygon["rotation"] = json!(25.0);
+    polygon["points"] = json!([[0.0, -1.0], [1.2, 0.3], [0.4, 1.0], [-1.0, 0.8], [-0.6, -0.2]]);
+    adjust(&mut e, json!({"gain": {"y": 0.4}, "windows": [polygon]}));
+    let Some((gpu, cpu)) = both(&e) else { return };
+    let (mean, p99) = differ(&gpu, &cpu);
+    eprintln!("polygon: mean {mean:.2}, 99% {p99:.1} code values");
+    assert!(mean < 1.0 && p99 <= 3.0, "mean {mean}, 99% {p99}");
+}
+
 #[test]
 fn a_qualifier_draws_on_the_gpu_close_to_its_baked_lut() {
     let mut e = demo();

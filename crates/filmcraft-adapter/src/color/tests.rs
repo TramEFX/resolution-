@@ -280,6 +280,24 @@ fn a_gradient_window_compiles_to_its_half_of_the_picture() {
     assert_eq!(at(&f, 400, 540), at(&before, 400, 540), "untouched on the left");
 }
 
+/// A Polygon window (LOG D-053) through the compile: a triangle in the middle of the picture.
+#[test]
+fn a_polygon_window_compiles_to_its_corners() {
+    let mut e = demo();
+    let before = frame(&e, 1920);
+    let mut triangle = serde_json::to_value(Window::new(Shape::Polygon)).unwrap();
+    triangle["softness"] = json!(0.0);
+    triangle["size"] = json!([0.5, 0.5]);
+    triangle["points"] = json!([[0.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]);
+    adjust(&mut e, json!({"gain": {"y": 0.0}, "windows": [triangle]}));
+    // the half-width is 480 pixels: corners at (960, 60), (1440, 1020) and (480, 1020)
+    let f = frame(&e, 1920);
+    assert!(at(&f, 960, 700).iter().all(|v| *v < 0.01), "black inside");
+    for (x, y) in [(600, 200), (1700, 900), (960, 40)] {
+        assert_eq!(at(&f, x, y), at(&before, x, y), "untouched outside, at {x}, {y}");
+    }
+}
+
 #[test]
 fn a_turned_linear_window_turns_its_rectangle() {
     let w = |rotation: f32| {

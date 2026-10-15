@@ -670,13 +670,18 @@ pub enum Shape {
     /// centre, the side above it keyed (at Rotate 0; turning clockwise with Rotate), soft across
     /// the line. Its size is not used.
     Gradient,
+    /// Resolve's Polygon window (LOG D-053): straight sides through its `points`.
+    Polygon,
 }
+
+/// The most corners a Polygon window has (Resolve's limit).
+pub const MAX_POLYGON_POINTS: usize = 128;
 
 /// A window (LOG D-031): limits its node's correction to a shape on the clip's picture, with a
 /// soft edge. Positions are fractions of the picture: `center` across its width and down its
 /// height, from the top left. Sizes are fractions of the picture's *width* on both axes, so equal
 /// numbers are a circle or a square however wide the picture is.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Window {
     pub shape: Shape,
@@ -692,6 +697,12 @@ pub struct Window {
     pub softness: f32,
     /// How strongly the window lets the correction through, 0 to 100.
     pub opacity: f32,
+    /// A Polygon's corners, in order, in the window's own space (LOG D-053): -1 to 1 across its
+    /// size, before it is turned and placed, as a Linear window's corners are at ±1. So Pan,
+    /// Tilt, Size, Aspect and Rotate move a polygon as they move the other shapes. Other shapes
+    /// have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<[f32; 2]>,
 }
 
 impl Window {
@@ -699,7 +710,7 @@ impl Window {
     pub fn new(shape: Shape) -> Self {
         let size = match shape {
             Shape::Circle => [0.33, 0.33],
-            Shape::Linear => [0.4, 0.25],
+            Shape::Linear | Shape::Polygon => [0.4, 0.25],
             Shape::Gradient => [1.0, 1.0],
         };
         Self {
@@ -712,8 +723,12 @@ impl Window {
             // a gradient is soft: a fifth of the picture's width across its line
             softness: if shape == Shape::Gradient { 0.2 } else { 0.02 },
             opacity: 100.0,
+            // a polygon starts as Resolve's does: a rectangle of four corners
+            points: if shape == Shape::Polygon { Self::SQUARE.to_vec() } else { Vec::new() },
         }
     }
+
+    const SQUARE: [[f32; 2]; 4] = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]];
 
     fn clamp(&mut self) {
         self.center = self.center.map(|v| v.clamp(-1.0, 2.0));
@@ -721,6 +736,18 @@ impl Window {
         self.rotation = self.rotation.clamp(-360.0, 360.0);
         self.softness = self.softness.clamp(0.0, 1.0);
         self.opacity = self.opacity.clamp(0.0, 100.0);
+        if self.shape == Shape::Polygon {
+            for p in &mut self.points {
+                *p = p.map(|v| v.clamp(-4.0, 4.0));
+            }
+            self.points.truncate(MAX_POLYGON_POINTS);
+            // fewer than three corners enclose nothing
+            if self.points.len() < 3 {
+                self.points = Self::SQUARE.to_vec();
+            }
+        } else {
+            self.points.clear();
+        }
     }
 }
 

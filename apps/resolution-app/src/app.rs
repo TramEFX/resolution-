@@ -2823,6 +2823,46 @@ mod tests {
     }
 
     #[test]
+    fn a_polygons_corners_are_dragged_added_and_removed_on_screen() {
+        let mut h = on_color_page();
+        click(&mut h, "Window palette");
+        click(&mut h, "Add Polygon");
+        let points = |a: &ResolutionApp| {
+            a.color.current().and_then(|n| n.windows.first().map(|w| w.points.clone())).unwrap_or_default()
+        };
+        pump(&mut h, "a polygon of four corners, from the engine", |a| !a.color.dragging && points(a).len() == 4);
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
+        h.step();
+        // a new polygon: 0.4 by 0.25 of the picture's width, in the middle; the demo clip fills it
+        let osc = h.get_by_label("Window on-screen control").rect();
+        let (c, rx, ry) = (osc.center(), 0.4 * osc.width() / 2.0, 0.25 * osc.width() / 2.0);
+        let top_left = c - vec2(rx, ry);
+        drag(&mut h, top_left, top_left - vec2(30.0, 20.0));
+        pump(&mut h, "the top left corner dragged out", |a| {
+            !a.color.dragging && points(a).first().is_some_and(|p| p[0] < -1.05 && p[1] < -1.05)
+        });
+        // a click on the surface, just under the bottom side's middle: a corner there
+        click_at(&mut h, c + vec2(0.0, ry - 4.0));
+        pump(&mut h, "a fifth corner on the bottom side", |a| {
+            points(a).len() == 5 && points(a).iter().any(|p| p[0].abs() < 0.05 && (p[1] - 1.0).abs() < 0.05)
+        });
+        // a middle click on it removes it
+        let at = c + vec2(0.0, ry);
+        h.event(egui::Event::PointerMoved(at));
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos: at,
+                button: PointerButton::Middle,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        h.step();
+        pump(&mut h, "four corners again", |a| points(a).len() == 4);
+    }
+
+    #[test]
     fn a_gradient_window_is_added_without_a_size() {
         let mut h = on_color_page();
         click(&mut h, "Window palette");

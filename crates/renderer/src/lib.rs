@@ -1171,6 +1171,10 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
     let active: Vec<_> = active_nodes(grade, keep).into_iter().map(|(_, n)| n).collect();
     let mut nodes = Vec::with_capacity(active.len() * NODE_FLOATS);
     let mut tones = Vec::with_capacity(active.len() * TABLES * TONE_N);
+    // polygon windows' corners, in the picture's pixels, after every node's tables: each its
+    // corner count, then x and y for each corner (LOG D-053)
+    let after_tables = active.len() * TABLES * TONE_N;
+    let mut corners: Vec<f32> = Vec::new();
     for n in &active {
         let mut b = [0f32; NODE_FLOATS];
         let s = n.saturation();
@@ -1223,6 +1227,7 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
                     Shape::Linear => 0.0,
                     Shape::Circle => 1.0,
                     Shape::Gradient => 2.0,
+                    Shape::Polygon => 3.0,
                 },
                 win.center[0] * w,
                 win.center[1] * h,
@@ -1233,6 +1238,18 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
                 win.opacity / 100.0,
                 if win.invert { 1.0 } else { 0.0 },
             ]);
+            if win.shape == Shape::Polygon {
+                // turned and placed as the shader's other shapes are: x' = x·cos − y·sin
+                b[o + 9] = (after_tables + corners.len()) as f32;
+                let (rx, ry) = (win.size[0] * w / 2.0, win.size[1] * w / 2.0);
+                let (sin, cos) = win.rotation.to_radians().sin_cos();
+                let (cx, cy) = (win.center[0] * w, win.center[1] * h);
+                corners.push(win.points.len() as f32);
+                for p in &win.points {
+                    let (x, y) = (p[0] * rx, p[1] * ry);
+                    corners.extend([cx + x * cos - y * sin, cy + x * sin + y * cos]);
+                }
+            }
         }
         nodes.extend_from_slice(&b);
         for c in 0..3 {
@@ -1244,6 +1261,7 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
             tones.extend((0..TONE_N).map(|i| c.eval(i as f32 / step, periodic)));
         }
     }
+    tones.extend(corners);
     (nodes, tones, active.len())
 }
 

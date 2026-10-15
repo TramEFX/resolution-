@@ -542,8 +542,30 @@ fn the_highlight_view_shows_what_a_node_keys() {
 #[test]
 fn a_gradient_window_is_written_as_gradient() {
     let w = Window::new(Shape::Gradient);
-    let j = serde_json::to_value(w).unwrap();
+    let j = serde_json::to_value(&w).unwrap();
     assert_eq!(j["shape"], "gradient");
     let back: Window = serde_json::from_value(j).unwrap();
     assert_eq!(back, w);
+}
+
+#[test]
+fn a_polygon_window_keeps_three_to_128_corners_and_other_shapes_none() {
+    let w = Window::new(Shape::Polygon);
+    assert_eq!(w.points.len(), 4, "a new polygon is a rectangle");
+    let j = serde_json::to_value(&w).unwrap();
+    assert_eq!(j["shape"], "polygon");
+    assert_eq!(serde_json::from_value::<Window>(j).unwrap(), w);
+    // a circle stored before polygons existed has no points, and writes none
+    let circle = serde_json::to_value(Window::new(Shape::Circle)).unwrap();
+    assert!(circle.get("points").is_none());
+    let window = |points: serde_json::Value, shape: &str| {
+        let mut w = serde_json::to_value(Window::new(Shape::Polygon)).unwrap();
+        w["points"] = points;
+        w["shape"] = json!(shape);
+        node(json!({ "windows": [w] })).windows[0].clone()
+    };
+    assert_eq!(window(json!([[0.0, -1.0], [1.0, 1.0]]), "polygon").points.len(), 4, "two corners: the rectangle again");
+    let many: Vec<[f32; 2]> = (0..200).map(|i| [(i as f32 / 31.8).cos(), (i as f32 / 31.8).sin()]).collect();
+    assert_eq!(window(json!(many), "polygon").points.len(), MAX_POLYGON_POINTS);
+    assert!(window(json!([[0.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]), "circle").points.is_empty());
 }
