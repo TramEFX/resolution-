@@ -2918,6 +2918,30 @@ mod tests {
     }
 
     #[test]
+    fn a_windows_handles_change_its_size_softness_and_rotation() {
+        let mut h = on_color_page();
+        click(&mut h, "Window palette");
+        click(&mut h, "Add Circle");
+        let first = |a: &ResolutionApp| a.color.current().and_then(|n| n.windows.first().cloned());
+        pump(&mut h, "a circle window, from the engine", |a| !a.color.dragging && first(a).is_some());
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
+        h.step();
+        // a new circle: 0.33 of the picture's width across, in the middle; the demo clip fills it
+        let osc = h.get_by_label("Window on-screen control").rect();
+        let (c, r) = (osc.center(), 0.33 * osc.width() / 2.0);
+        drag(&mut h, c + vec2(r, 0.0), c + vec2(r + 40.0, 0.0));
+        pump(&mut h, "wider", |a| !a.color.dragging && first(a).is_some_and(|w| w.size[0] > 0.36 && w.size[1] < 0.34));
+        let soft = c + vec2(0.0, r + 14.0 + 0.02 * osc.width() / 2.0);
+        drag(&mut h, soft, soft + vec2(0.0, 30.0));
+        pump(&mut h, "softer", |a| !a.color.dragging && first(a).is_some_and(|w| w.softness > 0.05));
+        let turn = c - vec2(0.0, r + 28.0);
+        drag(&mut h, turn, c + vec2(120.0, 0.0));
+        pump(&mut h, "a quarter turn", |a| {
+            !a.color.dragging && first(a).is_some_and(|w| (w.rotation - 90.0).abs() < 3.0)
+        });
+    }
+
+    #[test]
     fn a_gradient_window_is_added_without_a_size() {
         let mut h = on_color_page();
         click(&mut h, "Window palette");

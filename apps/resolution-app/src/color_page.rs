@@ -60,6 +60,8 @@ pub struct ColorPage {
     moving_window: bool,
     /// The on-screen control is moving this corner of the chosen polygon window.
     moving_point: Option<usize>,
+    /// The on-screen control is dragging this handle of the chosen window (LOG D-057).
+    moving_handle: Option<Handle>,
     /// Per clip, the revision at which its grade last changed: when its thumbnail is due again.
     pub stamps: HashMap<u64, u64>,
     /// The Highlight view of the current node, when on (LOG D-048): `true` in black and white.
@@ -96,6 +98,7 @@ impl ColorPage {
         self.curve_point = None;
         self.moving_window = false;
         self.moving_point = None;
+        self.moving_handle = None;
         self.asked = None;
     }
 
@@ -1501,6 +1504,69 @@ fn outline(w: &Window, pic: Rect) -> Vec<Pos2> {
     }
 }
 
+/// A handle of the chosen window on screen (LOG D-057).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Handle {
+    /// The right side: the width.
+    Width,
+    /// The top: the height.
+    Height,
+    /// A corner: both, keeping the aspect.
+    Scale,
+    /// Above the window: the rotation.
+    Rotate,
+    /// Below it: the softness.
+    Soft,
+}
+
+/// Pixels between a window's edge and its rotate and softness handles.
+const HANDLE_GAP: f32 = 28.0;
+
+/// The chosen window's handles on screen, for a clip picture drawn in `pic`: a Gradient has no
+/// size, and its rotate handle is at the tip of its tick.
+fn handles(w: &Window, pic: Rect) -> Vec<(Handle, Pos2)> {
+    let c = pic.min + vec2(w.center[0] * pic.width(), w.center[1] * pic.height());
+    let (sin, cos) = w.rotation.to_radians().sin_cos();
+    let at = |x: f32, y: f32| c + vec2(x * cos - y * sin, x * sin + y * cos);
+    let soft = w.softness * pic.width() / 2.0;
+    if w.shape == WindowShape::Gradient {
+        return vec![(Handle::Rotate, at(0.0, -HANDLE_GAP)), (Handle::Soft, at(0.0, HANDLE_GAP / 2.0 + soft))];
+    }
+    let (rx, ry) = (w.size[0] * pic.width() / 2.0, w.size[1] * pic.width() / 2.0);
+    vec![
+        (Handle::Width, at(rx, 0.0)),
+        (Handle::Height, at(0.0, -ry)),
+        (Handle::Scale, at(rx, ry)),
+        (Handle::Rotate, at(0.0, -ry - HANDLE_GAP)),
+        (Handle::Soft, at(0.0, ry + HANDLE_GAP / 2.0 + soft)),
+    ]
+}
+
+/// The window `w` with handle `h` dragged to `p` on screen.
+fn dragged(w: &Window, pic: Rect, h: Handle, p: Pos2) -> Window {
+    let mut w = w.clone();
+    let c = pic.min + vec2(w.center[0] * pic.width(), w.center[1] * pic.height());
+    let d = p - c;
+    let (sin, cos) = w.rotation.to_radians().sin_cos();
+    // in the window's own frame, in pixels
+    let (lx, ly) = (d.x * cos + d.y * sin, -d.x * sin + d.y * cos);
+    let pw = pic.width().max(1.0);
+    let ry = if w.shape == WindowShape::Gradient { 0.0 } else { w.size[1] * pw / 2.0 };
+    match h {
+        Handle::Width => w.size[0] = (2.0 * lx.abs() / pw).max(0.002),
+        Handle::Height => w.size[1] = (2.0 * ly.abs() / pw).max(0.002),
+        Handle::Scale => {
+            let now = (w.size[0].hypot(w.size[1]) * pw / 2.0).max(1e-3);
+            let k = lx.hypot(ly) / now;
+            w.size = w.size.map(|s| (s * k).max(0.002));
+        }
+        // 0 straight up, clockwise
+        Handle::Rotate => w.rotation = d.x.atan2(-d.y).to_degrees(),
+        Handle::Soft => w.softness = ((ly - ry - HANDLE_GAP / 2.0) * 2.0 / pw).clamp(0.0, 1.0),
+    }
+    w
+}
+
 /// A point in a window's own space (see `Window::points`) on screen, for a clip picture drawn in
 /// `pic`; and back.
 fn window_to_screen(w: &Window, pic: Rect, p: [f32; 2]) -> Pos2 {
@@ -1534,7 +1600,8 @@ fn inside(poly: &[Pos2], p: Pos2) -> bool {
 /// `frame` pixels): each window's outline, the chosen one bright. Drag inside a window to move it
 /// (and choose it). A chosen polygon shows its corners, as Resolve's does: drag one to move it,
 /// click the polygon's surface to add a corner on its nearest side, middle-click a corner to
-/// remove it (LOG D-053).
+/// remove it (LOG D-053). The chosen window's handles change its size (right side, top, a corner),
+/// its rotation (above it) and its softness (below it) (LOG D-057).
 pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32), page: &mut ColorPage) -> Vec<Ask> {
     let mut asks = Vec::new();
     let Some(view) = page.view.clone() else { return asks };
@@ -1564,16 +1631,34 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
         painter.rect_filled(handle, CornerRadius::ZERO, look.theme.accent);
     }
     let near = |p: Pos2| corners.iter().position(|c| c.distance(p) <= 8.0);
+    // the chosen window's handles: squares for its size, a circle to turn it, a ring for softness
+    let grips = node.windows.get(page.window).map(|w| handles(w, pic)).unwrap_or_default();
+    for (h, at) in &grips {
+        let _ = match h {
+            Handle::Rotate => painter.circle_filled(*at, 4.5, look.theme.text),
+            Handle::Soft => painter.circle_stroke(*at, 5.0, Stroke::new(1.5, look.theme.text)),
+            _ => painter.rect_filled(Rect::from_center_size(*at, vec2(7.0, 7.0)), CornerRadius::ZERO, look.theme.text),
+        };
+    }
+    let grip = |p: Pos2| grips.iter().find(|(_, at)| at.distance(p) <= 8.0).map(|(h, _)| *h);
     let r = ui.interact(screen, ui.id().with("window osc"), Sense::click_and_drag());
     name(&r, WidgetType::Other, "Window on-screen control");
+    // what a drag takes hold of is where it was pressed: egui starts it a few pixels on (LOG D-057)
+    let pressed = ui.input(|i| i.pointer.press_origin()).or(r.interact_pointer_pos());
     if r.drag_started()
-        && let Some(p) = r.interact_pointer_pos()
+        && let Some(p) = pressed
         && let Some(k) = near(p)
     {
         page.begin_drag();
         page.moving_point = Some(k);
     } else if r.drag_started()
-        && let Some(p) = r.interact_pointer_pos()
+        && let Some(p) = pressed
+        && let Some(h) = grip(p)
+    {
+        page.begin_drag();
+        page.moving_handle = Some(h);
+    } else if r.drag_started()
+        && let Some(p) = pressed
     {
         // the chosen window first, then the others, top one last drawn
         let hit = std::iter::once(page.window)
@@ -1604,7 +1689,7 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
     }
     if let (Some(w), Some(p)) = (polygon, r.interact_pointer_pos()) {
         let mut points = w.points.clone();
-        if r.clicked() && near(p).is_none() && inside(&corners, p) {
+        if r.clicked() && near(p).is_none() && grip(p).is_none() && inside(&corners, p) {
             // a corner on the nearest side, where the click falls across it
             let n = corners.len();
             let side = |i: usize| {
@@ -1628,7 +1713,18 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
             page.adjust(&mut asks, json!({ "windows": wins }));
         }
     }
-    if r.drag_stopped() && (page.moving_window || page.moving_point.is_some()) {
+    if let (Some(h), true) = (page.moving_handle, r.dragged())
+        && let Some(p) = r.interact_pointer_pos()
+        && let Some(w) = node.windows.get(page.window)
+    {
+        let moved = dragged(w, pic, h, p);
+        if moved != *w {
+            let mut wins = node.windows.clone();
+            wins[page.window] = moved;
+            page.adjust(&mut asks, json!({ "windows": wins }));
+        }
+    }
+    if r.drag_stopped() && (page.moving_window || page.moving_point.is_some() || page.moving_handle.is_some()) {
         page.end_drag();
     }
     asks
@@ -1818,4 +1914,39 @@ pub fn qualifier_picker(ui: &mut Ui, screen: Rect, picture: Option<&Arc<Frame>>,
         }
     }
     asks
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod handle_tests {
+    use super::*;
+
+    /// Each handle, dragged to a point, gives the window that puts it there (LOG D-057).
+    #[test]
+    fn a_dragged_handle_lands_under_the_pointer() {
+        let pic = Rect::from_min_size(pos2(100.0, 50.0), vec2(1000.0, 500.0));
+        let mut w = Window::new(WindowShape::Circle);
+        w.rotation = 30.0;
+        // (the rotate handle turns about the centre: tested on its own below)
+        for h in [Handle::Width, Handle::Height, Handle::Scale, Handle::Soft] {
+            let (_, at) = handles(&w, pic).into_iter().find(|(k, _)| *k == h).unwrap();
+            // moved out from the centre by a third
+            let c = pic.min + vec2(w.center[0] * pic.width(), w.center[1] * pic.height());
+            let to = c + (at - c) * 1.3;
+            let moved = dragged(&w, pic, h, to);
+            let (_, now) = handles(&moved, pic).into_iter().find(|(k, _)| *k == h).unwrap();
+            if h != Handle::Soft {
+                assert!(now.distance(to) < 0.5, "{h:?}: {now:?} against {to:?}");
+            }
+            assert_ne!(moved, w, "{h:?} changed nothing");
+        }
+        // the rotate handle straight to the right of the centre: a quarter turn
+        let c = pic.center();
+        assert!((dragged(&w, pic, Handle::Rotate, c + vec2(80.0, 0.0)).rotation - 90.0).abs() < 1e-3);
+        // softness below the window: dragged further down, softer
+        let (_, soft) = handles(&w, pic).into_iter().find(|(k, _)| *k == Handle::Soft).unwrap();
+        let (sin, cos) = w.rotation.to_radians().sin_cos();
+        let further = soft + vec2(-sin, cos) * 20.0;
+        assert!(dragged(&w, pic, Handle::Soft, further).softness > w.softness + 0.03);
+    }
 }
