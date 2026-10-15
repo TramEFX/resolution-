@@ -96,16 +96,24 @@ impl Grade {
     /// `black_white`, the matte itself, white where keyed. A node without a qualifier keys
     /// everything; a disabled node, or none at `node`, leaves the graded picture as it is.
     pub fn highlight_image(&self, px: &mut [[f32; 3]], w: usize, h: usize, node: usize, black_white: bool) {
-        self.image(px, w, h, Some((node, black_white)));
+        self.image(px, w, h, Some((node, if black_white { Lit::BlackWhite } else { Lit::Grey })));
     }
 
-    fn image(&self, px: &mut [[f32; 3]], w: usize, h: usize, highlight: Option<(usize, bool)>) {
+    /// Highlight Difference (LOG D-070): how far node `node` moves each pixel from its input, as a
+    /// grey matte, [`DIFFERENCE_GAIN`] times the most any channel moves. The nodes after it are
+    /// not drawn.
+    pub fn difference_image(&self, px: &mut [[f32; 3]], w: usize, h: usize, node: usize) {
+        self.image(px, w, h, Some((node, Lit::Difference)));
+    }
+
+    fn image(&self, px: &mut [[f32; 3]], w: usize, h: usize, highlight: Option<(usize, Lit)>) {
         let mut matte = None;
         for (i, n) in self.nodes.iter().enumerate().filter(|(_, n)| n.enabled) {
             let keys = n.keyed().map(|q| q.matte(px, w, h));
             if highlight.is_some_and(|(at, _)| at == i) {
                 matte = Some(keys.clone().unwrap_or_else(|| vec![1.0; px.len()]));
             }
+            let input = (highlight == Some((i, Lit::Difference))).then(|| px.to_vec());
             // Midtone Detail's blurred luma of the node's input (LOG D-055)
             let blurred = (n.midtone_detail != 0.0).then(|| {
                 let l: Vec<f32> = px.iter().map(|p| luma(*p)).collect();
@@ -115,10 +123,17 @@ impl Grade {
             for (i, p) in px.iter_mut().enumerate() {
                 *p = n.apply_detailed(*p, keys.as_ref().map(|k| k[i]), blurred.as_ref().map(|b| b[i]));
             }
+            if let Some(input) = input {
+                for (p, q) in px.iter_mut().zip(input) {
+                    let d = (0..3).map(|c| (p[c] - q[c]).abs()).fold(0.0, f32::max);
+                    *p = [(d * DIFFERENCE_GAIN).clamp(0.0, 1.0); 3];
+                }
+                return;
+            }
         }
-        let (Some(matte), Some((_, black_white))) = (matte, highlight) else { return };
+        let (Some(matte), Some((_, lit))) = (matte, highlight) else { return };
         for (p, k) in px.iter_mut().zip(matte) {
-            *p = if black_white { [k; 3] } else { p.map(|c| HIGHLIGHT_GRAY + (c - HIGHLIGHT_GRAY) * k) };
+            *p = if lit == Lit::BlackWhite { [k; 3] } else { p.map(|c| HIGHLIGHT_GRAY + (c - HIGHLIGHT_GRAY) * k) };
         }
     }
 
@@ -1348,6 +1363,18 @@ impl Saturation {
         let s = self.amount * (1.0 + self.boost * (1.0 - spread));
         rgb.map(|q| (l + (q - l) * s).clamp(0.0, 1.0))
     }
+}
+
+/// How bright Highlight Difference shows a change (LOG D-070, provisional): a quarter of the
+/// range, or more, is white.
+pub const DIFFERENCE_GAIN: f32 = 4.0;
+
+/// Which Highlight view [`Grade::image`] draws.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lit {
+    Grey,
+    BlackWhite,
+    Difference,
 }
 
 /// Rec. 709 luma.

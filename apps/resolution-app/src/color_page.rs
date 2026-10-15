@@ -70,6 +70,8 @@ pub struct ColorPage {
     pub stamps: HashMap<u64, u64>,
     /// The Highlight view of the current node, when on (LOG D-048): `true` in black and white.
     pub highlight: Option<bool>,
+    /// That view as Highlight Difference (LOG D-070); only `--highlight diff` sets it so far.
+    pub highlight_difference: bool,
 }
 
 impl ColorPage {
