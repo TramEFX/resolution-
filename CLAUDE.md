@@ -24,3 +24,46 @@ Hard rules:
 
 Checks before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
 First builds compile ~45 FilmCraft crates; expect several minutes and several GB in `target/`.
+
+## Unattended runs (first tried 2026-10-14; to refine)
+
+Truman may hand over a whole usage window, such as the five hours after a reset, while he
+rests. His PC stays on, and a Claude Code session can stay open for days, so session-scheduled
+jobs (CronCreate) fire through the night. The hardware is ours to use. Visual test windows go on
+display 2 (X=-1920, Y=165, 1920×1080), not his main screen.
+
+How it runs:
+
+1. **A queue file** holds the night's goal, its rules, the work items in order, and the wrap-up.
+   Every job reads it, and items are ticked off there as they finish. It sat in the session's
+   scratchpad the first time.
+2. **Scheduled jobs,** each one-shot:
+   - a start a few minutes after the reset;
+   - hourly check-ins, which resume from the file if a turn ended early (a job waits while a
+     turn is still running);
+   - a last check-in about 30 minutes before the end, which only finishes what can still be
+     merged;
+   - a wrap-up.
+3. **Rules while he's away:**
+   - Ask nothing; a question would block the night.
+   - A choice that can be undone later: make it, and log its D-entry as "provisional, for
+     Truman's review".
+   - A choice that is hard to undo (vocabulary ids, the grade JSON schema, MCP parameters, the
+     node-graph model): don't build it. Write up the options with a recommendation instead.
+   - Post nothing outside this repo.
+   - Every PR passes the checks above, and new tests get a mutation check.
+   - Unfinished work stays on its branch, unmerged.
+4. **The morning report,** as the final message and at the top of the queue file:
+   - the PRs merged;
+   - provisional decisions, for review;
+   - options waiting on Truman;
+   - what was seen by eye;
+   - what failed or was skipped.
+
+   HANDOFF, the LOG index and memory are brought up to date before it.
+
+To refine:
+- Keep the queue file in the repo (`docs/runs/`), so it outlives the session.
+- How big an item should be, and how often to check in.
+- Whether subagents in worktrees are worth their cost for parallel items.
+- How to measure what a night achieved.
