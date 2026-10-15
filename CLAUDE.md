@@ -72,6 +72,30 @@ Learned on the first run (2026-10-14/15):
   the log and HANDOFF as each PR merges, never only at the end, and leave nothing half-done on
   main at any moment.
 
+Learned on the second run (2026-10-15, from noon):
+- **The cap ended the first window about two hours in again**, after 15 PRs. Its check-ins arrived
+  together with Truman's "carry on" after the reset. The run then went on in the new window, with
+  its check-ins and wrap-up moved to fit it.
+- **Looking finds bugs that tests miss.** Screenshots on the second screen of real footage, in
+  states the tests don't reach, found eight bugs:
+  - a glyph missing from the fonts (B-045);
+  - reopened projects' grades looking foreign (B-046);
+  - clips cropped instead of fitted (B-050);
+  - overlapping labels and columns (B-048, B-051);
+  - panels growing and nodes running off the edge (B-052, B-054);
+  - self-tests saving their layout (B-053).
+
+  The front-end flags `--palette`, `--bars`, `--mini-timeline` and `--highlight diff` reach those
+  states.
+- **Chained UI rehearsals find what single-step tests miss:** a whole cut or grade in one test,
+  through keys and the mouse only. They found Ctrl+T doing nothing (B-043), and a race between the
+  UI's quick choices and the engine's older answers (B-055, B-056, B-057).
+- **Test harness quirks:**
+  - egui_kittest steps 0.25 s at a time, one queued event a step (no double-clicks without a
+    finer step);
+  - a key press is taken at the next step, after any `worker.run` sent meanwhile;
+  - a flaky test needs debug output tagged by test thread to trace.
+
 To refine:
 - Keep the queue file in the repo (`docs/runs/`), so it outlives the session.
 - Pace the work to the cap, or not: a quick burn finishes as much, but leaves no one to answer
