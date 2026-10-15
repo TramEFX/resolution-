@@ -1332,6 +1332,7 @@ fn shape_name(s: WindowShape) -> &'static str {
         WindowShape::Circle => "Circle",
         WindowShape::Gradient => "Gradient",
         WindowShape::Polygon => "Polygon",
+        WindowShape::Curve => "Curve",
     }
 }
 
@@ -1351,7 +1352,9 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        for shape in [WindowShape::Linear, WindowShape::Circle, WindowShape::Polygon, WindowShape::Gradient] {
+        for shape in
+            [WindowShape::Linear, WindowShape::Circle, WindowShape::Polygon, WindowShape::Curve, WindowShape::Gradient]
+        {
             if chrome::text_button(ui, look, &format!("Add {}", shape_name(shape)), true).clicked() {
                 wins.push(Window::new(shape));
                 page.window = wins.len() - 1;
@@ -1496,6 +1499,9 @@ fn outline(w: &Window, pic: Rect) -> Vec<Pos2> {
         }
         WindowShape::Linear => vec![turn(-rx, -ry), turn(rx, -ry), turn(rx, ry), turn(-rx, ry)],
         WindowShape::Polygon => w.points.iter().map(|p| turn(p[0] * rx, p[1] * ry)).collect(),
+        WindowShape::Curve => {
+            resolution_grade::curve_corners(&w.points).iter().map(|p| turn(p[0] * rx, p[1] * ry)).collect()
+        }
         // the keyed side, reaching well past the picture: on screen, its line across it
         WindowShape::Gradient => {
             let far = 4.0 * pic.width().max(pic.height());
@@ -1623,7 +1629,8 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
         }
     }
     // the chosen polygon's corners, as handles
-    let polygon = node.windows.get(page.window).filter(|w| w.shape == WindowShape::Polygon);
+    // a polygon's or a curve's points (LOG D-053, D-061)
+    let polygon = node.windows.get(page.window).filter(|w| w.shape.has_points());
     let corners: Vec<Pos2> =
         polygon.map(|w| w.points.iter().map(|p| window_to_screen(w, pic, *p)).collect()).unwrap_or_default();
     for c in &corners {
@@ -1689,7 +1696,11 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
     }
     if let (Some(w), Some(p)) = (polygon, r.interact_pointer_pos()) {
         let mut points = w.points.clone();
-        if r.clicked() && near(p).is_none() && grip(p).is_none() && inside(&corners, p) {
+        if r.clicked()
+            && near(p).is_none()
+            && grip(p).is_none()
+            && outlines.get(page.window).is_some_and(|o| inside(o, p))
+        {
             // a corner on the nearest side, where the click falls across it
             let n = corners.len();
             let side = |i: usize| {

@@ -867,10 +867,63 @@ pub enum Shape {
     Gradient,
     /// Resolve's Polygon window (LOG D-053): straight sides through its `points`.
     Polygon,
+    /// Resolve's Curve window (LOG D-061): a closed smooth curve through its `points` (see
+    /// [`curve_spans`]). Its Bézier handles are not yet its own to set.
+    Curve,
 }
 
 /// The most corners a Polygon window has (Resolve's limit).
 pub const MAX_POLYGON_POINTS: usize = 128;
+
+impl Shape {
+    /// Whether the shape is drawn through its window's `points`: a Polygon or a Curve.
+    pub fn has_points(self) -> bool {
+        matches!(self, Shape::Polygon | Shape::Curve)
+    }
+}
+
+/// The Curve window's spans (LOG D-061): for each point, the cubic Bézier to the next, as
+/// `[from, control, control, to]`. The points are joined by a closed Catmull-Rom spline: the curve
+/// passes through each point, its tangent there parallel to the line from the point before to
+/// the point after, a sixth of that line's length on either side.
+pub fn curve_spans(points: &[[f32; 2]]) -> Vec<[[f32; 2]; 4]> {
+    let n = points.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let at = |i: usize| points[i % n];
+    let tangent = |i: usize| {
+        let (a, b) = (at(i + n - 1), at(i + 1));
+        [(b[0] - a[0]) / 6.0, (b[1] - a[1]) / 6.0]
+    };
+    (0..n)
+        .map(|i| {
+            let (p, q, tp, tq) = (at(i), at(i + 1), tangent(i), tangent(i + 1));
+            [p, [p[0] + tp[0], p[1] + tp[1]], [q[0] - tq[0], q[1] - tq[1]], q]
+        })
+        .collect()
+}
+
+/// The most corners a Curve window is drawn with: its spans share them out.
+pub const MAX_CURVE_CORNERS: usize = 256;
+
+/// A Curve window's outline as corners, each span flattened into an equal share of
+/// [`MAX_CURVE_CORNERS`] (at most 16, at least 2), starting at its point.
+pub fn curve_corners(points: &[[f32; 2]]) -> Vec<[f32; 2]> {
+    let spans = curve_spans(points);
+    let steps = (MAX_CURVE_CORNERS / spans.len().max(1)).clamp(2, 16);
+    spans
+        .iter()
+        .flat_map(|[a, b, c, d]| {
+            (0..steps).map(move |k| {
+                let t = k as f32 / steps as f32;
+                let u = 1.0 - t;
+                let w = [u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t];
+                [0, 1].map(|j| w[0] * a[j] + w[1] * b[j] + w[2] * c[j] + w[3] * d[j])
+            })
+        })
+        .collect()
+}
 
 /// A window (LOG D-031): limits its node's correction to a shape on the clip's picture, with a
 /// soft edge. Positions are fractions of the picture: `center` across its width and down its
@@ -905,7 +958,7 @@ impl Window {
     pub fn new(shape: Shape) -> Self {
         let size = match shape {
             Shape::Circle => [0.33, 0.33],
-            Shape::Linear | Shape::Polygon => [0.4, 0.25],
+            Shape::Linear | Shape::Polygon | Shape::Curve => [0.4, 0.25],
             Shape::Gradient => [1.0, 1.0],
         };
         Self {
@@ -919,7 +972,7 @@ impl Window {
             softness: if shape == Shape::Gradient { 0.2 } else { 0.02 },
             opacity: 100.0,
             // a polygon starts as Resolve's does: a rectangle of four corners
-            points: if shape == Shape::Polygon { Self::SQUARE.to_vec() } else { Vec::new() },
+            points: if shape.has_points() { Self::SQUARE.to_vec() } else { Vec::new() },
         }
     }
 
@@ -931,7 +984,7 @@ impl Window {
         self.rotation = self.rotation.clamp(-360.0, 360.0);
         self.softness = self.softness.clamp(0.0, 1.0);
         self.opacity = self.opacity.clamp(0.0, 100.0);
-        if self.shape == Shape::Polygon {
+        if self.shape.has_points() {
             for p in &mut self.points {
                 *p = p.map(|v| v.clamp(-4.0, 4.0));
             }

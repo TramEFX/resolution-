@@ -28,7 +28,8 @@
 //! "foreign" (made outside the Color page); the next grade edit replaces them.
 
 use filmcraft_engine::project::{
-    ClipId, EffectInstance, ItemId, ItemKind, Mask, MaskPath, Param, ParamValue, Project, ProjectLut, find_effect,
+    ClipId, EffectInstance, ItemId, ItemKind, Mask, MaskPath, MaskVertex, Param, ParamValue, Project, ProjectLut,
+    find_effect,
 };
 use filmcraft_geom::Vec2;
 use resolution_engine_api::{EngineError, Outcome, Result};
@@ -447,6 +448,18 @@ fn mask(win: &Window, (w, h): (u32, u32), n: usize) -> Mask {
             MaskPath::rect(c.x - far, c.y - far, c.x + far, c.y)
         }
         // a Polygon's corners in its own space, placed (and turned below) as the others are
+        // a Curve's spans as Bézier vertices, their tangents the spline's (LOG D-061)
+        Shape::Curve => {
+            let at = |p: [f32; 2]| Vec2::new(f64::from(p[0]) * r.x, f64::from(p[1]) * r.y);
+            let spans = resolution_grade::curve_spans(&win.points);
+            MaskPath {
+                vertices: spans
+                    .iter()
+                    .map(|[p, control, ..]| MaskVertex::smooth(c + at(*p), at(*control) - at(*p)))
+                    .collect(),
+                closed: true,
+            }
+        }
         Shape::Polygon => MaskPath::polygon(
             &win.points.iter().map(|p| c + Vec2::new(f64::from(p[0]) * r.x, f64::from(p[1]) * r.y)).collect::<Vec<_>>(),
         ),

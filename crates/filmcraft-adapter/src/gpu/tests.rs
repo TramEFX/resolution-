@@ -122,6 +122,21 @@ fn a_polygon_draws_on_the_gpu_as_its_compiled_mask_does() {
     assert!(mean < 1.0 && p99 <= 3.0, "mean {mean}, 99% {p99}");
 }
 
+/// A Curve window (LOG D-061), turned, on the GPU against its compiled mask: the same Bézier spans.
+#[test]
+fn a_curve_draws_on_the_gpu_as_its_compiled_mask_does() {
+    let mut e = demo();
+    let mut curve = serde_json::to_value(resolution_grade::Window::new(resolution_grade::Shape::Curve)).unwrap();
+    curve["softness"] = json!(0.0);
+    curve["rotation"] = json!(-20.0);
+    curve["points"] = json!([[0.0, -1.0], [1.1, -0.2], [0.6, 1.0], [-0.8, 0.9], [-1.0, -0.3]]);
+    adjust(&mut e, json!({"gain": {"y": 0.4}, "windows": [curve]}));
+    let Some((gpu, cpu)) = both(&e) else { return };
+    let (mean, p99) = differ(&gpu, &cpu);
+    eprintln!("curve: mean {mean:.2}, 99% {p99:.1} code values");
+    assert!(mean < 1.0 && p99 <= 3.0, "mean {mean}, 99% {p99}");
+}
+
 #[test]
 fn a_qualifier_draws_on_the_gpu_close_to_its_baked_lut() {
     let mut e = demo();

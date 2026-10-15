@@ -126,6 +126,7 @@ doc is updated *and* the entry says which section moved.
 | D-058 | 2026-10-14 | color | More matte finesse: Black Clip, White Clip and Morph | active |
 | D-059 | 2026-10-14 | engine | Replace, Place on Top, Ripple Overwrite and Append at End, composed from FilmCraft's commands | active |
 | D-060 | 2026-10-14 | engine | Fit to Fill: the source retimed to fill the timeline's In to Out | active |
+| D-061 | 2026-10-15 | color | The Curve window: a closed Catmull-Rom curve through its points | active (format with D-053's, provisional) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3274,3 +3275,33 @@ headless, 32 front-end, 1 missing (dynamic trim).
 - the music on A2 untouched, nothing left past the end, one undo step.
 
 With the speed inverted, it fails.
+
+### D-061 — The Curve window: a closed Catmull-Rom curve through its points
+**Area:** color · **Status:** active; its format is D-053's, provisional · **Doc:** `crates/grade`
+(`curve_spans`, `curve_corners`); `crates/renderer` (`grade_data`); `color.rs` (`mask`);
+`color_page.rs`
+
+**Decision:** Resolve's fifth window, as a closed smooth curve through its points. It shares the
+Polygon's `points` (D-053), and so the same provisional format, and the same editing on screen:
+drag a point, click the surface to add one on the nearest side, middle-click to remove one.
+
+- **The curve:** each span between two points is a cubic Bézier, from one point to the next. At
+  each point its tangent lies along the line from the point before to the point after, a sixth of
+  that line's length on either side. That is a closed Catmull-Rom spline.
+- **On the GPU:** the spans flattened into at most 256 corners (16 a span at most), drawn as the
+  polygon of D-053.
+- **In the compile:** FilmCraft's mask takes the same Bézier spans as smooth vertices, so both
+  draw the same curve.
+- **A new curve** starts on the Polygon's four corners, a rounded shape.
+
+**Not as Resolve:** Resolve draws a curve from nothing, a click at a time, with Bézier handles to
+drag. Ours are always the spline's; they could be stored on the points later.
+
+**Checked:**
+- Grade test: the curve goes through its points and closes; the tangent; through a square's
+  corners it bulges a quarter past each side; 100 points share 200 corners; the JSON name; a
+  curve keeps its points.
+- Renderer test: black inside the curve, including in the bulge outside the square, and untouched
+  beyond it. Drawn as a plain polygon, the bulge test fails.
+- The GPU against the compile, a turned five-point curve: mean 0.07 code values, 99 % within 1.0.
+- UI test: Add Curve, a point dragged out.

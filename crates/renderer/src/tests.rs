@@ -670,3 +670,25 @@ fn morph_and_clip_match_their_math() {
         assert!(worst <= 1.5, "{morph:?}: {worst} code values off");
     }
 }
+
+/// The Curve window (LOG D-061): through a square's corners it bulges past each side to a
+/// quarter beyond, and keys what it encloses.
+#[test]
+fn a_curve_window_keys_what_its_curve_encloses() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (200u32, 100u32);
+    let px: Vec<u8> = (0..w * h).flat_map(|_| [128u8, 128, 128, 255]).collect();
+    // corners at (70, 20), (130, 20), (130, 80) and (70, 80); the top's middle bulges to y 12.5
+    let curve = Window { softness: 0.0, size: [0.3, 0.3], ..Window::new(resolution_grade::Shape::Curve) };
+    let mut n = node(json!({"gain": {"y": 0.0}}));
+    n.windows = vec![curve];
+    let g = Grade { nodes: vec![n] };
+    let out = r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap();
+    let at = |x: u32, y: u32| out[((y * w + x) * 4) as usize];
+    for (x, y) in [(100, 50), (100, 15), (76, 26)] {
+        assert!(at(x, y) < 3, "black inside, at {x}, {y}: {}", at(x, y));
+    }
+    for (x, y) in [(100, 9), (64, 14), (5, 50)] {
+        assert!(at(x, y).abs_diff(128) <= 1, "untouched outside, at {x}, {y}: {}", at(x, y));
+    }
+}
