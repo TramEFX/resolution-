@@ -373,15 +373,29 @@ fn number_shown(
     name(&r, WidgetType::DragValue, label);
     let painter = ui.painter();
     painter.rect_filled(cell, look.radius(), if r.hovered() || r.dragged() { t.hover } else { t.field });
-    painter.text(cell.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, shown, look.small(), t.dim);
-    painter.text(
+    let number = painter.text(
         cell.right_center() - vec2(8.0, 0.0),
         Align2::RIGHT_CENTER,
         value,
         look.mono(12.0),
         if changed { t.accent } else { t.text },
     );
+    // the name cut short with "…" where it would run into the number (LOG B-059)
+    let name = painter.layout_job(elided(shown, look.small(), t.dim, number.left() - cell.left() - 14.0));
+    painter.galley(cell.left_center() + vec2(8.0, -name.size().y / 2.0), name, t.dim);
     r
+}
+
+/// `text` on one line, cut short with "…" past `width` points.
+fn elided(text: &str, font: egui::FontId, colour: Color32, width: f32) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, colour);
+    job.wrap = egui::text::TextWrapping {
+        max_width: width.max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        overflow_character: Some('…'),
+    };
+    job
 }
 
 /// The colour a point on a wheel moves the balance towards (direction only).
@@ -485,10 +499,18 @@ fn wheel(ui: &mut Ui, look: &Look, col: Rect, spec: &WheelSpec, w: &Wheel, page:
             pos2(x, top + 21.0),
             Align2::CENTER_CENTER,
             format!("{v:.2}"),
-            look.mono(11.0),
+            yrgb_font(&painter, look, col),
             if changed { t.accent } else { t.dim },
         );
     }
+}
+
+/// The font for a wheel's or a bar group's four YRGB numbers in `col`: 11 points, smaller where
+/// four of them would run together (LOG B-059).
+fn yrgb_font(painter: &egui::Painter, look: &Look, col: Rect) -> egui::FontId {
+    let room = (col.width() - 20.0) / 4.0 - 4.0;
+    let widest = painter.layout_no_wrap("25.00".into(), look.mono(11.0), look.theme.dim).size().x;
+    look.mono((11.0 * room / widest.max(1.0)).clamp(7.0, 11.0))
 }
 
 /// How far a Primaries bar reaches each side of neutral: twice its wheel's reach (LOG D-067).
@@ -531,7 +553,7 @@ fn bars(ui: &mut Ui, look: &Look, col: Rect, spec: &WheelSpec, w: &Wheel, page: 
             pos2(x, bottom + 25.0),
             Align2::CENTER_CENTER,
             format!("{v:.2}"),
-            look.mono(11.0),
+            yrgb_font(&painter, look, col),
             if changed { t.accent } else { t.dim },
         );
         if r.drag_started() {
@@ -2687,6 +2709,20 @@ mod sampling_tests {
         page.node = 5;
         page.take(view(2), 6);
         assert_eq!(page.node, 1);
+    }
+
+    /// A number's name is cut short with "…" where it would run into the number (LOG B-059).
+    #[test]
+    fn a_long_name_is_cut_short_to_fit() {
+        let ctx = egui::Context::default();
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let font = egui::FontId::proportional(11.0);
+        let width = |text: &str, room: f32| {
+            ctx.fonts_mut(|f| f.layout_job(elided(text, font.clone(), Color32::WHITE, room))).size().x
+        };
+        let (whole, cut) = (width("Saturation", 1000.0), width("Saturation", 15.0));
+        assert!(cut <= 15.5 && cut < whole, "{whole} cut to {cut}");
+        assert_eq!(width("Hue", 100.0), width("Hue", 1000.0), "a short name whole");
     }
 
     /// `--palette`'s names (LOG D-069).

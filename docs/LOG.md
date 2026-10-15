@@ -160,6 +160,7 @@ doc is updated *and* the entry says which section moved.
 | B-057 | 2026-10-15 | ui | B-056's fix let go of the new window too early, one run in seven | fixed |
 | D-077 | 2026-10-15 | engine | Thumbnails show each clip on its own | active |
 | B-058 | 2026-10-15 | ui | On a laptop's screen the Color page's viewer was squeezed and the scope buttons ran over the Curves palette | fixed (the 1000 × 640 minimum still cramped) |
+| B-059 | 2026-10-15 | ui | Narrow number fields: names ran into values, and the YRGB numbers into each other | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4300,3 +4301,21 @@ window could be raised, or the Primaries made compact; for later.
   scopes' menu is clear of the Curves menu. Each part, undone, fails it.
 - Screenshots of a stored session open with the user's own palette height, which a default does
   not change.
+
+### B-059 — Narrow number fields: names ran into values, and the YRGB numbers into each other
+**Area:** ui · **Status:** fixed · **Caught by:** B-058's screenshots at 1000 × 640
+
+**Symptom:** at narrow widths, a number field's name ran into its value ("Contras1.000",
+"Saturati50.00"), and a wheel's four YRGB numbers ran into one another ("0.000.000.000.00").
+
+**Fix:**
+- A number field's name is cut short with "…" where it would reach its value. It is laid out to
+  the room left once the value is drawn, so its accessible name is untouched.
+- A wheel's or a bar group's four numbers take a smaller font, down to 7 points, where four of the
+  widest ("25.00") would not fit side by side.
+
+**Checked:**
+- Unit test: a long name is cut to the room it has and a short one is whole.
+- By eye at 1000 × 640: "Cont…", "Satu…" and "Shado…" clear of their values, and the YRGB numbers
+  apart.
+- The 1600 × 920 tests are unchanged: names and numbers fit there as before.
