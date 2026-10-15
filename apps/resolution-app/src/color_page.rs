@@ -1004,8 +1004,11 @@ pub fn node_editor(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let area = ui.available_rect_before_wrap();
     let painter = ui.painter_at(area);
     let count = view.grade.nodes.len();
-    let (w, h) = (96.0, 60.0);
-    let gap = ((area.width() - 80.0 - w * count as f32) / (count as f32 + 1.0)).clamp(12.0, 40.0);
+    // the chain scaled down to fit the panel, as Resolve's Node Editor zooms out (LOG B-054)
+    let room = area.width() - 80.0;
+    let scale = (room / ((96.0 + 12.0) * count as f32 + 12.0)).min(1.0);
+    let (w, h) = (96.0 * scale, 60.0 * scale);
+    let gap = ((room - w * count as f32) / (count as f32 + 1.0)).clamp(12.0 * scale, 40.0);
     let y = area.top() + (area.height() - 30.0).max(h) / 2.0;
     let input = pos2(area.left() + 16.0, y);
     let output = pos2(area.right() - 16.0, y);
@@ -1038,7 +1041,11 @@ pub fn node_editor(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
         } else {
             n.label.as_str()
         };
-        painter.text(rect.center() + vec2(0.0, 6.0), Align2::CENTER_CENTER, label, look.small(), t.dim);
+        // a node too small for its label shows its number alone
+        let text = painter.layout_no_wrap(label.to_string(), look.small(), t.dim);
+        if text.size().x + 8.0 <= w {
+            painter.galley(rect.center() + vec2(0.0, 6.0) - text.size() / 2.0, text, t.dim);
+        }
         if !n.is_neutral() {
             painter.circle_filled(rect.right_top() + vec2(-9.0, 9.0), 3.0, t.accent);
         }
@@ -1085,7 +1092,6 @@ pub struct StripClip {
     pub graded: bool,
 }
 
-/// The clips of the timeline in order, each with a picture from its middle: click one to grade it.
 /// A clip as the Mini-Timeline draws it (LOG D-071): its video track (0 is V1) and its span in
 /// seconds.
 pub struct MiniClip {
@@ -1173,6 +1179,7 @@ pub fn strip_buttons(ui: &mut Ui, look: &Look, rect: Rect, page: &mut ColorPage)
     }
 }
 
+/// The clips of the timeline in order, each with a picture from its middle: click one to grade it.
 pub fn strip(
     ui: &mut Ui,
     look: &Look,

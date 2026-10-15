@@ -150,6 +150,7 @@ doc is updated *and* the entry says which section moved.
 | B-051 | 2026-10-15 | ui | Matte Finesse's numbers ran under the scopes; the qualifier's labels ran into their values | fixed |
 | B-052 | 2026-10-15 | ui | Each window added grew the palettes and shrank the Color page's viewer | fixed |
 | B-053 | 2026-10-15 | ui | Self-test runs saved their layout into the user's editor | fixed |
+| B-054 | 2026-10-15 | ui | Nodes past the fourth ran off the Node Editor's edge | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4066,3 +4067,29 @@ since it may also hold panel sizes he chose. Dragging the palette's top edge bac
 
 **Checked:** by code; there is no harness for eframe's storage. B-052's fix also stops the growth
 at its source.
+
+### B-054 — Nodes past the fourth ran off the Node Editor's edge
+**Area:** ui · **Status:** fixed · **Caught by:** a screenshot of a six-node grade on the second
+screen
+
+**Symptom:** node 05 was cut by the panel's edge and node 06 not drawn at all, nor the line to the
+output. Nothing scrolls or zooms in the Node Editor, so those nodes could not be reached.
+
+**Cause:** nodes were a fixed 96 × 60 points with at least 12 between them. At the panel's default
+width, about four fit.
+
+**Fix:** the chain is scaled down to fit the panel, as Resolve's Node Editor zooms out. Gaps shrink
+with the nodes. A node too narrow for its label shows only its number; the label is measured, not
+guessed.
+
+**Checked:**
+- UI test: eight nodes, each inside the panel. Unscaled, node 5 runs past the edge.
+- By eye: six nodes, each with its number, its label (Desat on 03) and its graded mark.
+
+**Also:** a doc comment D-071 had put on `MiniClip` belonged to `strip`; it is back above it.
+
+**Also:** B-052's UI test added its nine windows a click at a time. In one full run in four, one
+click was lost and the test timed out. Not traced: perhaps the click arrives in a frame where the
+palette is not drawn while the grade is fetched again. The test now sets the nine windows through
+the engine in one `color.adjust`, since its point is the viewer's size. The circle test still
+clicks Add Circle.
