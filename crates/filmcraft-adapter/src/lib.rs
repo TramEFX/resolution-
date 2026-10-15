@@ -581,6 +581,45 @@ mod tests {
         assert_eq!(f.rgba.len(), (f.width * f.height * 4) as usize);
     }
 
+    /// A clip of the timeline on its own (LOG D-077): the V1 clip under V2's cutaway, rendered
+    /// alone, is the timeline's picture with the cutaway gone, not the two together.
+    #[test]
+    fn a_clip_renders_on_its_own() {
+        let mut e = demo();
+        let seq = e.session.active_sequence().expect("demo timeline").clone();
+        let v2 = seq.video_tracks[1].items[0].clone();
+        let mid = v2.start + Tick((v2.duration.0) / 2);
+        let v1 = seq.video_tracks[0]
+            .items
+            .iter()
+            .find(|i| i.start <= mid && mid < i.end())
+            .expect("a clip under it")
+            .clone();
+        // a time inside both, clear of V1's transitions
+        let inside = |t: Tick| seq.video_tracks[0].transitions.iter().all(|x| t < x.start || t >= x.start + x.duration);
+        let t = (0..20)
+            .map(|k| Tick(v2.start.0 + v2.duration.0 * (k + 1) / 21))
+            .find(|t| *t >= v1.start && *t < v1.end() && inside(*t))
+            .expect("a time with no transition");
+        let p = e.playback().expect("a timeline is open");
+        let f = p.rate().frame_at(t.seconds());
+        let pixels = |fr: &Frame| fr.pixels().to_vec();
+        let together = pixels(&p.render(f, 160, &RenderHints::default()).expect("the frame"));
+        let alone = pixels(
+            &p.render(f, 160, &RenderHints { solo: Some(v1.id.0), ..Default::default() }).expect("the clip alone"),
+        );
+        let differ =
+            |a: &[u8], b: &[u8]| a.iter().zip(b).map(|(x, y)| f64::from(x.abs_diff(*y))).sum::<f64>() / a.len() as f64;
+        assert!(differ(&together, &alone) > 2.0, "the cutaway is not in the clip's own picture");
+        // the timeline without the cutaway
+        e.execute("timeline.select", json!({ "clips": [v2.id.0] })).expect("selected");
+        e.execute("timeline.delete", json!({})).expect("deleted");
+        let without =
+            pixels(&e.playback().expect("a timeline").render(f, 160, &RenderHints::default()).expect("the frame"));
+        let d = differ(&alone, &without);
+        assert!(d < 1.0, "the clip alone is the timeline without the cutaway: {d} code values apart");
+    }
+
     #[test]
     fn playback_renders_the_same_frames_on_other_threads() {
         let e = demo();

@@ -122,6 +122,32 @@ impl Snapshot {
     }
 }
 
+impl Snapshot {
+    /// The timeline with only clip `clip` on its video tracks, and no transitions (LOG D-077).
+    fn solo(&self, clip: u64) -> Self {
+        let mut project = (*self.project).clone();
+        if let Some(q) = project.sequence_mut(self.seq) {
+            for tr in &mut q.video_tracks {
+                tr.items.retain(|it| it.id.0 == clip);
+                tr.transitions.clear();
+            }
+        }
+        let project = Arc::new(project);
+        Self {
+            graded: crate::gpu::Graded::of(&project, self.seq),
+            project,
+            pool: self.pool.clone(),
+            services: self.services.clone(),
+            previews: self.previews.clone(),
+            seq: self.seq,
+            rate: self.rate,
+            frames: self.frames,
+            size: self.size,
+            revision: self.revision,
+        }
+    }
+}
+
 impl Playback for Snapshot {
     fn revision(&self) -> u64 {
         self.revision
@@ -140,6 +166,9 @@ impl Playback for Snapshot {
     }
 
     fn render(&self, frame: i64, max_side: u32, hints: &RenderHints) -> Result<Frame> {
+        if let Some(clip) = hints.solo {
+            return self.solo(clip).render(frame, max_side, &RenderHints { solo: None, ..hints.clone() });
+        }
         let (w, h) = self.size;
         let scale = (max_side.max(1) as f32 / w.max(h).max(1) as f32).min(1.0);
         let t = self.rate.tick_of(frame.max(0));

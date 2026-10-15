@@ -158,6 +158,7 @@ doc is updated *and* the entry says which section moved.
 | B-056 | 2026-10-15 | ui | A window added right after a change left the old window chosen | fixed |
 | D-076 | 2026-10-15 | tests | The Edit page's tools rehearsed in a row | active |
 | B-057 | 2026-10-15 | ui | B-056's fix let go of the new window too early, one run in seven | fixed |
+| D-077 | 2026-10-15 | engine | Thumbnails show each clip on its own | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4243,3 +4244,27 @@ grade the palette shows is not asked. A switch to another node, or a failed adju
 go of it. Nodes need no such care: adding one does not patch the grade on show.
 
 **Checked:** eight full runs of the app's tests, every one passing.
+
+### D-077 — Thumbnails show each clip on its own
+**Area:** engine · **Status:** active · **Doc:** engine-api `RenderHints::solo`;
+`crates/filmcraft-adapter/src/playback.rs` (`Snapshot::solo`); `color_page.rs` (`Thumbs`)
+
+**Decision:** a clip's thumbnail is that clip alone, graded, as Resolve's thumbnails show it. That
+applies to the Color page's clip strip (D-029) and the timeline's clip heads (D-073). Before, both
+showed the timeline's whole picture at that frame, so a cutaway's thumbnail had the clip under it
+showing through its pillarbox. The pillarbox comes from B-050's fitting.
+- **The hint:** `RenderHints::solo`, a clip's id: render that clip of the timeline's video on its
+  own.
+- **In the adapter:** the frame is rendered from a copy of the project whose video tracks hold
+  only that clip and no transitions. Its grade, and any graded stand-in (D-044), come with it.
+- **Who asks:** the thumbnail renderer asks for every thumbnail so. Viewers and Deliver never do.
+
+**Cost:** a copy of the project, and its grades worked out again, for each thumbnail. These are
+made once per clip and change.
+
+**Checked:**
+- Adapter test: the demo's V1 clip under the V2 cutaway, rendered alone at a time with no
+  transition, matches the timeline rendered with the cutaway deleted (under 1 code value apart),
+  and differs from the two together. With the hint ignored it fails.
+- By eye: the strip's V2 cutaway, and its head on the timeline, show the portrait clip alone
+  between black bars.

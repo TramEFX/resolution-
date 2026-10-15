@@ -1302,7 +1302,9 @@ impl Thumbs {
         let results = ready.clone();
         let thread = std::thread::Builder::new().name("thumbnails".into()).spawn(move || {
             for (key, frame, playback) in rx {
-                if let Ok(f) = playback.render(frame, 160, &RenderHints::default()) {
+                // the clip on its own, as Resolve's thumbnails show it (LOG D-077)
+                let hints = RenderHints { solo: Some(key.0), ..Default::default() };
+                if let Ok(f) = playback.render(frame, 160, &hints) {
                     let img = ColorImage::from_rgba_unmultiplied([f.width as usize, f.height as usize], &f.rgba);
                     results.lock().unwrap_or_else(|e| e.into_inner()).push((key, img));
                     repaint();
