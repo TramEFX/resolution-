@@ -103,6 +103,11 @@ mod tests {
             (Key::Delete, Modifiers::NONE, "timeline.rippleDelete"),
             (Key::Num4, Modifiers::SHIFT, "page.edit"),
             (Key::Equals, Modifiers::COMMAND, "view.zoomIn"),
+            // the node resets and Save Project As (LOG D-074)
+            (Key::Home, Modifiers::SHIFT, "color.resetNode"),
+            (Key::Home, Modifiers::COMMAND, "color.resetAll"),
+            (Key::Home, Modifiers::COMMAND | Modifiers::SHIFT, "color.resetGradesKeepNodes"),
+            (Key::S, Modifiers::COMMAND | Modifiers::SHIFT, "project.saveAs"),
         ];
         for (key, m, want) in cases {
             let c = chord(key, m).expect("chord");

@@ -78,6 +78,10 @@ keys = "Mod+S"
 command = "project.save"
 verified = true
 [[bind]]
+keys = "Mod+Shift+S"
+command = "project.saveAs"
+verified = true
+[[bind]]
 keys = "Mod+I"
 command = "media.import"
 verified = true
@@ -338,4 +342,17 @@ verified = true
 [[bind]]
 keys = "Alt+Shift+H"
 command = "color.highlightBW"
+verified = true
+# the node resets (21.1 manual, "Resetting Nodes"; LOG D-074)
+[[bind]]
+keys = "Shift+Home"
+command = "color.resetNode"
+verified = true
+[[bind]]
+keys = "Mod+Home"
+command = "color.resetAll"
+verified = true
+[[bind]]
+keys = "Mod+Shift+Home"
+command = "color.resetGradesKeepNodes"
 verified = true
