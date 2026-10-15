@@ -50,7 +50,12 @@ impl FilmCraftEngine {
     pub fn new() -> Self {
         // Deliver renders through the GPU renderer, as the viewers do (LOG D-042)
         gpu::register_export_renderer();
-        Self { session: Session::new(Arc::new(FsServices)) }
+        let mut session = Session::new(Arc::new(FsServices));
+        // a clip whose picture differs from the timeline's is fitted into it, letterboxed or
+        // pillarboxed, as Resolve's default "Scale entire image to fit" does (LOG B-050);
+        // FilmCraft's own default, as Premiere's, leaves it at its own size, cropped
+        session.prefs.media.default_media_scaling = "scaleToFrameSize".into();
+        Self { session }
     }
 
     /// Identity of the newest undo step, to tell whether a command added one.

@@ -143,6 +143,7 @@ doc is updated *and* the entry says which section moved.
 | B-048 | 2026-10-15 | ui | "Outside Soft" ran into its value in the Window palette | fixed |
 | D-069 | 2026-10-15 | tools | `--palette` and `--bars` self-test flags; D-063, D-065, D-066 and D-067 seen by eye | active |
 | B-049 | 2026-10-15 | engine | Agents could not learn most of a node's controls: `color.adjust`'s description stopped at D-028 | fixed |
+| B-050 | 2026-10-15 | engine | A clip of another size than its timeline showed cropped at its own size, not fitted as in Resolve | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3877,3 +3878,32 @@ Nothing new is accepted; the parameters are as they were.
 **Checked:** adapter test: a node with every optional part set is serialised, and each of its keys,
 each window shape and each Morph choice must be in the description. It also checks those names are
 the grade's own. Against the old description the test fails, first on `hue_hue`.
+
+### B-050 — A clip of another size than its timeline showed cropped at its own size, not fitted as in Resolve
+**Area:** engine · **Status:** fixed · **Caught by:** a screenshot pass of the Edit page on the
+second screen, with the rehearsal's Sony and Samsung clips (B-042) in a 1920 × 1080 timeline
+
+**Symptom:** the Samsung portrait clip (3840 × 2160 stored, turned −90°) filled the viewer's width
+and showed only a torso; its top and bottom were cut away. A 4K clip in a 1080 timeline likewise
+showed only its middle quarter. The one-minute edit's picture, with Truman's own clips, would have
+been cropped throughout.
+
+**Cause:** FilmCraft places a clip by its "Default Media Scaling" preference, which defaults as
+Premiere's does to `none`: the clip at its own size, the rest cropped. Resolve's default (21.1
+Reference Manual, "Mismatched resolution files") is "Scale entire image to fit": the longest side
+fitted, the rest letterboxed or pillarboxed. Resolution never set the preference. The Color page's
+window overlay already assumed fitted clips (`clip_on_screen`), so on such clips it was misplaced
+too.
+
+**Fix:** the adapter's session sets the preference to `scaleToFrameSize` when it starts. FilmCraft
+then marks each clip of another size Scale to Frame Size as it is edited in, which fits it.
+FilmCraft's own render, the GPU renderer and Deliver all draw from that mark. Clips already in a
+project keep how they were placed. Resolve's other choices (crop with no resizing, scale full frame
+with crop, stretch) are not offered.
+
+**Checked:**
+- Adapter test: a clip edited into a timeline of its own size is left as it is; into one half that
+  size it is fitted. Without the preference, the test fails.
+- By eye on the second screen: the rehearsal run again (19 of 19 steps). The Samsung clip is
+  pillarboxed, the whole person in frame, and the Sony 4K clip is whole in the 1080 timeline.
+  Deliver's file is 1920 × 1080.
