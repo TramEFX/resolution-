@@ -44,6 +44,8 @@ pub struct Track {
     pub label: String,
     pub name: String,
     pub clips: Vec<Clip>,
+    /// The transitions on the track (dissolves, dips, wipes, Push), over the cuts (LOG B-042).
+    pub transitions: Vec<Transition>,
     pub locked: bool,
     /// Ripples with edits on other tracks (Resolve's sync lock).
     pub sync_lock: bool,
@@ -55,6 +57,26 @@ pub struct Track {
     pub targeted: bool,
     /// Destination control: source edits land here.
     pub destination: bool,
+}
+
+/// A transition on a track: where it starts and ends (timeline seconds), and what it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Transition {
+    pub start: f64,
+    pub end: f64,
+    /// Its effect, named as a person would: "Cross Dissolve" for `cross_dissolve`.
+    pub name: String,
+}
+
+/// An effect id as a name: `cross_dissolve` as "Cross Dissolve".
+fn effect_name(id: &str) -> String {
+    id.split('_')
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A timeline marker.
@@ -127,6 +149,21 @@ impl Timeline {
                             targeted: t["id"].as_u64().is_some_and(|id| targeted.contains(&id)),
                             destination: t["id"].as_u64().is_some_and(|id| dests.contains(&Some(id))),
                             name: t["name"].as_str().unwrap_or_default().to_string(),
+                            transitions: t["transitions"]
+                                .as_array()
+                                .map(|ts| {
+                                    ts.iter()
+                                        .filter_map(|x| {
+                                            let start = seconds(&x["start"])?;
+                                            Some(Transition {
+                                                start,
+                                                end: start + seconds(&x["duration"])?,
+                                                name: effect_name(x["effect"].as_str().unwrap_or("transition")),
+                                            })
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
                             clips: t["items"]
                                 .as_array()
                                 .map(|items| {
