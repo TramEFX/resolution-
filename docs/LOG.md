@@ -124,6 +124,7 @@ doc is updated *and* the entry says which section moved.
 | D-057 | 2026-10-14 | ui | Window handles on screen: size, rotation and softness | active |
 | B-041 | 2026-10-14 | ui | A quick drag on the window control missed small handles and polygon corners | fixed |
 | D-058 | 2026-10-14 | color | More matte finesse: Black Clip, White Clip and Morph | active |
+| D-059 | 2026-10-14 | engine | Replace, Place on Top, Ripple Overwrite and Append at End, composed from FilmCraft's commands | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3196,3 +3197,52 @@ Opening and Closing cover its second use.
   and 0.52 code values. With min and max swapped in the shader, 148 off.
 - UI test: Morph Operation stepped to Shrink; Morph Radius and Black Clip dragged, through the
   engine.
+
+### D-059 — Replace, Place on Top, Ripple Overwrite and Append at End, composed from FilmCraft's commands
+**Area:** engine · **Status:** active · **Doc:** `crates/filmcraft-adapter/src/edits.rs`;
+`map.rs`
+
+**Decision:** four of Resolve's source edits that the map had as missing, built in the adapter.
+Each is composed from FilmCraft's commands and run as one undo step (`Session::edit_group`, which
+also rolls the whole edit back if a part fails). Their vocabulary ids and keys were already there
+(F11, F12, Shift+F10 and Shift+F12, confirmed against the manual in D-051).
+
+- **Replace (F11):** the clip under the playhead on the video destination track takes the source
+  clip, keeping its place and length. The source playhead's frame is lined up with the timeline
+  playhead's. That is FilmCraft's `clip.replaceFromSourceMatchFrame`, given that clip and its
+  linked clips.
+- **Place on Top (F12):** the source's In to Out goes at the timeline's In, or the playhead.
+  - The video goes on the first video track above the video destination that is free over it,
+    and the sound on the first audio track after the audio destination that is free.
+  - A track is added where none is.
+  - The destinations are moved for the overwrite and put back.
+- **Ripple Overwrite (Shift+F10):** the clip under the playhead, with its linked sound, is
+  ripple-deleted, and the source is inserted where it began. What follows moves up or back by the
+  difference.
+- **Append at End (Shift+F12):** the source goes after the last clip on any track. The timeline's
+  In and Out are set aside for the edit and kept.
+
+**Not built:** Fit to Fill (Shift+F11) needs the clip's speed set so its In to Out fills the
+timeline's; it stays in the map as missing. The vocabulary now has 83 commands running headless,
+32 front-end, 2 missing.
+
+**Limits:**
+- Ripple Overwrite meets B-023: FilmCraft refuses a ripple across a sync-locked track that has a
+  clip in the way, such as the demo's music on A2, so it fails there as Ripple Delete does.
+- Replace takes the clip under the playhead, not a timeline In to Out.
+
+**Checked:**
+- Adapter tests on the demo, with two seconds of City_Night_Drive marked in the source:
+  - Append at End: after the last clip, the rest of V1 as it was, the timeline's In kept, one
+    undo step.
+  - Replace: the clip takes the source, in its place, at its length.
+  - Ripple Overwrite (A2's sync lock off): Misty Forest gives way to the source, the next clip
+    moves back by the difference and stays whole, and on A1 the source's sound replaces the old
+    clip's; one undo step. With an overwrite in place of the insert, the test fails: the next
+    clip loses two seconds.
+  - Place on Top: V2 at 1.5 s, V3 the second time, a new track the third; the destinations
+    restored.
+- UI test: Shift+F12 appends on V1 and F12 places the whole clip on the first free track above.
+
+**Wrong turn:** the UI test first expected F12's clip on V2. The whole source, 14 s, meets V2's
+clip, so it rightly went to V3. The test now looks above V1.

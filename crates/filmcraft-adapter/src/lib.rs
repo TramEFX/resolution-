@@ -2,6 +2,7 @@
 
 mod color;
 mod deliver;
+mod edits;
 mod gpu;
 pub mod map;
 pub mod playback;
@@ -208,6 +209,18 @@ impl Engine for FilmCraftEngine {
                 self.on_selection(id, params)
             }
             Some(Target::Adapter) if id.starts_with("color.") => self.color(id, params),
+            Some(Target::Adapter) if id.starts_with("edit.") && id != "edit.undo" && id != "edit.redo" => {
+                let before = self.undo_top();
+                let result = edits::run(&mut self.session, id)
+                    .unwrap_or_else(|| Err(FcError::UnknownCommand(id.to_string())))
+                    .map_err(|e| convert(id, e))?;
+                let undo_label = if self.undo_top() != before {
+                    self.session.history.undo.last().map(|(label, _)| label.clone())
+                } else {
+                    None
+                };
+                Ok(Outcome { result, revision: self.session.revision, undo_label })
+            }
             Some(Target::Adapter) => {
                 // Undo and redo move through the history; they add no step of their own (LOG B-001).
                 let label = if id == "edit.undo" { self.undo() } else { self.redo() };
