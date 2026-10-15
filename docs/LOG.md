@@ -139,6 +139,9 @@ doc is updated *and* the entry says which section moved.
 | D-068 | 2026-10-15 | engine | Vocabulary additions proposed as one batch: edit points, Resolve's unbound keys, the Inspector | proposed, for Truman |
 | B-046 | 2026-10-15 | engine | A reopened project's windowed grades looked foreign, and copies split from them lost their grade | fixed |
 | B-047 | 2026-10-15 | tests | The Primaries drag test checked the timeline before its answer came | fixed |
+| B-045 | 2026-10-15 | ui | Menu buttons drew a box where their "▾" should be | fixed |
+| B-048 | 2026-10-15 | ui | "Outside Soft" ran into its value in the Window palette | fixed |
+| D-069 | 2026-10-15 | tools | `--palette` and `--bars` self-test flags; D-063, D-065, D-066 and D-067 seen by eye | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3796,3 +3799,54 @@ timeline's `graded` mark. That arrives in `timeline.inspect`'s own answer, which
 later.
 
 **Fix:** it waits for the mark as it waits for the numbers.
+
+### B-045 — Menu buttons drew a box where their "▾" should be
+**Area:** ui · **Status:** fixed · **Caught by:** screenshots on the second screen (D-069)
+
+**Symptom:** the Curves palette's mode menu read "Custom □" or "Hue vs Sat □" since D-043; the
+Primaries' new mode menu (D-067) read "Wheels □".
+
+**Cause:** "▾" (U+25BE) is in neither Geist nor egui's own fonts behind it, and egui draws a box
+for a missing glyph.
+
+**Fix:** `theme::MENU_MARK`, "⏷" (U+23F7), which egui's own symbol font has; both menus use it.
+
+**Checked:**
+- Theme test: our fonts have the mark, and every other non-ASCII character the UI's strings use
+  ("…×·–é", found by a sweep of the source). The test can see a missing glyph: it also asserts
+  "▾" is missing.
+- By eye: "Wheels ⏷" and "Hue vs Sat ⏷".
+
+### B-048 — "Outside Soft" ran into its value in the Window palette
+**Area:** ui · **Status:** fixed · **Caught by:** screenshots on the second screen (D-069)
+
+**Symptom:** a Polygon's Outside Soft read "Outside Sof8.00" at the 1600-pixel window: the name
+and the number overlapped in their cell.
+
+**Fix:** the two fields are named In Soft and Out Soft. Resolve's own labels for them are not
+checked.
+
+### D-069 — `--palette` and `--bars` self-test flags; D-063, D-065, D-066 and D-067 seen by eye
+**Area:** tools · **Status:** active · **Doc:** `apps/resolution-app/src/main.rs`
+
+**Decision:** two front-end flags for screenshot self-tests, like `--highlight` (D-050):
+- `--palette curves|qualifier|window`, or `curves:` and a hue curve's name (`curves:hue_sat`),
+  starts the Color page on that palette;
+- `--bars` starts the Primaries in Bars mode.
+
+**Seen by eye, 2026-10-15, on the second screen:** the Sony clip graded through the CLI, a picture
+grey and brighter inside each window, screenshots at the Color page:
+- **A Linear window, Soft 3 (left) at 15:** grey inside, its left edge fading over a wide band,
+  the other three hard. A ring beside each side, the left one further out, the top one aside of
+  the rotate handle. Soft 1 to 4 on their own row.
+- **A Polygon soft all outside:** the grey reaching past the triangle's edges. The palette shows
+  In Soft and Out Soft.
+- **Hue vs Sat dipped at magenta:** the six patches fit in the title strip, and the curve wraps
+  round past red. In the viewer, the pink light's saturation fell from 0.81 to 0.24 on average
+  (pixel statistics against the ungraded picture).
+- **Bars mode:** four groups of four bars, Gain R's small fill at 1.15, values under the bars.
+- **Found:** B-045 (the menu mark), B-046 (the foreign-effects warning on reopened projects, fixed
+  in #63) and B-048 (the label).
+- Not compared with Resolve itself.
+
+**Checked:** unit test of `--palette`'s names, curves included, and unknown names refused.

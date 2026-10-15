@@ -9,6 +9,10 @@ use std::sync::Arc;
 
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Shadow, Stroke, TextStyle, vec2};
 
+/// The mark after a menu button's name, as Resolve's drop-down menus show it: a down-pointing
+/// triangle egui's own symbol font has (LOG B-045; "▾" is in none of ours, and drew as a box).
+pub const MENU_MARK: &str = "⏷";
+
 /// The font family for headings and active labels (Geist Medium, falling back like the body).
 pub const MEDIUM: &str = "Geist Medium";
 
@@ -283,6 +287,19 @@ fn fonts() -> FontDefinitions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The menu mark draws: our fonts have its glyph, as they lacked "▾" (LOG B-045).
+    #[test]
+    fn the_menu_mark_is_in_the_fonts() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(fonts());
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let has = |s: &str| ctx.fonts_mut(|f| f.has_glyphs(&FontId::proportional(13.0), s));
+        assert!(has(MENU_MARK), "{MENU_MARK}");
+        // and the other marks the UI's text uses
+        assert!(has("…×·–é"));
+        assert!(!has("▾"), "the old mark is still missing, so this test can see a missing glyph");
+    }
 
     fn grey(c: Color32) -> bool {
         c.r() == c.g() && c.g() == c.b()
