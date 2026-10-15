@@ -2711,6 +2711,22 @@ mod tests {
         assert!(t.video.iter().chain(&t.audio).all(|tr| tr.clips.is_empty()), "it starts empty");
     }
 
+    /// In a small window (the smallest, 1000 × 640), the Deliver page's range and Add button are in
+    /// view, not under the timeline (LOG B-060).
+    #[test]
+    fn the_deliver_pages_add_button_is_in_view_in_a_small_window() {
+        let mut h = demo_at(egui::vec2(1000.0, 640.0), 0.25);
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Num8);
+        pump(&mut h, "the Deliver page", |a| a.page == Page::Deliver);
+        pump(&mut h, "clips on the timeline", |a| !a.clip_rects.is_empty());
+        h.step();
+        let timeline = h.state().clip_rects.iter().map(|(r, _)| r.top()).fold(f32::INFINITY, f32::min);
+        for label in ["Add to Render Queue", "Entire Timeline"] {
+            let r = h.get_by_label(label).rect();
+            assert!(r.bottom() <= timeline, "{label} at {r:?} is under the timeline at {timeline}");
+        }
+    }
+
     #[test]
     fn the_deliver_page_renders_the_timeline_to_a_file() {
         let mut h = demo();
