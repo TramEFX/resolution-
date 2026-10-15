@@ -1290,7 +1290,7 @@ impl ResolutionApp {
         // the transport, and the marks, centred under the picture
         let playing = self.monitor(which).transport.speed();
         let has = info.is_some();
-        let buttons = [
+        let mut buttons = vec![
             (Icon::ToStart, "playhead.timelineStart", State::Off),
             (Icon::Reverse, "playback.reverse", State::on(playing.is_some_and(|s| s < 0.0))),
             (Icon::Stop, "playback.stop", State::Off),
@@ -1299,14 +1299,23 @@ impl ResolutionApp {
             (Icon::MarkIn, "mark.in", State::Off),
             (Icon::MarkOut, "mark.out", State::Off),
         ];
-        let width = buttons.len() as f32 * (skin.button + 4.0) + 13.0;
+        // a narrow viewer drops Go to Start and Go to End, then the marks (Home, End, I and O
+        // still work), so its row stays clear of the viewer beside it (LOG B-061)
+        let row_width = |n: usize| n as f32 * (skin.button + 4.0) + 13.0;
+        if row_width(buttons.len()) > transport.width() - 8.0 {
+            buttons.retain(|b| !b.1.starts_with("playhead."));
+        }
+        if row_width(buttons.len()) > transport.width() - 8.0 {
+            buttons.retain(|b| !b.1.starts_with("mark."));
+        }
+        let width = row_width(buttons.len());
         let row = Rect::from_center_size(transport.center(), vec2(width, skin.button));
         let mut run = None;
         let prefix = if which == Viewer::Source { "Source" } else { "Timeline" };
         ui.scope_builder(UiBuilder::new().max_rect(row).layout(Layout::left_to_right(Align::Center)), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            for (n, (icon, id, state)) in buttons.into_iter().enumerate() {
-                if n == 5 {
+            for (icon, id, state) in buttons {
+                if id == "mark.in" {
                     chrome::divider(ui, &look);
                 }
                 let keys = self.keys(id);
@@ -2725,6 +2734,24 @@ mod tests {
             let r = h.get_by_label(label).rect();
             assert!(r.bottom() <= timeline, "{label} at {r:?} is under the timeline at {timeline}");
         }
+    }
+
+    /// In the smallest window the two viewers' transport rows stay apart (LOG B-061).
+    #[test]
+    fn the_viewers_transports_stay_apart_in_a_small_window() {
+        let mut h = demo_at(egui::vec2(1000.0, 640.0), 0.25);
+        h.step();
+        let rects = |prefix: &str| {
+            ["playback.reverse", "playback.stop", "playback.playStop", "mark.in", "mark.out", "playhead.timelineStart"]
+                .into_iter()
+                .filter_map(|id| h.query_by_label(&format!("{prefix} {}", ResolutionApp::label(id))).map(|n| n.rect()))
+                .collect::<Vec<_>>()
+        };
+        let (source, timeline) = (rects("Source"), rects("Timeline"));
+        assert!(!source.is_empty() && !timeline.is_empty());
+        let right = source.iter().map(|r| r.right()).fold(f32::MIN, f32::max);
+        let left = timeline.iter().map(|r| r.left()).fold(f32::MAX, f32::min);
+        assert!(right <= left, "the source viewer's buttons reach {right}, the timeline viewer's start at {left}");
     }
 
     #[test]

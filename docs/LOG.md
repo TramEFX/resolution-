@@ -162,6 +162,7 @@ doc is updated *and* the entry says which section moved.
 | B-058 | 2026-10-15 | ui | On a laptop's screen the Color page's viewer was squeezed and the scope buttons ran over the Curves palette | fixed (the 1000 × 640 minimum still cramped) |
 | B-059 | 2026-10-15 | ui | Narrow number fields: names ran into values, and the YRGB numbers into each other | fixed |
 | B-060 | 2026-10-15 | ui | On a laptop's screen the Deliver page's Add to Render Queue was out of sight | fixed |
+| B-061 | 2026-10-15 | ui | In a small window the two viewers' transport rows ran into each other | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4339,3 +4340,19 @@ Render Queue at the panel's foot too.
   the test's fresh panels left room; a real session's stored panel sizes did not.
 - The Deliver render test still passes.
 - By eye: the foot strip in view at 768 points tall.
+
+### B-061 — In a small window the two viewers' transport rows ran into each other
+**Area:** ui · **Status:** fixed · **Caught by:** a screenshot of the Edit page at 1000 × 640
+(B-058's pass)
+
+**Symptom:** each viewer's row of seven buttons (Go to Start, Reverse, Stop, Play, Go to End, Mark
+In, Mark Out) is about 240 points wide. At 1000 × 640 the viewers are about 200 wide, so the source
+viewer's row ran into the timeline viewer's.
+
+**Fix:** a row too wide for its viewer drops Go to Start and Go to End, then the mark buttons if it
+must. Home, End, I and O still work. Play, Reverse and Stop always stay.
+
+**Checked:**
+- UI test at 1000 × 640: the source viewer's buttons end before the timeline viewer's begin. With
+  nothing dropped they reach 511.5 points, past the timeline viewer's at 489.
+- By eye: both rows within their viewers.
