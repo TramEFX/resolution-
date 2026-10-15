@@ -477,6 +477,13 @@ fn mask(win: &Window, (w, h): (u32, u32), n: usize) -> Mask {
     }
     let mut m = Mask::new(format!("Window {}", n + 1), path);
     m.feather = Param::new(ParamValue::Float(f64::from(win.softness) * w));
+    if win.shape.has_points() {
+        // the soft edge's reach into the shape and out of it (LOG D-063): FilmCraft's feather is
+        // centred on the edge, which its expansion moves out
+        let (inside, outside) = win.edge_softness();
+        m.feather = Param::new(ParamValue::Float(f64::from(inside + outside) * w));
+        m.expansion = Param::new(ParamValue::Float(f64::from(outside - inside) / 2.0 * w));
+    }
     m.opacity = Param::new(ParamValue::Float(f64::from(win.opacity)));
     m.inverted = win.invert;
     m

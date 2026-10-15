@@ -943,6 +943,13 @@ pub struct Window {
     pub rotation: f32,
     /// The soft edge's width, centred on the shape's edge, as a fraction of the picture's width.
     pub softness: f32,
+    /// A Polygon's or a Curve's Inside Softness and Outside Softness (LOG D-063), as Resolve has
+    /// them: how far the soft edge reaches into the shape and out of it, fractions of the
+    /// picture's width. Without them, half of `softness` each way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inside_softness: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside_softness: Option<f32>,
     /// How strongly the window lets the correction through, 0 to 100.
     pub opacity: f32,
     /// A Polygon's corners, in order, in the window's own space (LOG D-053): -1 to 1 across its
@@ -970,6 +977,8 @@ impl Window {
             rotation: 0.0,
             // a gradient is soft: a fifth of the picture's width across its line
             softness: if shape == Shape::Gradient { 0.2 } else { 0.02 },
+            inside_softness: None,
+            outside_softness: None,
             opacity: 100.0,
             // a polygon starts as Resolve's does: a rectangle of four corners
             points: if shape.has_points() { Self::SQUARE.to_vec() } else { Vec::new() },
@@ -978,12 +987,25 @@ impl Window {
 
     const SQUARE: [[f32; 2]; 4] = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]];
 
+    /// How far the soft edge reaches into the shape and out of it, as fractions of the picture's
+    /// width: a Polygon's or a Curve's own (LOG D-063), else half the softness each way.
+    pub fn edge_softness(&self) -> (f32, f32) {
+        let half = self.softness / 2.0;
+        if !self.shape.has_points() {
+            return (half, half);
+        }
+        (self.inside_softness.unwrap_or(half), self.outside_softness.unwrap_or(half))
+    }
+
     fn clamp(&mut self) {
         self.center = self.center.map(|v| v.clamp(-1.0, 2.0));
         self.size = self.size.map(|v| v.clamp(0.002, 4.0));
         self.rotation = self.rotation.clamp(-360.0, 360.0);
         self.softness = self.softness.clamp(0.0, 1.0);
         self.opacity = self.opacity.clamp(0.0, 100.0);
+        for s in [&mut self.inside_softness, &mut self.outside_softness].into_iter().flatten() {
+            *s = s.clamp(0.0, 1.0);
+        }
         if self.shape.has_points() {
             for p in &mut self.points {
                 *p = p.map(|v| v.clamp(-4.0, 4.0));
@@ -995,6 +1017,7 @@ impl Window {
             }
         } else {
             self.points.clear();
+            (self.inside_softness, self.outside_softness) = (None, None);
         }
     }
 }

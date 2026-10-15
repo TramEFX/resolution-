@@ -432,7 +432,16 @@ fn coverage(n: u32, sp: vec2<f32>) -> f32 {
             dist = max(abs(q.x) - r.x, abs(q.y) - r.y);
         }
         var m: f32;
-        if soft <= 1e-3 {
+        if shape > 2.5 {
+            // a Polygon's or a Curve's own reach into the shape and out of it (LOG D-063)
+            let inside = nf(n, o + 3u);
+            let outside = nf(n, o + 4u);
+            if inside + outside <= 1e-3 {
+                m = select(0.0, 1.0, dist <= 0.0);
+            } else {
+                m = clamp((outside - dist) / (inside + outside), 0.0, 1.0);
+            }
+        } else if soft <= 1e-3 {
             m = select(0.0, 1.0, dist <= 0.0);
         } else {
             m = clamp(0.5 - dist / soft, 0.0, 1.0);

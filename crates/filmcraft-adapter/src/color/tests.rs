@@ -319,6 +319,27 @@ fn a_polygon_window_compiles_to_its_corners() {
     }
 }
 
+/// A Polygon's Inside and Outside Softness (LOG D-063) compile to a feather of both, its centre
+/// moved out by the expansion; without them, the softness centred on the edge.
+#[test]
+fn a_polygons_inside_and_outside_softness_compile_to_feather_and_expansion() {
+    let masked = |win: Window| {
+        let mut n = node(json!({"gain": {"y": 0.5}}));
+        n.windows = vec![win];
+        let m = compile(&Grade { nodes: vec![n] }, (1920, 1080))[0].masks[0].clone();
+        let float = |p: &ParamValue| match p {
+            ParamValue::Float(v) => *v,
+            _ => f64::NAN,
+        };
+        (float(&m.feather.value).round(), float(&m.expansion.value).round())
+    };
+    let polygon = Window::new(Shape::Polygon);
+    assert_eq!(masked(polygon.clone()), ((0.02 * 1920.0_f64).round(), 0.0), "centred");
+    let own = Window { inside_softness: Some(0.01), outside_softness: Some(0.05), ..polygon };
+    assert_eq!(masked(own.clone()), (115.0, 38.0));
+    assert_eq!(masked(Window { inside_softness: Some(0.05), outside_softness: Some(0.01), ..own }), (115.0, -38.0));
+}
+
 #[test]
 fn a_turned_linear_window_turns_its_rectangle() {
     let w = |rotation: f32| {

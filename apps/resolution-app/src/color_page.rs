@@ -1281,8 +1281,9 @@ struct WindowField {
 
 /// Pan and Tilt in percent of the picture (50 is the middle; Tilt rises upwards); Size is the
 /// width in percent of the picture's width, Aspect the height to the width (50 is round or
-/// square); Rotate in degrees clockwise; Softness in percent of the picture's width.
-const WINDOW_FIELDS: [WindowField; 7] = [
+/// square); Rotate in degrees clockwise; Softness in percent of the picture's width, and a Polygon's
+/// or a Curve's Inside Soft and Outside Soft in its place (LOG D-063).
+const WINDOW_FIELDS: [WindowField; 9] = [
     WindowField {
         name: "Pan",
         get: |w| w.center[0] * 100.0,
@@ -1320,6 +1321,20 @@ const WINDOW_FIELDS: [WindowField; 7] = [
         name: "Softness",
         get: |w| w.softness * 100.0,
         set: |w, v| w.softness = v / 100.0,
+        step: 0.05,
+        decimals: 2,
+    },
+    WindowField {
+        name: "Inside Soft",
+        get: |w| w.edge_softness().0 * 100.0,
+        set: |w, v| w.inside_softness = Some((v / 100.0).clamp(0.0, 1.0)),
+        step: 0.05,
+        decimals: 2,
+    },
+    WindowField {
+        name: "Outside Soft",
+        get: |w| w.edge_softness().1 * 100.0,
+        set: |w, v| w.outside_softness = Some((v / 100.0).clamp(0.0, 1.0)),
         step: 0.05,
         decimals: 2,
     },
@@ -1443,9 +1458,7 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
         let row_h = 26.0;
         let cell_w = (area.width() - 16.0) / 4.0;
         let fresh = Window::new(w.shape);
-        // a gradient has no size
-        let fields =
-            WINDOW_FIELDS.iter().filter(|f| w.shape != WindowShape::Gradient || !matches!(f.name, "Size" | "Aspect"));
+        let fields = window_fields(w.shape);
         for (k, f) in fields.enumerate() {
             let (row, col) = (k / 4, k % 4);
             let cell = Rect::from_min_size(
@@ -1525,6 +1538,18 @@ enum Handle {
     Soft,
 }
 
+/// The numbers a window of shape `s` shows: a gradient has no size, and a Polygon's or a Curve's
+/// softness is its Inside Soft and Outside Soft (LOG D-063).
+fn window_fields(s: WindowShape) -> impl Iterator<Item = &'static WindowField> {
+    let points = s.has_points();
+    WINDOW_FIELDS.iter().filter(move |f| match f.name {
+        "Size" | "Aspect" => s != WindowShape::Gradient,
+        "Softness" => !points,
+        "Inside Soft" | "Outside Soft" => points,
+        _ => true,
+    })
+}
+
 /// Pixels between a window's edge and its rotate and softness handles.
 const HANDLE_GAP: f32 = 28.0;
 
@@ -1534,7 +1559,8 @@ fn handles(w: &Window, pic: Rect) -> Vec<(Handle, Pos2)> {
     let c = pic.min + vec2(w.center[0] * pic.width(), w.center[1] * pic.height());
     let (sin, cos) = w.rotation.to_radians().sin_cos();
     let at = |x: f32, y: f32| c + vec2(x * cos - y * sin, x * sin + y * cos);
-    let soft = w.softness * pic.width() / 2.0;
+    // the soft edge's reach out of the shape: half the softness, or a Polygon's Outside Soft
+    let soft = w.edge_softness().1 * pic.width();
     if w.shape == WindowShape::Gradient {
         return vec![(Handle::Rotate, at(0.0, -HANDLE_GAP)), (Handle::Soft, at(0.0, HANDLE_GAP / 2.0 + soft))];
     }
@@ -1568,7 +1594,14 @@ fn dragged(w: &Window, pic: Rect, h: Handle, p: Pos2) -> Window {
         }
         // 0 straight up, clockwise
         Handle::Rotate => w.rotation = d.x.atan2(-d.y).to_degrees(),
-        Handle::Soft => w.softness = ((ly - ry - HANDLE_GAP / 2.0) * 2.0 / pw).clamp(0.0, 1.0),
+        Handle::Soft => {
+            let out = ((ly - ry - HANDLE_GAP / 2.0) / pw).clamp(0.0, 1.0);
+            if w.shape.has_points() {
+                w.outside_softness = Some(out);
+            } else {
+                w.softness = (out * 2.0).min(1.0);
+            }
+        }
     }
     w
 }
@@ -1982,5 +2015,37 @@ mod handle_tests {
         let (sin, cos) = w.rotation.to_radians().sin_cos();
         let further = soft + vec2(-sin, cos) * 20.0;
         assert!(dragged(&w, pic, Handle::Soft, further).softness > w.softness + 0.03);
+    }
+
+    /// A Polygon's or a Curve's softness is its Inside Soft and Outside Soft (LOG D-063): the
+    /// palette shows those in place of Softness, and the soft handle sets how far out it reaches.
+    #[test]
+    fn a_polygons_soft_handle_and_fields_are_its_inside_and_outside_softness() {
+        let names = |s: WindowShape| window_fields(s).map(|f| f.name).collect::<Vec<_>>();
+        for s in [WindowShape::Polygon, WindowShape::Curve] {
+            let n = names(s);
+            assert!(n.contains(&"Inside Soft") && n.contains(&"Outside Soft") && !n.contains(&"Softness"), "{n:?}");
+            assert_eq!(n.len(), 8, "two rows of four: {n:?}");
+        }
+        for s in [WindowShape::Linear, WindowShape::Circle, WindowShape::Gradient] {
+            let n = names(s);
+            assert!(n.contains(&"Softness") && !n.contains(&"Inside Soft"), "{n:?}");
+        }
+        // the fields set the window's own, one leaving the other
+        let field = |name: &str| WINDOW_FIELDS.iter().find(|f| f.name == name).unwrap();
+        let mut w = Window::new(WindowShape::Polygon);
+        (field("Outside Soft").set)(&mut w, 4.0);
+        assert_eq!(w.edge_softness(), (w.softness / 2.0, 0.04));
+        assert!(
+            ((field("Inside Soft").get)(&w) - 1.0).abs() < 1e-4 && ((field("Outside Soft").get)(&w) - 4.0).abs() < 1e-4
+        );
+        // the soft handle sits that far out below the window, and dragged lower reaches further
+        let pic = Rect::from_min_size(pos2(100.0, 50.0), vec2(1000.0, 500.0));
+        let (_, soft) = handles(&w, pic).into_iter().find(|(k, _)| *k == Handle::Soft).unwrap();
+        let bottom = pic.min.y + w.center[1] * pic.height() + w.size[1] * pic.width() / 2.0;
+        assert!((soft.y - (bottom + HANDLE_GAP / 2.0 + 40.0)).abs() < 0.01, "{soft:?} below {bottom}");
+        let moved = dragged(&w, pic, Handle::Soft, soft + vec2(0.0, 20.0));
+        assert!((moved.edge_softness().1 - 0.06).abs() < 1e-4, "{:?}", moved.edge_softness());
+        assert_eq!((moved.softness, moved.inside_softness), (w.softness, w.inside_softness), "the rest kept");
     }
 }

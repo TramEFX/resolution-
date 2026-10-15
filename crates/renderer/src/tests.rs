@@ -611,6 +611,37 @@ fn a_polygon_window_limits_the_grade_to_its_corners() {
     assert!(at(&out, 80, 90).abs_diff(128) <= 1 && at(&out, 100, 70).abs_diff(128) > 100, "outside, turned");
 }
 
+/// A Polygon's Inside and Outside Softness (LOG D-063): the soft edge reaches out of the shape
+/// only, or into it only.
+#[test]
+fn a_polygons_soft_edge_reaches_as_far_in_and_out_as_it_is_told() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (200u32, 100u32);
+    let px: Vec<u8> = (0..w * h).flat_map(|_| [128u8, 128, 128, 255]).collect();
+    // a square from x 50 to 150, the whole height; 20 pixels of softness
+    let square = |inside: f32, outside: f32| Window {
+        size: [0.5, 0.5],
+        inside_softness: Some(inside),
+        outside_softness: Some(outside),
+        ..Window::new(resolution_grade::Shape::Polygon)
+    };
+    let draw = |win: Window| {
+        let mut n = node(json!({"gain": {"y": 0.0}}));
+        n.windows = vec![win];
+        let g = Grade { nodes: vec![n] };
+        r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap()
+    };
+    let row = |out: &[u8]| (0..w).map(|x| out[((50 * w + x) * 4) as usize]).collect::<Vec<u8>>();
+    // all outside: black up to the edge, half way at 10 pixels out, untouched from 20
+    let out = row(&draw(square(0.0, 0.1)));
+    assert!(out[140] < 3 && out[150] < 8, "{:?}", &out[135..175]);
+    assert!((55..80).contains(&out[160]) && out[172].abs_diff(128) <= 1, "{:?}", &out[135..175]);
+    // all inside: untouched from the edge out, half way at 10 pixels in, black from 20
+    let out = row(&draw(square(0.1, 0.0)));
+    assert!(out[151].abs_diff(128) <= 1 && out[160].abs_diff(128) <= 1, "{:?}", &out[120..160]);
+    assert!((55..80).contains(&out[140]) && out[128] < 3, "{:?}", &out[120..160]);
+}
+
 /// Shadows and Highlights (LOG D-055) are in the tone functions: on the GPU as their math.
 #[test]
 fn shadows_and_highlights_match_their_math() {

@@ -1276,6 +1276,10 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
             if win.shape.has_points() {
                 // turned and placed as the shader's other shapes are: x' = x·cos − y·sin
                 b[o + 9] = (after_tables + corners.len()) as f32;
+                // the soft edge's reach into the shape and out of it, in pixels, where the other
+                // shapes keep their size (LOG D-063)
+                let (inside, outside) = win.edge_softness();
+                (b[o + 3], b[o + 4]) = (inside * w, outside * w);
                 let (rx, ry) = (win.size[0] * w / 2.0, win.size[1] * w / 2.0);
                 let (sin, cos) = win.rotation.to_radians().sin_cos();
                 let (cx, cy) = (win.center[0] * w, win.center[1] * h);
