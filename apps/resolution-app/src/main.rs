@@ -4,7 +4,8 @@
 //! resolution-app [--demo | --project <path.fcproj>] [--import <file>]… [--seek <seconds>]
 //!                [--mute] [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>]
 //!                [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>]
-//!                [--highlight grey|bw|diff] [--palette <name>] [--bars] [--journal <file.jsonl>]
+//!                [--highlight grey|bw|diff] [--palette <name>] [--bars]
+//!                [--mini-timeline] [--journal <file.jsonl>]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
@@ -19,7 +20,8 @@
 //! their own, away from the user's. `--highlight` starts with the Color page's Highlight view on
 //! (LOG D-048), flat grey or black and white, or Highlight Difference (D-070), for self-tests of it. `--palette` opens a Color page
 //! palette (`curves`, `qualifier`, `window`, or a hue curve as `curves:hue_sat` and so on) and
-//! `--bars` the Primaries' Bars mode, for self-tests of them (LOG D-069). `--journal` writes the action
+//! `--bars` the Primaries' Bars mode, and `--mini-timeline` the Mini-Timeline, for self-tests of them
+//! (LOG D-069, D-071). `--journal` writes the action
 //! journal to a file as it goes: a line of JSON as each command starts and ends (LOG D-054).
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -38,7 +40,7 @@ mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw|diff] [--palette <name>] [--bars] [--journal <file>]";
+                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw|diff] [--palette <name>] [--bars] [--mini-timeline] [--journal <file>]";
 
 fn options() -> Result<(app::Options, bool, bool), String> {
     let mut o = app::Options::default();
@@ -82,6 +84,7 @@ fn options() -> Result<(app::Options, bool, bool), String> {
                 o.palette = Some(name);
             }
             "--bars" => o.bars = true,
+            "--mini-timeline" => o.mini_timeline = true,
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
