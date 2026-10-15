@@ -209,7 +209,7 @@ impl Engine for FilmCraftEngine {
                 self.on_selection(id, params)
             }
             Some(Target::Adapter) if id.starts_with("color.") => self.color(id, params),
-            Some(Target::Adapter) if id.starts_with("edit.") && id != "edit.undo" && id != "edit.redo" => {
+            Some(Target::Adapter) if edits::composes(id) => {
                 let before = self.undo_top();
                 let result = edits::run(&mut self.session, id)
                     .unwrap_or_else(|| Err(FcError::UnknownCommand(id.to_string())))

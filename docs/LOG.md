@@ -131,6 +131,7 @@ doc is updated *and* the entry says which section moved.
 | B-042 | 2026-10-15 | ui | The timeline did not show transitions | fixed |
 | D-063 | 2026-10-15 | color | Inside and Outside Softness for Polygon and Curve windows | active (field names provisional) |
 | D-064 | 2026-10-15 | edit | Dynamic Trim mode: what it takes, and two ways to build it | proposed, for Truman |
+| B-043 | 2026-10-15 | engine | Ctrl+T added no transition from the editor | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3465,3 +3466,53 @@ the timeline as Resolve draws it. Add Transition, nudge trims (`,` and `.`) and 
 - The ids above: their names, their parameters, and whether edit points are engine state, as
   FilmCraft keeps them, or the front end's.
 - A or B.
+
+### B-043 — Ctrl+T added no transition from the editor
+**Area:** engine · **Status:** fixed · **Caught by:** the one-minute edit rehearsed through the
+editor's keys and mouse (a new UI test, below)
+
+**Symptom:** Ctrl+T (Add Transition) at a cut did nothing in the editor. Alt+T and Shift+T (video
+only, audio only) worked.
+
+**Cause:** `timeline.addTransition` was mapped (Approx) to FilmCraft's
+`trim.applyDefaultTransition`, which acts only on selected edit points. The editor cannot select
+edit points (D-064), so the command always failed. The map's note recorded the difference, but
+not that it left the key with nothing to act on.
+
+**Fix:** Add Transition is now one of the adapter's composed edits (D-059's `edits.rs`). It runs
+FilmCraft's video and audio transition commands together, as one undo step named Add Transition.
+Each puts its transition where Alt+T and Shift+T put theirs:
+- at the selected clips' edges;
+- else at the selected edit points;
+- else at the edit within three frames of the playhead on the targeted tracks.
+
+It fails only when neither can be placed, and then nothing changes. Resolve's manual has Ctrl+T
+add a video and audio transition at the selected edit points or clips, with V to select the
+nearest edit. Here the playhead stands in for V until edit points can be selected.
+
+**Seen on the way:** FilmCraft leaves a clip selected after inserting it. Alt+T or Ctrl+T straight
+after an insert so puts transitions at both of the new clip's edges. Whether Resolve selects an
+inserted clip is not checked.
+
+**The rehearsal:** a UI test cuts the one-minute edit (ROADMAP step 2's bar) on the demo through
+keys and the mouse only, as `scripts/rehearse-edit.py` does through the engine (B-042):
+1. Ctrl+N for an empty timeline.
+2. Source ranges marked with the arrow keys, I and O. F9 inserts the first. The playhead moves to
+   the end of the edit, as in Resolve, so F10's overwrite follows on. Shift+F12 appends a third.
+3. Q to the timeline, then Home, and Down to the first cut. Two splits with Ctrl+B half a second
+   apart; the piece between is clicked and ripple-deleted with Shift+Backspace, leaving no gap.
+4. The last clip's end dragged earlier with the selection tool.
+5. Ctrl+T at the first cut, M for a marker, Ctrl+Z and Ctrl+Shift+Z.
+6. A1 cut as V1 is.
+
+Only Ctrl+T failed.
+
+**Checked:**
+- Adapter test: on a timeline of two clips with nothing selected, Add Transition a second from the
+  cut fails and changes nothing. Two frames from it, it adds one video and one audio transition
+  as one undo step named Add Transition, which one undo removes.
+- The UI test, as above.
+- Mutation checks:
+  - without the audio transition, without the undo group, and with the old mapping, the tests
+    fail;
+  - a plain Backspace (delete, leaving a gap) fails the rehearsal's no-gap check.

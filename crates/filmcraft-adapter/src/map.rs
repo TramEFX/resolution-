@@ -125,13 +125,7 @@ pub const MAP: &[(&str, Target)] = &[
     ("timeline.rippleEndToPlayhead", Engine("trim.rippleNext")),
     ("timeline.toggleClipEnable", Engine("clip.enable")),
     ("timeline.matchFrame", Engine("sequence.matchFrame")),
-    (
-        "timeline.addTransition",
-        Approx(
-            "trim.applyDefaultTransition",
-            "applies to the selected edit points rather than the edit nearest the playhead",
-        ),
-    ),
+    ("timeline.addTransition", Adapter),
     ("timeline.addVideoTransition", Engine("sequence.applyVideoTransition")),
     ("timeline.addAudioTransition", Engine("sequence.applyAudioTransition")),
     ("timeline.snapping", Engine("sequence.snap")),
