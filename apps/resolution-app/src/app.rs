@@ -3363,6 +3363,15 @@ mod tests {
         pump(&mut h, "a wider hue range", |a| !a.color.dragging && q(a).is_some_and(|q| q.hue_width > width + 1.0));
         click(&mut h, "Qualifier Invert");
         pump(&mut h, "inverted", |a| q(a).is_some_and(|q| q.invert));
+        // Matte Finesse's numbers end before the scopes begin (LOG B-051)
+        h.step();
+        let (matte, scopes) = (h.get_by_label("White Clip").rect(), h.get_by_label("Waveform").rect());
+        assert!(matte.right() <= scopes.left(), "{matte:?} runs under the scopes at {scopes:?}");
+        // Luma mode: Hue and Sat off, Lum on (LOG D-072); HSL: all three on
+        click(&mut h, "Qualifier Luma");
+        pump(&mut h, "the Luma mode", |a| q(a).is_some_and(|q| !q.hue_on && !q.sat_on && q.lum_on));
+        click(&mut h, "Qualifier HSL");
+        pump(&mut h, "the HSL mode", |a| q(a).is_some_and(|q| q.hue_on && q.sat_on && q.lum_on));
         click(&mut h, "Remove Qualifier");
         pump(&mut h, "no qualifier", |a| q(a).is_none() && !a.color.dragging);
     }

@@ -111,7 +111,8 @@ read, never copied into the repo.
 - [x] The Highlight view: Highlight and Highlight B/W of the current node (D-048)
 - [x] More matte finesse: Black Clip, White Clip, Morph (D-058)
 - [x] Highlight Difference, drawn (D-070); its command, `color.highlightDifference`, waits on Truman
-- [ ] In/Out Ratio, RGB and Luma qualifier modes
+- [x] The qualifier's Luma mode (D-072)
+- [ ] In/Out Ratio, RGB and 3D qualifier modes
 - [x] Gradient window (D-052)
 - [x] Polygon window: corners dragged, added and removed on screen (D-053)
 - [x] Window handles on screen: size, rotation, softness (D-057)
