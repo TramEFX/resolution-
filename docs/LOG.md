@@ -135,6 +135,7 @@ doc is updated *and* the entry says which section moved.
 | D-065 | 2026-10-15 | color | A Linear window's Soft 1 to 4: each side's own softness | active (side order and field name provisional) |
 | B-044 | 2026-10-15 | tests | The one-minute edit's UI test timed out in a full run | fixed |
 | D-066 | 2026-10-15 | color | Hue curves: image sampling from the viewer and the six-vector patches | active (widths provisional) |
+| D-067 | 2026-10-15 | color | The Primaries palette's Bars mode | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3645,3 +3646,38 @@ compared with Resolve's.
   - the buttons a vector off.
 - Not looked at by eye. At the UI tests' 1600-pixel window, the six buttons fit between the
   palettes' names and the curve menu, but only just.
+
+### D-067 — The Primaries palette's Bars mode
+**Area:** color · **Status:** active · **Doc:** `color_page.rs` (`primaries`, `bars`)
+
+**Decision:** Resolve's Primaries palette has three modes, Wheels, Bars and Log (21.1 Reference
+Manual, "Primaries Palette"). This adds Bars, chosen from a mode menu in the palette's title strip
+("Wheels ▾" or "Bars ▾"); the title follows it ("Primaries - Color Bars").
+- **The bars:** Lift, Gamma, Gain and Offset each get four vertical sliders, Y, R, G and B. They
+  are the same numbers the wheels set: each wheel's master and its three channels. Neutral is at
+  the middle, the change is filled from there, and the value is under the bar.
+- **Using them:** drag a bar up to raise it; the bar's whole height spans twice the wheel's reach
+  at its edge (Lift and Gamma ±0.5, Gain 0 to 2, Offset 0 to 50). Shift drags at a tenth of
+  that. A double-click resets it.
+- **Unchanged:** the bars above and below (Temp to Midtone Detail, Color Boost to Hue) are as in
+  Wheels mode. Each change is a `color.adjust` of one channel, so no new vocabulary.
+
+**Not as Resolve:** Resolve's Bars mode gives Offset "a slider and button-driven interface" for
+printer points. Here Offset has the same four bars as the others. Log mode and Lum Mix are not
+built.
+
+**Learned on the way:** egui_kittest steps the UI a quarter second at a time, one queued event a
+step. A double-click's two clicks then arrive half a second apart, past egui's 0.3 s, so no UI
+test could double-click until now. `demo_stepping(dt)` builds the harness with a finer step, and
+this test uses 0.05 s.
+
+**Checked:**
+- UI test, choosing Bars from the menu:
+  - Gain's R bar dragged a quarter up raises red gain alone, by no more than half Gain's reach.
+    egui drops the first points of a drag, so it is a little short.
+  - Lift's B bar dragged down lowers blue lift.
+  - A double-click puts red gain back to 1.
+  - Back to the wheels.
+- Mutation checks, each caught: a drag down raising, every bar setting Y, no reset, a menu that
+  does nothing, the bars never drawn.
+- Not looked at by eye. At 1600 × 920 a bar is 183 points tall.
