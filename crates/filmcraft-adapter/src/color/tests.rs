@@ -340,6 +340,23 @@ fn a_polygons_inside_and_outside_softness_compile_to_feather_and_expansion() {
     assert_eq!(masked(Window { inside_softness: Some(0.05), outside_softness: Some(0.01), ..own }), (115.0, -38.0));
 }
 
+/// A Linear window's Soft 1 to 4 (LOG D-065) compile to one feather, their mean: FilmCraft's mask
+/// has one.
+#[test]
+fn a_linear_windows_sides_compile_to_their_mean_feather() {
+    let feather = |win: Window| {
+        let mut n = node(json!({"gain": {"y": 0.5}}));
+        n.windows = vec![win];
+        match compile(&Grade { nodes: vec![n] }, (1920, 1080))[0].masks[0].feather.value {
+            ParamValue::Float(v) => v.round(),
+            _ => f64::NAN,
+        }
+    };
+    let linear = Window::new(Shape::Linear);
+    assert_eq!(feather(linear.clone()), (f64::from(linear.softness) * 1920.0).round());
+    assert_eq!(feather(Window { side_softness: Some([0.0, 0.02, 0.04, 0.06]), ..linear }), (0.03_f64 * 1920.0).round());
+}
+
 #[test]
 fn a_turned_linear_window_turns_its_rectangle() {
     let w = |rotation: f32| {

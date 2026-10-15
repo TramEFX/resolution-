@@ -132,6 +132,8 @@ doc is updated *and* the entry says which section moved.
 | D-063 | 2026-10-15 | color | Inside and Outside Softness for Polygon and Curve windows | active (field names provisional) |
 | D-064 | 2026-10-15 | edit | Dynamic Trim mode: what it takes, and two ways to build it | proposed, for Truman |
 | B-043 | 2026-10-15 | engine | Ctrl+T added no transition from the editor | fixed |
+| D-065 | 2026-10-15 | color | A Linear window's Soft 1 to 4: each side's own softness | active (side order and field name provisional) |
+| B-044 | 2026-10-15 | tests | The one-minute edit's UI test timed out in a full run | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3516,3 +3518,75 @@ Only Ctrl+T failed.
   - without the audio transition, without the undo group, and with the old mapping, the tests
     fail;
   - a plain Backspace (delete, leaving a gap) fails the rehearsal's no-gap check.
+
+### D-065 — A Linear window's Soft 1 to 4: each side's own softness
+**Area:** color · **Status:** active; which number is which side, and the field's name, are
+provisional, for Truman's review · **Doc:** `crates/grade` (`Window::side_softnesses`);
+`crates/renderer` (`grade_data`, `coverage`); `color.rs` (`mask`); `color_page.rs`
+(`field_cells`, `Handle::Side`)
+
+**Decision:** a Linear window's soft edge can differ on each side, as in Resolve. The 21.1
+Reference Manual ("Window Softness") gives a Linear window four parameters, Soft 1 to 4, one for
+each side, with a control point on the top, bottom, left and right.
+- **In the grade:** `side_softness`, four fractions of the picture's width for the window's top,
+  bottom, left and right. They are its own sides, turned with it. The field is optional and
+  written only when set; without it, every side has the softness, so stored windows draw as they
+  did. Other shapes drop it when loaded.
+- **On the GPU:** the four widths sit in the tables, where a Polygon keeps its corners, and the
+  window slot points to them. Each side's soft edge is centred on it. Where two meet, the lesser
+  coverage wins, which is what one softness did, so four equal sides draw exactly as before.
+- **In the compile:** FilmCraft's mask has one feather, so it takes the mean of the four. Like a
+  soft Gradient's (B-040), FilmCraft's own render differs at the edges; Resolution's renders
+  draw each side.
+- **In the palette:** Soft 1 to 4 replace Softness for a Linear window, on a row of their own. Its
+  numbers take three rows; the other shapes keep two, since their softness fits on the second.
+  Opacity now comes before the softness on the second row.
+- **On screen:** a ring beside each side, as far out as that side's soft edge reaches. Dragged,
+  each sets its own side. The top one sits halfway towards the right corner, clear of the rotate
+  handle.
+
+**Provisional:** the manual does not say which number is which side. Soft 1 to 4 are the top,
+bottom, left and right here, the order the manual names the control points in. Resolve's palette
+will show the real order: drag one side's control point and watch which number changes.
+
+**Found in the manual on the way** (not changed):
+- Resolve's Polygon has no on-screen softness control. D-063 gave ours a handle for its Outside
+  Soft.
+- Resolve's Curve has inside and outside softness control points at each point, "creating any
+  softness shape you need". Ours has one inside and one outside softness for the whole curve.
+
+**Checked:**
+- Grade test: the softness on every side by default; not written until set; kept in range; dropped
+  from a circle, a polygon and a gradient.
+- Renderer test: a rectangle soft only on its left is half way at that edge, black 20 pixels in
+  and untouched 20 out, and hard on the other three sides. Soft only on its top, likewise. Turned
+  half round, its left side's softness is on the picture's right.
+- Compile test: the feather is the softness, or the four sides' mean.
+- UI test:
+  - Soft 1 to 4 on a row of their own and no Softness for a Linear window; two rows for the
+    other shapes;
+  - a handle beside each side and none below; each, dragged 20 pixels further out on a turned
+    window, softens its own side by 4 % of the width, keeps the other three, and is then where it
+    was dragged to.
+- The palette's third row measured in the UI harness at 1600 × 920: Soft 1 to 4 at y 679 to 701,
+  under the palette's header at 515. Not looked at by eye.
+- Mutation checks: each test fails with its part broken. The parts: the clamping, dropping the
+  sides from other shapes, the default, the renderer's widths, the shader's left/right and
+  top/bottom, the sides turning with the window, the compile's mean, the row, Softness hidden, a
+  handle's side, and a handle's place.
+
+### B-044 — The one-minute edit's UI test timed out in a full run
+**Area:** tests · **Status:** fixed · **Caught by:** the full test run for D-065, twice in a row;
+the test had passed on its own and in the run for its PR (#58)
+
+**Symptom:** `the_one_minute_edit_through_the_keys_and_mouse` waited a minute for "the playhead
+there" and failed, with the other app tests running beside it.
+
+**Cause:** the test, not the editor. To reach a frame it pressed Right, stepped the UI once, and
+read the playhead, again until the playhead got there. Under load the playhead lags a step behind
+the presses, so the test pressed too often and overshot. It then waited for a frame the playhead
+had passed.
+
+**Fix:** it presses Right as many times as there are frames to go, then waits for the playhead.
+The wait checks that each press moved it exactly one frame, none lost or doubled. Three full runs
+of the app's tests passed.

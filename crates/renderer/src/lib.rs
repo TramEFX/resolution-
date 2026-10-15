@@ -1273,6 +1273,11 @@ pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>
                 win.opacity / 100.0,
                 if win.invert { 1.0 } else { 0.0 },
             ]);
+            if win.shape == Shape::Linear {
+                // each side's soft edge in pixels, top, bottom, left and right (LOG D-065)
+                b[o + 9] = (after_tables + corners.len()) as f32;
+                corners.extend(win.side_softnesses().map(|s| s * w));
+            }
             if win.shape.has_points() {
                 // turned and placed as the shader's other shapes are: x' = x·cos − y·sin
                 b[o + 9] = (after_tables + corners.len()) as f32;

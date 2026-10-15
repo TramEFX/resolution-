@@ -1281,9 +1281,10 @@ struct WindowField {
 
 /// Pan and Tilt in percent of the picture (50 is the middle; Tilt rises upwards); Size is the
 /// width in percent of the picture's width, Aspect the height to the width (50 is round or
-/// square); Rotate in degrees clockwise; Softness in percent of the picture's width, and a Polygon's
-/// or a Curve's Inside Soft and Outside Soft in its place (LOG D-063).
-const WINDOW_FIELDS: [WindowField; 9] = [
+/// square); Rotate in degrees clockwise; Softness in percent of the picture's width, and in its
+/// place a Polygon's or a Curve's Inside Soft and Outside Soft (LOG D-063) and a Linear window's
+/// Soft 1 to 4, its top, bottom, left and right (LOG D-065).
+const WINDOW_FIELDS: [WindowField; 13] = [
     WindowField {
         name: "Pan",
         get: |w| w.center[0] * 100.0,
@@ -1339,7 +1340,43 @@ const WINDOW_FIELDS: [WindowField; 9] = [
         decimals: 2,
     },
     WindowField { name: "Opacity", get: |w| w.opacity, set: |w, v| w.opacity = v, step: 0.5, decimals: 1 },
+    WindowField {
+        name: "Soft 1",
+        get: |w| w.side_softnesses()[0] * 100.0,
+        set: |w, v| set_side(w, 0, v),
+        step: 0.05,
+        decimals: 2,
+    },
+    WindowField {
+        name: "Soft 2",
+        get: |w| w.side_softnesses()[1] * 100.0,
+        set: |w, v| set_side(w, 1, v),
+        step: 0.05,
+        decimals: 2,
+    },
+    WindowField {
+        name: "Soft 3",
+        get: |w| w.side_softnesses()[2] * 100.0,
+        set: |w, v| set_side(w, 2, v),
+        step: 0.05,
+        decimals: 2,
+    },
+    WindowField {
+        name: "Soft 4",
+        get: |w| w.side_softnesses()[3] * 100.0,
+        set: |w, v| set_side(w, 3, v),
+        step: 0.05,
+        decimals: 2,
+    },
 ];
+
+/// A Linear window with side `k`'s softness (top, bottom, left, right) at `percent` of the
+/// picture's width, the others as they were.
+fn set_side(w: &mut Window, k: usize, percent: f32) {
+    let mut s = w.side_softnesses();
+    s[k] = (percent / 100.0).clamp(0.0, 1.0);
+    w.side_softness = Some(s);
+}
 
 fn shape_name(s: WindowShape) -> &'static str {
     match s {
@@ -1451,16 +1488,16 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     if changed {
         set(page, &mut asks, &wins);
     }
-    // the chosen window's numbers, two rows of four
+    // the chosen window's numbers, in rows of four
     if let Some(w) = wins.get(page.window).cloned() {
         ui.add_space(6.0);
         let area = ui.available_rect_before_wrap();
         let row_h = 26.0;
         let cell_w = (area.width() - 16.0) / 4.0;
         let fresh = Window::new(w.shape);
-        let fields = window_fields(w.shape);
-        for (k, f) in fields.enumerate() {
-            let (row, col) = (k / 4, k % 4);
+        let cells = field_cells(w.shape);
+        let rows = cells.iter().map(|c| c.1 + 1).max().unwrap_or(0);
+        for (f, row, col) in cells {
             let cell = Rect::from_min_size(
                 pos2(area.left() + 8.0 + cell_w * col as f32, area.top() + row_h * row as f32),
                 vec2(cell_w, row_h),
@@ -1485,7 +1522,7 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
                 page.end_drag();
             }
         }
-        ui.allocate_rect(Rect::from_min_size(area.min, vec2(area.width(), row_h * 2.0)), Sense::hover());
+        ui.allocate_rect(Rect::from_min_size(area.min, vec2(area.width(), row_h * rows as f32)), Sense::hover());
     }
     asks
 }
@@ -1536,6 +1573,9 @@ enum Handle {
     Rotate,
     /// Below it: the softness.
     Soft,
+    /// Beside a Linear window's side (0 to 3: top, bottom, left, right): that side's softness
+    /// (LOG D-065).
+    Side(usize),
 }
 
 /// The numbers a window of shape `s` shows: a gradient has no size, and a Polygon's or a Curve's
@@ -1544,10 +1584,29 @@ fn window_fields(s: WindowShape) -> impl Iterator<Item = &'static WindowField> {
     let points = s.has_points();
     WINDOW_FIELDS.iter().filter(move |f| match f.name {
         "Size" | "Aspect" => s != WindowShape::Gradient,
-        "Softness" => !points,
+        "Softness" => !points && s != WindowShape::Linear,
         "Inside Soft" | "Outside Soft" => points,
+        "Soft 1" | "Soft 2" | "Soft 3" | "Soft 4" => s == WindowShape::Linear,
         _ => true,
     })
+}
+
+/// Where each of a window's numbers sits in the palette, as (field, row, column) in rows of four:
+/// the softness after the rest, starting a row of its own when it would not fit on the last one
+/// (a Linear window's four, LOG D-065).
+fn field_cells(s: WindowShape) -> Vec<(&'static WindowField, usize, usize)> {
+    let (soft, rest): (Vec<_>, Vec<_>) =
+        window_fields(s).partition(|f| f.name.starts_with("Soft") || f.name.ends_with("Soft"));
+    let mut k = rest.len();
+    if k % 4 + soft.len() > 4 {
+        k = k.div_ceil(4) * 4;
+    }
+    let at = |i: usize| (i / 4, i % 4);
+    rest.into_iter()
+        .enumerate()
+        .map(|(i, f)| (f, at(i).0, at(i).1))
+        .chain(soft.into_iter().enumerate().map(|(i, f)| (f, at(k + i).0, at(k + i).1)))
+        .collect()
 }
 
 /// Pixels between a window's edge and its rotate and softness handles.
@@ -1565,13 +1624,27 @@ fn handles(w: &Window, pic: Rect) -> Vec<(Handle, Pos2)> {
         return vec![(Handle::Rotate, at(0.0, -HANDLE_GAP)), (Handle::Soft, at(0.0, HANDLE_GAP / 2.0 + soft))];
     }
     let (rx, ry) = (w.size[0] * pic.width() / 2.0, w.size[1] * pic.width() / 2.0);
-    vec![
+    let mut grips = vec![
         (Handle::Width, at(rx, 0.0)),
         (Handle::Height, at(0.0, -ry)),
         (Handle::Scale, at(rx, ry)),
         (Handle::Rotate, at(0.0, -ry - HANDLE_GAP)),
-        (Handle::Soft, at(0.0, ry + HANDLE_GAP / 2.0 + soft)),
-    ]
+    ];
+    if w.shape == WindowShape::Linear {
+        // each side's softness beside it, as far out as its soft edge reaches; the top one aside,
+        // clear of the rotate handle (LOG D-065)
+        let s = w.side_softnesses().map(|v| v * pic.width() / 2.0);
+        let g = HANDLE_GAP / 2.0;
+        grips.extend([
+            (Handle::Side(0), at(rx / 2.0, -ry - g - s[0])),
+            (Handle::Side(1), at(0.0, ry + g + s[1])),
+            (Handle::Side(2), at(-rx - g - s[2], 0.0)),
+            (Handle::Side(3), at(rx + g + s[3], 0.0)),
+        ]);
+    } else {
+        grips.push((Handle::Soft, at(0.0, ry + HANDLE_GAP / 2.0 + soft)));
+    }
+    grips
 }
 
 /// The window `w` with handle `h` dragged to `p` on screen.
@@ -1594,6 +1667,17 @@ fn dragged(w: &Window, pic: Rect, h: Handle, p: Pos2) -> Window {
         }
         // 0 straight up, clockwise
         Handle::Rotate => w.rotation = d.x.atan2(-d.y).to_degrees(),
+        Handle::Side(k) => {
+            let rx = w.size[0] * pw / 2.0;
+            // how far out from that side, past the gap: half its softness
+            let out = match k {
+                0 => -ly - ry,
+                1 => ly - ry,
+                2 => -lx - rx,
+                _ => lx - rx,
+            };
+            set_side(&mut w, k, 200.0 * (out - HANDLE_GAP / 2.0) / pw);
+        }
         Handle::Soft => {
             let out = ((ly - ry - HANDLE_GAP / 2.0) / pw).clamp(0.0, 1.0);
             if w.shape.has_points() {
@@ -1676,7 +1760,7 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
     for (h, at) in &grips {
         let _ = match h {
             Handle::Rotate => painter.circle_filled(*at, 4.5, look.theme.text),
-            Handle::Soft => painter.circle_stroke(*at, 5.0, Stroke::new(1.5, look.theme.text)),
+            Handle::Soft | Handle::Side(_) => painter.circle_stroke(*at, 5.0, Stroke::new(1.5, look.theme.text)),
             _ => painter.rect_filled(Rect::from_center_size(*at, vec2(7.0, 7.0)), CornerRadius::ZERO, look.theme.text),
         };
     }
@@ -2017,6 +2101,49 @@ mod handle_tests {
         assert!(dragged(&w, pic, Handle::Soft, further).softness > w.softness + 0.03);
     }
 
+    /// A Linear window's Soft 1 to 4 (LOG D-065): four numbers on a row of their own in place of
+    /// Softness, the other shapes' rows as they were; a handle beside each side sets its softness.
+    #[test]
+    fn a_linear_windows_sides_have_their_own_fields_and_handles() {
+        let cells = |s: WindowShape| field_cells(s).into_iter().map(|(f, r, c)| (f.name, r, c)).collect::<Vec<_>>();
+        let linear = cells(WindowShape::Linear);
+        assert_eq!(
+            &linear[6..],
+            &[("Soft 1", 2, 0), ("Soft 2", 2, 1), ("Soft 3", 2, 2), ("Soft 4", 2, 3)],
+            "{linear:?}"
+        );
+        assert!(!linear.iter().any(|c| c.0 == "Softness"));
+        assert_eq!(linear.iter().find(|c| c.0 == "Opacity").map(|c| (c.1, c.2)), Some((1, 1)));
+        for s in [WindowShape::Circle, WindowShape::Polygon, WindowShape::Gradient] {
+            let c = cells(s);
+            assert!(c.iter().all(|c| c.1 < 2 && !c.0.starts_with("Soft ")), "two rows: {c:?}");
+        }
+        // a handle beside each side, none below for the whole
+        let pic = Rect::from_min_size(pos2(100.0, 50.0), vec2(1000.0, 500.0));
+        let mut w = Window::new(WindowShape::Linear);
+        w.rotation = 30.0;
+        let grips = handles(&w, pic);
+        assert!(!grips.iter().any(|g| g.0 == Handle::Soft));
+        for k in 0..4 {
+            let (_, at) = grips.iter().find(|g| g.0 == Handle::Side(k)).copied().unwrap();
+            // dragged 20 pixels further out from its side: that side softer, the others kept
+            let (sin, cos) = w.rotation.to_radians().sin_cos();
+            let out = match k {
+                0 => vec2(sin, -cos),
+                1 => vec2(-sin, cos),
+                2 => vec2(-cos, -sin),
+                _ => vec2(cos, sin),
+            };
+            let moved = dragged(&w, pic, Handle::Side(k), at + out * 20.0);
+            let (before, after) = (w.side_softnesses(), moved.side_softnesses());
+            assert!((after[k] - before[k] - 0.04).abs() < 1e-3, "side {k}: {before:?} to {after:?}");
+            assert!((0..4).filter(|j| *j != k).all(|j| after[j] == before[j]), "side {k}: {after:?}");
+            // and the handle follows: it is where it was dragged to
+            let now = handles(&moved, pic).into_iter().find(|g| g.0 == Handle::Side(k)).unwrap().1;
+            assert!(now.distance(at + out * 20.0) < 0.5, "side {k}: {now:?}");
+        }
+    }
+
     /// A Polygon's or a Curve's softness is its Inside Soft and Outside Soft (LOG D-063): the
     /// palette shows those in place of Softness, and the soft handle sets how far out it reaches.
     #[test]
@@ -2027,10 +2154,11 @@ mod handle_tests {
             assert!(n.contains(&"Inside Soft") && n.contains(&"Outside Soft") && !n.contains(&"Softness"), "{n:?}");
             assert_eq!(n.len(), 8, "two rows of four: {n:?}");
         }
-        for s in [WindowShape::Linear, WindowShape::Circle, WindowShape::Gradient] {
+        for s in [WindowShape::Circle, WindowShape::Gradient] {
             let n = names(s);
             assert!(n.contains(&"Softness") && !n.contains(&"Inside Soft"), "{n:?}");
         }
+        assert!(!names(WindowShape::Linear).contains(&"Inside Soft"), "a Linear window has Soft 1 to 4 (LOG D-065)");
         // the fields set the window's own, one leaving the other
         let field = |name: &str| WINDOW_FIELDS.iter().find(|f| f.name == name).unwrap();
         let mut w = Window::new(WindowShape::Polygon);

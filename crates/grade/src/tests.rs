@@ -601,6 +601,31 @@ fn inside_and_outside_softness_default_to_half_the_softness_each_way() {
     assert_eq!(circle.edge_softness(), (circle.softness / 2.0, circle.softness / 2.0));
 }
 
+/// A Linear window's Soft 1 to 4 (LOG D-065): its own, else the softness on every side; written
+/// only when set, kept in range, and dropped from the other shapes.
+#[test]
+fn a_linear_windows_sides_default_to_its_softness() {
+    let w = Window::new(Shape::Linear);
+    assert_eq!(w.side_softnesses(), [w.softness; 4]);
+    assert!(serde_json::to_value(&w).unwrap().get("side_softness").is_none());
+    let own = Window { side_softness: Some([0.0, 0.1, 0.2, 0.3]), ..w.clone() };
+    assert_eq!(own.side_softnesses(), [0.0, 0.1, 0.2, 0.3]);
+    let j = serde_json::to_value(&own).unwrap();
+    assert_eq!(serde_json::from_value::<Window>(j.clone()).unwrap(), own);
+    let window = |shape: &str| {
+        let mut j = j.clone();
+        j["shape"] = json!(shape);
+        j["side_softness"] = json!([-1.0, 0.1, 0.2, 3.0]);
+        node(json!({ "windows": [j] })).windows[0].clone()
+    };
+    assert_eq!(window("linear").side_softnesses(), [0.0, 0.1, 0.2, 1.0]);
+    for shape in ["circle", "polygon", "gradient"] {
+        let other = window(shape);
+        assert_eq!(other.side_softness, None, "{shape}");
+        assert_eq!(other.side_softnesses(), [other.softness; 4], "{shape}");
+    }
+}
+
 #[test]
 fn shadows_and_highlights_move_the_ends_and_keep_black_white_and_mid_grey() {
     let ramp: Vec<f32> = (0..=200).map(|i| i as f32 / 200.0).collect();

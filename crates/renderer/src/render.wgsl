@@ -381,6 +381,15 @@ fn key(n: u32, rgb: vec3<f32>) -> f32 {
 // How much of a node the windows let through at source position sp: each window's shape (turned
 // clockwise about its centre), its soft edge centred on the edge, inverted and scaled by its
 // opacity; windows add up. 1 when the node has none.
+// How much a soft edge `soft` pixels wide, centred on the shape's edge, lets through at signed
+// distance `d` from it (negative inside); hard below a thousandth of a pixel.
+fn soft_edge(d: f32, soft: f32) -> f32 {
+    if soft <= 1e-3 {
+        return select(0.0, 1.0, d <= 0.0);
+    }
+    return clamp(0.5 - d / soft, 0.0, 1.0);
+}
+
 // The signed distance from `p` to the polygon whose corners are at `at` in the tables (their
 // count, then x and y for each, in the picture's pixels): negative inside (even-odd), positive
 // outside.
@@ -441,10 +450,15 @@ fn coverage(n: u32, sp: vec2<f32>) -> f32 {
             } else {
                 m = clamp((outside - dist) / (inside + outside), 0.0, 1.0);
             }
-        } else if soft <= 1e-3 {
-            m = select(0.0, 1.0, dist <= 0.0);
+        } else if shape < 0.5 {
+            // a Linear window's Soft 1 to 4 (LOG D-065): each side's own, in the tables as top,
+            // bottom, left and right; with all four the same, as one softness
+            let at = u32(nf(n, o + 9u));
+            let sx = select(tones[at + 3u], tones[at + 2u], q.x < 0.0);
+            let sy = select(tones[at + 1u], tones[at], q.y < 0.0);
+            m = min(soft_edge(abs(q.x) - r.x, sx), soft_edge(abs(q.y) - r.y, sy));
         } else {
-            m = clamp(0.5 - dist / soft, 0.0, 1.0);
+            m = soft_edge(dist, soft);
         }
         if nf(n, o + 8u) > 0.5 {
             m = 1.0 - m;
