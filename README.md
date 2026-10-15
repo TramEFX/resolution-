@@ -55,6 +55,7 @@ The engine lives in a private mirror; Cargo fetches it with your git credentials
 ## Docs
 
 - **[Picking up locally](docs/HANDOFF.md)**: setup, MCP in Claude Code, status, next steps
+- [The one-minute edit, in Resolution](docs/ONE-MINUTE-EDIT.md): what works in the editor today, step by step
 - [Architecture and invariants](docs/ARCHITECTURE.md)
 - [Decision & issue log](docs/LOG.md): every design decision (`D-nnn`) and bug (`B-nnn`), as it happened
 - [Roadmap](docs/ROADMAP.md)
