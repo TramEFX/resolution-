@@ -213,3 +213,26 @@ fn add_transition_puts_video_and_audio_transitions_at_the_edit_at_the_playhead()
     e.execute("edit.undo", json!({})).unwrap();
     assert_eq!(transitions(&e), (0, 0), "one undo step");
 }
+
+/// A clip whose picture differs from the timeline's is fitted into it, as Resolve's default
+/// "Scale entire image to fit" does (LOG B-050); one that matches is left as it is.
+#[test]
+fn a_clip_of_another_size_is_fitted_into_the_timeline() {
+    let (mut e, item) = with_source("City_Night_Drive.mp4");
+    let placed = |e: &FilmCraftEngine| {
+        let seq = e.session.active_sequence().unwrap();
+        seq.video_tracks[0].items.iter().find(|c| c.item.0 == item).map(|c| c.scale_to_frame)
+    };
+    // the demo's own timeline is its size: as it is
+    let (w, h) = {
+        let s = &e.session.active_sequence().unwrap().settings;
+        (s.width, s.height)
+    };
+    e.execute("edit.appendAtEnd", json!({})).unwrap();
+    assert_eq!(placed(&e), Some(false), "a {w} x {h} clip in a {w} x {h} timeline");
+    // a smaller timeline: fitted
+    e.execute("timeline.new", json!({ "name": "Small", "width": w / 2, "height": h / 2 })).unwrap();
+    seek(&mut e, 0.0);
+    e.execute("edit.insert", json!({})).unwrap();
+    assert_eq!(placed(&e), Some(true));
+}
