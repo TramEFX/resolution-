@@ -155,6 +155,7 @@ doc is updated *and* the entry says which section moved.
 | D-074 | 2026-10-15 | ui | Keys for the node resets and Save Project As | active |
 | D-075 | 2026-10-15 | tests | A short grade rehearsed through the Color page's keys and mouse | active |
 | B-055 | 2026-10-15 | ui | Alt+S right after a change left the old node current | fixed |
+| B-056 | 2026-10-15 | ui | A window added right after a change left the old window chosen | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4188,3 +4189,20 @@ and the current node is put back in range. A node chosen by hand meanwhile stays
   - a node chosen meanwhile stays chosen;
   - without an add, a shorter grade still clamps.
 - Mutation check: clamping on grades from before fails both tests.
+
+### B-056 — A window added right after a change left the old window chosen
+**Area:** ui · **Status:** fixed · **Caught by:** looking for B-055's kind elsewhere: a UI test
+written for it, which failed three runs in three
+
+**Symptom:** dragging a window's Size and at once clicking Add Linear added the second window, but
+the first stayed chosen. Its numbers and handles were the ones then changed.
+
+**Cause:** as B-055. Add chose the new window at once; the Size drag's answer, a grade with one
+window, arrived after, and the palette clamped the chosen window into that grade's range.
+
+**Fix:** as B-055. The window added, and on which node, is remembered while grades from before it
+arrive. A grade that has it, another node, or a failed adjustment lets the palette clamp again.
+
+**Checked:** the UI test (a Size drag, then Add Linear at once: window 2 is chosen) passes three in
+three; before, it failed three in three. Curve points need nothing: a point index is checked
+against the curve before use.
