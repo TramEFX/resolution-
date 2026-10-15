@@ -43,6 +43,9 @@ pub struct ColorPage {
     pub view: Option<GradeView>,
     /// The current node (0-based).
     pub node: usize,
+    /// A node just asked for and made current: kept current while grades from before it still
+    /// arrive, until the add's own answer (LOG B-055).
+    pub new_node: Option<usize>,
     /// The custom curve being edited: 0 Y, 1 R, 2 G, 3 B.
     pub channel: usize,
     /// What the Curves palette shows: the Custom Curves or a hue curve.
@@ -91,8 +94,27 @@ impl ColorPage {
         if self.view.as_ref().is_none_or(|old| old.grade != v.grade) {
             self.stamps.insert(v.clip, revision);
         }
-        self.node = self.node.min(v.grade.nodes.len().saturating_sub(1));
+        let len = v.grade.nodes.len();
+        match self.new_node {
+            // the new node is here (and current, unless another was chosen meanwhile)
+            Some(n) if n < len => self.new_node = None,
+            // a grade from before it: the current node is left as it is (the add's own answer
+            // settles it)
+            Some(_) => {}
+            None => self.node = self.node.min(len.saturating_sub(1)),
+        }
         self.view = Some(v);
+    }
+
+    /// The add's own answer has come: if the node it asked for is still missing, it was not added,
+    /// and the current node is one the grade has again.
+    pub fn added(&mut self) {
+        if self.new_node.is_none() {
+            return;
+        }
+        self.new_node = None;
+        let len = self.view.as_ref().map_or(1, |v| v.grade.nodes.len());
+        self.node = self.node.min(len.saturating_sub(1));
     }
 
     fn begin_drag(&mut self) {
@@ -2593,6 +2615,41 @@ mod sampling_tests {
         assert_eq!(xs(&sampled(&empty, false, &[0.5, 0.3])), xs(&[[0.3 - m, 0.0], [0.4, 0.0], [0.5 + m, 0.0]]));
         assert_eq!(xs(&sampled(&empty, false, &[0.0, 0.02])), xs(&[[0.0, 0.0], [0.01, 0.0], [0.02 + m, 0.0]]));
         assert!(sampled(&bent, true, &[]) == bent.0, "nothing sampled, nothing added");
+    }
+
+    /// A node just added stays current while grades from before it arrive; its add's own answer
+    /// settles it (LOG B-055).
+    #[test]
+    fn a_new_node_stays_current_until_its_add_answers() {
+        let view = |nodes: usize| GradeView {
+            clip: 7,
+            grade: resolution_grade::Grade { nodes: vec![Node::default(); nodes] },
+            foreign: false,
+            size: (1920, 1080),
+        };
+        let mut page = ColorPage { clip: Some(7), view: Some(view(1)), ..Default::default() };
+        // Alt+S: node 2 current before the engine has it
+        (page.node, page.new_node) = (1, Some(1));
+        page.take(view(1), 3);
+        assert_eq!(page.node, 1, "a grade from before the add keeps the new node current");
+        page.take(view(2), 4);
+        page.added();
+        assert_eq!((page.node, page.new_node), (1, None));
+        // another node chosen before the add answers stays chosen
+        (page.node, page.new_node) = (2, Some(2));
+        page.node = 0;
+        page.take(view(3), 5);
+        page.added();
+        assert_eq!((page.node, page.new_node), (0, None));
+        page.view = Some(view(2));
+        // an add that fails: its answer brings no grade, and node 1 is current again
+        (page.node, page.new_node) = (2, Some(2));
+        page.added();
+        assert_eq!((page.node, page.new_node), (1, None));
+        // without an add, a grade with fewer nodes moves the current node in range
+        page.node = 5;
+        page.take(view(2), 6);
+        assert_eq!(page.node, 1);
     }
 
     /// `--palette`'s names (LOG D-069).
