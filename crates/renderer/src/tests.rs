@@ -642,6 +642,42 @@ fn a_polygons_soft_edge_reaches_as_far_in_and_out_as_it_is_told() {
     assert!((55..80).contains(&out[140]) && out[128] < 3, "{:?}", &out[120..160]);
 }
 
+/// A Linear window's Soft 1 to 4 (LOG D-065): each side's soft edge its own, turned with the
+/// window.
+#[test]
+fn a_linear_windows_sides_each_have_their_own_soft_edge() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (200u32, 100u32);
+    let px: Vec<u8> = (0..w * h).flat_map(|_| [128u8, 128, 128, 255]).collect();
+    // a rectangle from x 50 to 150 and y 25 to 75; 40 pixels soft on one side, hard on the rest
+    let rect = |sides: [f32; 4], rotation: f32| Window {
+        size: [0.5, 0.25],
+        rotation,
+        side_softness: Some(sides),
+        ..Window::new(resolution_grade::Shape::Linear)
+    };
+    let draw = |win: Window| {
+        let mut n = node(json!({"gain": {"y": 0.0}}));
+        n.windows = vec![win];
+        let g = Grade { nodes: vec![n] };
+        r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap()
+    };
+    let at = |out: &[u8], x: u32, y: u32| out[((y * w + x) * 4) as usize];
+    // soft on the left: half way at its edge, black 20 pixels in, untouched 20 out; the right,
+    // the top and the bottom hard
+    let out = draw(rect([0.0, 0.0, 0.2, 0.0], 0.0));
+    assert!((55..80).contains(&at(&out, 50, 50)) && at(&out, 71, 50) < 3 && at(&out, 29, 50).abs_diff(128) <= 1);
+    assert!(at(&out, 148, 50) < 3 && at(&out, 152, 50).abs_diff(128) <= 1, "the right hard");
+    assert!(at(&out, 100, 27) < 3 && at(&out, 100, 23).abs_diff(128) <= 1, "the top hard");
+    assert!(at(&out, 100, 73) < 3 && at(&out, 100, 77).abs_diff(128) <= 1, "the bottom hard");
+    // soft on the top only: half way at y 25, the bottom hard
+    let out = draw(rect([0.2, 0.0, 0.0, 0.0], 0.0));
+    assert!((55..80).contains(&at(&out, 100, 25)) && at(&out, 100, 73) < 3 && at(&out, 100, 77).abs_diff(128) <= 1);
+    // half a turn: the window's left side is on the right of the picture
+    let out = draw(rect([0.0, 0.0, 0.2, 0.0], 180.0));
+    assert!((55..80).contains(&at(&out, 150, 50)) && at(&out, 52, 50) < 3 && at(&out, 48, 50).abs_diff(128) <= 1);
+}
+
 /// Shadows and Highlights (LOG D-055) are in the tone functions: on the GPU as their math.
 #[test]
 fn shadows_and_highlights_match_their_math() {

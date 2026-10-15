@@ -2394,9 +2394,9 @@ mod tests {
         pump(&mut h, "Down to the first cut", |a| (a.playhead_frame() as f64 / fps - first.1).abs() < 0.5 / fps);
         let cut = h.state().playhead_frame();
         for (k, at) in [(4, cut + 12), (5, cut + 24)] {
-            while h.state().playhead_frame() < at {
+            // as many presses as frames: reading the playhead between presses can lag behind them
+            for _ in h.state().playhead_frame()..at {
                 h.key_press(Key::ArrowRight);
-                h.step();
             }
             pump(&mut h, "the playhead there", |a| a.playhead_frame() == at);
             h.key_press_modifiers(Modifiers::COMMAND, Key::B);

@@ -950,6 +950,11 @@ pub struct Window {
     pub inside_softness: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outside_softness: Option<f32>,
+    /// A Linear window's Soft 1 to 4 (LOG D-065), as Resolve has them: each side's own soft edge,
+    /// centred on it, as fractions of the picture's width, for the window's top, bottom, left and
+    /// right (its own sides, turned with it). Without them, the softness on every side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_softness: Option<[f32; 4]>,
     /// How strongly the window lets the correction through, 0 to 100.
     pub opacity: f32,
     /// A Polygon's corners, in order, in the window's own space (LOG D-053): -1 to 1 across its
@@ -979,6 +984,7 @@ impl Window {
             softness: if shape == Shape::Gradient { 0.2 } else { 0.02 },
             inside_softness: None,
             outside_softness: None,
+            side_softness: None,
             opacity: 100.0,
             // a polygon starts as Resolve's does: a rectangle of four corners
             points: if shape.has_points() { Self::SQUARE.to_vec() } else { Vec::new() },
@@ -986,6 +992,12 @@ impl Window {
     }
 
     const SQUARE: [[f32; 2]; 4] = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]];
+
+    /// Each side's soft edge, as fractions of the picture's width, in the order top, bottom, left,
+    /// right: a Linear window's own (LOG D-065), else the softness on every side.
+    pub fn side_softnesses(&self) -> [f32; 4] {
+        self.side_softness.filter(|_| self.shape == Shape::Linear).unwrap_or([self.softness; 4])
+    }
 
     /// How far the soft edge reaches into the shape and out of it, as fractions of the picture's
     /// width: a Polygon's or a Curve's own (LOG D-063), else half the softness each way.
@@ -1018,6 +1030,13 @@ impl Window {
         } else {
             self.points.clear();
             (self.inside_softness, self.outside_softness) = (None, None);
+        }
+        if self.shape == Shape::Linear {
+            if let Some(s) = &mut self.side_softness {
+                *s = s.map(|v| v.clamp(0.0, 1.0));
+            }
+        } else {
+            self.side_softness = None;
         }
     }
 }
