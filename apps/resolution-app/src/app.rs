@@ -1711,6 +1711,14 @@ impl ResolutionApp {
                 let picture = self.timeline_viewer.graded_picture().cloned();
                 asks.extend(color_page::qualifier_picker(ui, pic, picture.as_ref(), &mut self.color));
             }
+            // the hue curves' sampler while one is open (LOG D-066)
+            if self.color.palette == color_page::Palette::Curves
+                && self.color.curve_mode != color_page::CurveMode::Custom
+                && let Some(pic) = self.picture_rect
+            {
+                let picture = self.timeline_viewer.graded_picture().cloned();
+                asks.extend(color_page::curve_sampler(ui, pic, picture.as_ref(), &mut self.color));
+            }
         });
         for ask in asks {
             match ask {
@@ -2862,6 +2870,39 @@ mod tests {
         // and the other curves are as they were
         let n = h.state().color.current().cloned().expect("a node");
         assert!(n.curves.is_identity() && n.curves.hue_hue.is_empty());
+    }
+
+    /// Image sampling for the hue curves (LOG D-066): a click in the viewer with Hue vs Sat open
+    /// puts three points on it round the hue under the pointer, changing nothing yet; a patch
+    /// button puts three round its vector.
+    #[test]
+    fn a_click_in_the_viewer_samples_the_open_hue_curve() {
+        let mut h = on_color_page();
+        click(&mut h, "Custom ▾");
+        click(&mut h, "Hue vs Sat");
+        pump(&mut h, "a picture in the viewer", |a| {
+            a.color.curve_mode == crate::color_page::CurveMode::HueSat
+                && a.picture_rect.is_some()
+                && a.timeline_viewer.graded_picture().is_some()
+        });
+        h.step();
+        let sampler = h.get_by_label("Curve sampler").rect();
+        // the colour that will be sampled, from the picture the viewer shows
+        let f = h.state().timeline_viewer.graded_picture().cloned().expect("a picture");
+        let (x, y) = ((0.5 * f.width as f32) as usize, (0.5 * f.height as f32) as usize);
+        let i = (y * f.width as usize + x) * 4;
+        let px = f.pixels()[i..i + 3].iter().map(|c| f32::from(*c) / 255.0).collect::<Vec<_>>();
+        let hue = resolution_grade::rgb_to_hsl([px[0], px[1], px[2]])[0];
+        click_at(&mut h, sampler.center());
+        let curve = |a: &ResolutionApp| a.color.current().map(|n| n.curves.hue_sat.clone()).unwrap_or_default();
+        pump(&mut h, "three points on Hue vs Sat, from the engine", |a| curve(a).0.len() == 3);
+        let c = curve(h.state());
+        assert!(c.is_identity(), "nothing changes until a point moves: {c:?}");
+        assert!(c.0.iter().any(|p| (p[0] - hue).abs() < 0.02), "the middle point at the hue sampled, {hue}: {c:?}");
+        // the Yellow patch: three more, round a sixth of the wheel
+        click(&mut h, "Yellow");
+        pump(&mut h, "the yellow patch's points", |a| curve(a).0.iter().any(|p| (p[0] - 1.0 / 6.0).abs() < 1e-4));
+        assert!(curve(h.state()).0.len() >= 5, "{:?}", curve(h.state()));
     }
 
     #[test]

@@ -17,7 +17,9 @@ use egui::{
     TextureOptions, Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
 };
 use resolution_engine_api::{Frame, PARADE_GAP, Playback, RenderHints, ScopeKind, Scopes, VECTORSCOPE_EXTENT};
-use resolution_grade::{Curve, HslCurve, Morph, Node, Qualifier, Shape as WindowShape, Wheel, Window, hsl_to_rgb};
+use resolution_grade::{
+    Curve, HslCurve, Morph, Node, Qualifier, Shape as WindowShape, Wheel, Window, hsl_to_rgb, rgb_to_hsl,
+};
 use serde_json::{Map, Value, json};
 
 use crate::chrome;
@@ -480,6 +482,66 @@ fn hsl_curve_of<'a>(n: &'a Node, key: &str) -> &'a HslCurve {
     }
 }
 
+/// The six vectors round the colour wheel, from red, as the hue curves' patches name them.
+const VECTORS: [&str; 6] = ["Red", "Yellow", "Green", "Cyan", "Blue", "Magenta"];
+
+/// What hue curve `key` is over, for a colour: its hue (turns), its saturation or its lightness,
+/// as the grade reads them (`Node::color`).
+fn curve_input(key: &str, rgb: [f32; 3]) -> f32 {
+    let [h, s, l] = rgb_to_hsl(rgb);
+    match key {
+        "lum_sat" => l,
+        "sat_sat" | "sat_lum" => s,
+        _ => h,
+    }
+}
+
+/// How far a sampled range's outer points sit beyond it (LOG D-066, provisional): a 24th of the
+/// wheel over hue, 0.05 of the range otherwise.
+const SAMPLE_MARGIN: (f32, f32) = (1.0 / 24.0, 0.05);
+
+/// The curve with three more points (LOG D-066): either side of `lo` to `hi`, `margin` beyond it,
+/// and in its middle. Each sits on the curve as it is, so nothing changes until one is moved.
+fn with_three(curve: &HslCurve, periodic: bool, (lo, hi): (f32, f32), margin: f32) -> Vec<[f32; 2]> {
+    let place = |x: f32| if periodic { x.rem_euclid(1.0) } else { x.clamp(0.0, 1.0) };
+    let mut pts = curve.0.clone();
+    for x in [lo - margin, (lo + hi) / 2.0, hi + margin].map(place) {
+        pts.push([x, curve.eval(x, periodic)]);
+    }
+    pts.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    pts.dedup_by(|a, b| (a[0] - b[0]).abs() < 1e-3);
+    pts
+}
+
+/// The curve with three points for what `inputs` (hues, saturations or lightnesses) cover, as
+/// Resolve's image sampling adds them (LOG D-066). Over hue the range runs round the wheel: the
+/// shortest arc that holds every sample.
+fn sampled(curve: &HslCurve, periodic: bool, inputs: &[f32]) -> Vec<[f32; 2]> {
+    let mut v: Vec<f32> = inputs.iter().copied().filter(|x| x.is_finite()).collect();
+    if v.is_empty() {
+        return curve.0.clone();
+    }
+    v.sort_by(f32::total_cmp);
+    let range = if periodic {
+        // the arc starts after the widest gap between neighbouring hues, the one past red included
+        let n = v.len();
+        let gap = |i: usize| if i + 1 < n { v[i + 1] - v[i] } else { v[0] + 1.0 - v[i] };
+        let widest = (0..n).max_by(|a, b| gap(*a).total_cmp(&gap(*b))).unwrap_or(0);
+        let lo = v[(widest + 1) % n];
+        (lo, lo + 1.0 - gap(widest))
+    } else {
+        (v[0], v[v.len() - 1])
+    };
+    with_three(curve, periodic, range, if periodic { SAMPLE_MARGIN.0 } else { SAMPLE_MARGIN.1 })
+}
+
+/// The curve with a six-vector patch's three points (LOG D-066): the middle on vector `k` (from
+/// red), the outer two half way to its neighbours.
+fn patched(curve: &HslCurve, k: usize) -> Vec<[f32; 2]> {
+    let at = k as f32 / 6.0;
+    with_three(curve, true, (at, at), 1.0 / 12.0)
+}
+
 fn curve_of(n: &Node, channel: usize) -> &Curve {
     match channel {
         1 => &n.curves.r,
@@ -515,6 +577,26 @@ pub fn curves(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
         });
     });
     if let Some((key, periodic)) = page.curve_mode.curve() {
+        // over hue, Resolve's six-vector patches in the title strip (LOG D-066)
+        if periodic {
+            let mut x = chooser.left() - 6.0;
+            for k in (0..6).rev() {
+                let b = Rect::from_min_max(pos2(x - 18.0, header.top() + 6.0), pos2(x, header.bottom() - 6.0));
+                x -= 22.0;
+                let r = ui.interact(b, ui.id().with(("patch", k)), Sense::click());
+                name(&r, WidgetType::Button, VECTORS[k]);
+                let c = hsl_to_rgb([k as f32 / 6.0, 1.0, 0.5]).map(|v| (v * 255.0) as u8);
+                ui.painter().rect_filled(
+                    b.shrink(if r.hovered() { 0.0 } else { 2.0 }),
+                    look.radius(),
+                    Color32::from_rgb(c[0], c[1], c[2]),
+                );
+                if r.clicked() {
+                    let pts = patched(hsl_curve_of(&node, key), k);
+                    page.adjust(&mut asks, json!({ "curves": obj(key, json!(pts)) }));
+                }
+            }
+        }
         hsl_curve(ui, look, page, &node, key, periodic, &mut asks);
         return asks;
     }
@@ -2067,6 +2149,66 @@ pub fn qualifier_picker(ui: &mut Ui, screen: Rect, picture: Option<&Arc<Frame>>,
     asks
 }
 
+/// The hue curves' sampler over the viewer's picture `screen` (showing `picture`), while one is
+/// open (LOG D-066): a click, or a drag over a region, adds three points on the curve for the hue
+/// (or saturation, or lightness) under it, as Resolve's image sampling does. It reads the picture
+/// as the viewer shows it, after the grade, as the qualifier's picker does.
+pub fn curve_sampler(ui: &mut Ui, screen: Rect, picture: Option<&Arc<Frame>>, page: &mut ColorPage) -> Vec<Ask> {
+    let mut asks = Vec::new();
+    let Some((key, periodic)) = page.curve_mode.curve() else { return asks };
+    let r = ui.interact(screen, ui.id().with("curve sampler"), Sense::click_and_drag());
+    name(&r, WidgetType::Other, "Curve sampler");
+    if r.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+    let from = ui.input(|i| i.pointer.press_origin());
+    let region = match (from, r.interact_pointer_pos()) {
+        (Some(a), Some(b)) if r.dragged() || r.drag_stopped() => Some(Rect::from_two_pos(a, b)),
+        (_, Some(p)) if r.clicked() => Some(Rect::from_center_size(p, vec2(1.0, 1.0))),
+        _ => None,
+    };
+    if r.dragged()
+        && let Some(region) = region
+    {
+        ui.painter().rect_stroke(
+            region,
+            CornerRadius::ZERO,
+            Stroke::new(1.0, Color32::WHITE),
+            egui::StrokeKind::Middle,
+        );
+    }
+    if (r.clicked() || r.drag_stopped())
+        && let (Some(region), Some(f), Some(node)) = (region, picture, page.current().cloned())
+    {
+        let inputs: Vec<f32> = samples(f, screen, region).into_iter().map(|c| curve_input(key, c)).collect();
+        let pts = sampled(hsl_curve_of(&node, key), periodic, &inputs);
+        page.adjust(&mut asks, json!({ "curves": obj(key, json!(pts)) }));
+    }
+    asks
+}
+
+/// The colours of `picture`, drawn in `screen`, under `region` of the screen: every pixel there,
+/// or an even spread of 4096 of them.
+fn samples(picture: &Frame, screen: Rect, region: Rect) -> Vec<[f32; 3]> {
+    let (w, h) = (picture.width as usize, picture.height as usize);
+    if w == 0 || h == 0 || screen.width() <= 0.0 || screen.height() <= 0.0 {
+        return Vec::new();
+    }
+    let px = |x: f32, lo: f32, size: f32, n: usize| ((((x - lo) / size).clamp(0.0, 0.9999)) * n as f32) as usize;
+    let (x0, x1) =
+        (px(region.left(), screen.left(), screen.width(), w), px(region.right(), screen.left(), screen.width(), w));
+    let (y0, y1) =
+        (px(region.top(), screen.top(), screen.height(), h), px(region.bottom(), screen.top(), screen.height(), h));
+    let step = (((x1 - x0 + 1) * (y1 - y0 + 1)) as f32 / 4096.0).sqrt().ceil().max(1.0) as usize;
+    let pixels = picture.pixels();
+    (y0..=y1)
+        .step_by(step)
+        .flat_map(|y| (x0..=x1).step_by(step).map(move |x| (y * w + x) * 4))
+        .filter_map(|i| pixels.get(i..i + 3))
+        .map(|p| [p[0], p[1], p[2]].map(|c| f32::from(c) / 255.0))
+        .collect()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod handle_tests {
@@ -2175,5 +2317,73 @@ mod handle_tests {
         let moved = dragged(&w, pic, Handle::Soft, soft + vec2(0.0, 20.0));
         assert!((moved.edge_softness().1 - 0.06).abs() < 1e-4, "{:?}", moved.edge_softness());
         assert_eq!((moved.softness, moved.inside_softness), (w.softness, w.inside_softness), "the rest kept");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod sampling_tests {
+    use super::*;
+
+    fn xs(pts: &[[f32; 2]]) -> Vec<f32> {
+        pts.iter().map(|p| (p[0] * 1e4).round() / 1e4).collect()
+    }
+
+    /// Sampled hues either side of red: the arc through red, not the long way round (LOG D-066).
+    #[test]
+    fn sampled_hues_span_the_shortest_arc_and_sit_on_the_curve() {
+        let empty = HslCurve::default();
+        let pts = sampled(&empty, true, &[0.98, 0.99, 0.01, 0.02]);
+        let m = SAMPLE_MARGIN.0;
+        let mut want = [0.0, 0.02 + m, 0.98 - m];
+        want.sort_by(f32::total_cmp);
+        assert_eq!(xs(&pts), xs(&want.iter().map(|x| [*x, 0.0]).collect::<Vec<_>>()), "{pts:?}");
+        assert!(pts.iter().all(|p| p[1] == 0.5), "on the middle line: nothing changes yet");
+        // a range that does not cross red, on a bent curve: the curve's points kept, the new
+        // ones on the curve as it is
+        let bent = HslCurve(vec![[0.1, 0.8], [0.6, 0.3]]);
+        let pts = sampled(&bent, true, &[0.3, 0.4, 0.35]);
+        assert_eq!(xs(&pts), xs(&[[0.1, 0.0], [0.3 - m, 0.0], [0.35, 0.0], [0.4 + m, 0.0], [0.6, 0.0]]));
+        for p in &pts {
+            assert!((p[1] - bent.eval(p[0], true)).abs() < 1e-5, "{p:?} is on the curve");
+        }
+        // lightness, saturation: a plain range, held inside 0 to 1
+        let m = SAMPLE_MARGIN.1;
+        assert_eq!(xs(&sampled(&empty, false, &[0.5, 0.3])), xs(&[[0.3 - m, 0.0], [0.4, 0.0], [0.5 + m, 0.0]]));
+        assert_eq!(xs(&sampled(&empty, false, &[0.0, 0.02])), xs(&[[0.0, 0.0], [0.01, 0.0], [0.02 + m, 0.0]]));
+        assert!(sampled(&bent, true, &[]) == bent.0, "nothing sampled, nothing added");
+    }
+
+    /// A six-vector patch: its middle on the vector, the outer two half way to its neighbours.
+    #[test]
+    fn a_patch_puts_three_points_round_its_vector() {
+        let pts = patched(&HslCurve::default(), 1);
+        assert_eq!(xs(&pts), xs(&[[1.0 / 12.0, 0.0], [1.0 / 6.0, 0.0], [0.25, 0.0]]), "yellow");
+        let red = patched(&HslCurve::default(), 0);
+        assert_eq!(xs(&red), xs(&[[0.0, 0.0], [1.0 / 12.0, 0.0], [11.0 / 12.0, 0.0]]), "red, round the wheel");
+    }
+
+    /// Each curve samples what it is over; the pixels under a region of the viewer.
+    #[test]
+    fn the_sampler_reads_what_each_curve_is_over_under_the_region() {
+        let c = [0.8, 0.4, 0.2];
+        let [h, s, l] = rgb_to_hsl(c);
+        assert_eq!(curve_input("hue_sat", c), h);
+        assert_eq!(curve_input("lum_sat", c), l);
+        assert_eq!((curve_input("sat_sat", c), curve_input("sat_lum", c)), (s, s));
+        // a 4 x 2 picture, red on the left half, blue on the right, drawn 40 x 20 on screen
+        let px: Vec<u8> = (0..8).flat_map(|i| if i % 4 < 2 { [255, 0, 0, 255] } else { [0, 0, 255, 255] }).collect();
+        let f = Frame::new(4, 2, px);
+        let screen = Rect::from_min_size(pos2(100.0, 100.0), vec2(40.0, 20.0));
+        let left = samples(&f, screen, Rect::from_min_max(pos2(101.0, 101.0), pos2(118.0, 119.0)));
+        assert_eq!(left, vec![[1.0, 0.0, 0.0]; 4]);
+        let all = samples(&f, screen, screen);
+        assert_eq!(all.len(), 8);
+        assert_eq!(all.iter().filter(|c| c[2] == 1.0).count(), 4);
+        // a click: the one pixel under it
+        assert_eq!(
+            samples(&f, screen, Rect::from_center_size(pos2(135.0, 105.0), vec2(1.0, 1.0))),
+            vec![[0.0, 0.0, 1.0]]
+        );
     }
 }

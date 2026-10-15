@@ -104,7 +104,7 @@ read, never copied into the repo.
       D-044), baked into a 3D LUT in the Lumetri compile
 - [x] Hue curves: Hue vs Hue, Hue vs Sat, Hue vs Lum, Lum vs Sat, Sat vs Sat (D-043), Sat vs Lum
       (D-047)
-- [ ] Picking a hue curve's points from the viewer
+- [x] Picking a hue curve's points from the viewer, and the six-vector patches (D-066)
 - [x] Matte finesse: Denoise, Clean Black, Clean White, Blur Radius (D-046)
 - [x] The Highlight view: Highlight and Highlight B/W of the current node (D-048)
 - [x] More matte finesse: Black Clip, White Clip, Morph (D-058)
@@ -113,6 +113,9 @@ read, never copied into the repo.
 - [x] Polygon window: corners dragged, added and removed on screen (D-053)
 - [x] Window handles on screen: size, rotation, softness (D-057)
 - [x] Curve window, smooth through its points (D-061)
+- [x] Inside and Outside Softness for Polygon and Curve windows (D-063)
+- [x] A Linear window's Soft 1 to 4 (D-065)
+- [ ] A Curve window's softness at each point, as Resolve's control points set it
 - [ ] Curve windows' own Bézier handles; tracking
 - [ ] Parallel and layer nodes
 - [ ] **Our own GPU renderer** (D-035, Truman's choice), replacing the Lumetri compile for grades:
