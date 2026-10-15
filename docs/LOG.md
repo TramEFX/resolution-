@@ -121,6 +121,8 @@ doc is updated *and* the entry says which section moved.
 | D-054 | 2026-10-14 | tools | The action journal's core: the engine thread notes every command; `--journal` writes it to a file | active (panel and agents' access: for Truman) |
 | D-055 | 2026-10-14 | color | Primaries: Shadows, Highlights and Midtone Detail | active |
 | D-056 | 2026-10-14 | color | Deliver's speed checked after B-038's fix: unchanged | active |
+| D-057 | 2026-10-14 | ui | Window handles on screen: size, rotation and softness | active |
+| B-041 | 2026-10-14 | ui | A quick drag on the window control missed small handles and polygon corners | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3115,3 +3117,43 @@ frame's work on a pool of its own, so its cost needed measuring.
 `apart` costs nothing measurable. All three are slower than D-045's 13.6 s for "the graded Sony
 clip". That figure's exact grade is not recorded, and other programs (OBS, Reaper) were running
 tonight. D-045's own build was as slow, so the gap is not a regression.
+
+### D-057 — Window handles on screen: size, rotation and softness
+**Area:** ui · **Status:** active · **Doc:** `apps/resolution-app/src/color_page.rs` (`handles`,
+`dragged`, `window_overlay`)
+
+**Decision:** the chosen window's on-screen handles, in the spirit of Resolve's (the manual's
+"Onscreen controls for window transforms"), each changing the numbers the Window palette shows:
+- **Width, Height, Scale** (squares, for Circle, Linear and Polygon windows): the right side's
+  middle sets the width, the top's the height, and the bottom right corner scales both, keeping
+  the aspect. Each sizes the window symmetrically about its centre.
+- **Rotate** (a dot, 28 pixels above the window; for a Gradient, at the tip of its tick): its
+  angle from the centre is the rotation, 0 straight up and clockwise.
+- **Softness** (a ring below the window, 14 pixels plus half the softness below its edge;
+  for a Gradient, below its line): dragged down, softer.
+
+Every handle follows the window's rotation. A polygon's corners come first, then the handles,
+then dragging inside a window to move it.
+
+**Not as Resolve:** one softness handle rather than Resolve's several magenta ones per side, and
+no corner-pinning of a Linear window, whose model is a turned rectangle.
+
+**Checked:**
+- Unit test: each size and softness handle, dragged out by a third, gives the window that puts
+  it under the pointer (or softer); the rotate handle to the right of the centre is a quarter
+  turn.
+- UI test: a circle widened, softened and turned through its handles, through the engine.
+
+### B-041 — A quick drag on the window control missed small handles and polygon corners
+**Area:** ui · **Status:** fixed · **Caught by:** test (D-057's UI test)
+
+**Symptom:** a drag starting on the softness handle did nothing. The test's drag moves 5 pixels a
+step.
+
+**Cause:** the on-screen control looked for what a drag took hold of at the pointer's position
+when egui started the drag. egui starts a drag only once the pointer has moved a few pixels, so
+on a quick drag that position was about 10 pixels from where the button went down, past the
+handles' 8-pixel reach. D-053's polygon corners had the same flaw.
+
+**Fix:** what a drag takes hold of is found at the press's origin (`press_origin`). The UI test
+passes, and failed before the fix.
