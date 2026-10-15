@@ -493,3 +493,48 @@ fn a_saved_grade_reads_back_as_its_own_after_reopening() {
     assert_eq!((&copy["foreign"], &copy["nodes"]), (&json!(false), &before["nodes"]));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `color.adjust`'s description, which is how agents learn a node's controls, names every one of
+/// them (LOG B-049): a node with every optional part set, each key and each choice in it.
+#[test]
+fn color_adjust_names_every_control_a_node_takes() {
+    let params = resolution_engine_api::COMMANDS.iter().find(|c| c.id == "color.adjust").unwrap().params;
+    let mut polygon = Window::new(Shape::Polygon);
+    (polygon.inside_softness, polygon.outside_softness) = (Some(0.1), Some(0.1));
+    let linear = Window { side_softness: Some([0.1; 4]), ..Window::new(Shape::Linear) };
+    let mut n = Node {
+        qualifier: Some(resolution_grade::Qualifier::default()),
+        windows: vec![polygon, linear],
+        ..Node::default()
+    };
+    let bent = resolution_grade::HslCurve(vec![[0.5, 0.6]]);
+    let c = &mut n.curves;
+    for curve in [&mut c.hue_hue, &mut c.hue_sat, &mut c.hue_lum, &mut c.lum_sat, &mut c.sat_sat, &mut c.sat_lum] {
+        *curve = bent.clone();
+    }
+    fn keys(v: &Value, out: &mut Vec<String>) {
+        match v {
+            Value::Object(m) => {
+                for (k, x) in m {
+                    out.push(k.clone());
+                    keys(x, out);
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| keys(x, out)),
+            _ => {}
+        }
+    }
+    let mut all = Vec::new();
+    keys(&serde_json::to_value(&n).unwrap(), &mut all);
+    for k in all {
+        assert!(params.contains(&format!("\"{k}\"")), "`{k}` is not in color.adjust's description");
+    }
+    let choices = ["linear", "circle", "polygon", "curve", "gradient", "none", "shrink", "grow", "opening", "closing"];
+    for v in choices {
+        assert!(params.contains(&format!("\"{v}\"")), "`{v}` is not in color.adjust's description");
+    }
+    // and they are the grade's own names for them
+    for shape in [Shape::Linear, Shape::Circle, Shape::Polygon, Shape::Curve, Shape::Gradient] {
+        assert!(choices.contains(&serde_json::to_value(shape).unwrap().as_str().unwrap()));
+    }
+}

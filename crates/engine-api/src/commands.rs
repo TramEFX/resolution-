@@ -250,11 +250,32 @@ pub const COMMANDS: &[CommandSpec] = &[
     // the Color page (LOG D-028): a clip's grade is serial corrector nodes, numbered from 1 as in
     // the Node Editor; `clip` defaults to the clip under the playhead on the highest video track
     c("color.inspect", "Color Grade", Color, r#"query; {"clip"?: id}: the clip's nodes and their controls"#),
+    // every control a node takes, as agents learn them (a test holds this to the grade's own
+    // fields, LOG B-049); objects merge into the node, lists replace
     c(
         "color.adjust",
         "Adjust Node",
         Color,
-        r#"{"clip"?: id, "node": n, "controls": {"lift"|"gamma"|"gain"|"offset"?: {"y"?, "r"?, "g"?, "b"?}, "contrast"?, "pivot"?, "saturation"?, "hue"?, "color_boost"?, "temp"?, "tint"?, "curves"?: {"y"|"r"|"g"|"b"?: [[x, y]]}, "label"?}, "merge"?: string (calls with the same merge key in a row are one undo step: a drag)}"#,
+        concat!(
+            r#"{"clip"?: id, "node": n, "controls": {"#,
+            r#""label"?, "enabled"?: bool, "#,
+            r#""lift"|"gamma"|"gain"|"offset"?: {"y"?, "r"?, "g"?, "b"?} (neutral 0, 0, 1, 25; Y the master), "#,
+            r#""contrast"? (0 to 2, 1 neutral), "pivot"? (0 to 1), "saturation"?, "hue"? (0 to 100, 50 neutral), "#,
+            r#""color_boost"?, "shadows"?, "highlights"?, "midtone_detail"? (-100 to 100), "temp"?, "tint"?, "#,
+            r#""curves"?: {"y"|"r"|"g"|"b"?: [[x, y]] (0 to 1), "#,
+            r#""hue_hue"|"hue_sat"|"hue_lum"|"lum_sat"|"sat_sat"|"sat_lum"?: [[x, y]] (y 0.5 changes nothing)}, "#,
+            r#""qualifier"?: null | {"enabled", "invert", "hue_on", "hue_center", "hue_width", "hue_soft", "#,
+            r#""sat_on", "sat_low", "sat_high", "sat_low_soft", "sat_high_soft", "#,
+            r#""lum_on", "lum_low", "lum_high", "lum_low_soft", "lum_high_soft" (0 to 100), "#,
+            r#""denoise", "clean_black", "clean_white", "blur", "morph": "none"|"shrink"|"grow"|"opening"|"closing", "#,
+            r#""morph_radius", "black_clip", "white_clip"}, "#,
+            r#""windows"?: [{"shape": "linear"|"circle"|"polygon"|"curve"|"gradient", "enabled", "invert", "#,
+            r#""center": [x, y] (of the picture), "size": [w, h] (of its width), "rotation" (degrees), "#,
+            r#""softness" (of the width), "opacity" (0 to 100), "points"?: [[x, y]] (polygon, curve; -1 to 1 "#,
+            r#"across the size), "inside_softness"?, "outside_softness"? (polygon, curve), "#,
+            r#""side_softness"?: [top, bottom, left, right] (linear)}] (the whole list)}, "#,
+            r#""merge"?: string (calls with the same merge key in a row are one undo step: a drag)}"#
+        ),
     ),
     c("color.addSerialNode", "Add Serial Node", Color, r#"{"clip"?: id, "node"?: n (after it; default the last)}"#),
     c(
