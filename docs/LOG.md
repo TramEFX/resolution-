@@ -112,6 +112,7 @@ doc is updated *and* the entry says which section moved.
 | B-038 | 2026-10-14 | color | A Deliver render could stop at 0 %: export frames waited for renderers their own threads held | fixed here; upstream #1531, #1956 (fix in PR #861) |
 | D-048 | 2026-10-14 | color | The Highlight view: a front-end viewer option, drawn by the GPU's grade stage | active |
 | D-049 | 2026-10-14 | tools | `--window-at`: the editor's self-tests open on a screen of their own | active |
+| D-050 | 2026-10-14 | tools | `--highlight` self-test flag; the Highlight view, matte finesse and Sat vs Lum seen by eye on the Sony clip | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2833,4 +2834,25 @@ there for the next ordinary start (`persist_window` off).
 **Checked:** run with `--window-at -1920,165 --screenshot`, the window's first visible position
 was on the second screen at -1920,165 (read with `GetWindowRect` and `Screen.FromHandle`), and the
 screenshot is right. A test of the flag's parsing.
+
+### D-050 — `--highlight` self-test flag; the Highlight view, matte finesse and Sat vs Lum seen by eye
+**Area:** tools · **Status:** active · **Doc:** `apps/resolution-app/src/main.rs`
+
+**Decision:** `resolution-app --highlight grey|bw` starts with the Color page's Highlight view on
+(D-048), so a screenshot self-test can show it. It is a front-end flag for tests, like `--page`,
+not a command.
+
+**Seen by eye, 2026-10-14 (overnight), on the second screen (D-049):** the Sony clip at 5 s,
+graded through the CLI (`color.adjust` with a qualifier picked on the magenta light, 170, 31, 108,
+as `Qualifier::picked` makes it), each screenshot at the Color page's viewer size:
+- **Highlight B/W** of a key with matte finesse and no correction yet: a white matte on the hand,
+  the forearm, the face's edge and the guitar's pegs, soft-edged, black elsewhere; a few small
+  specks remain in the shadows.
+- **Highlight (grey)** of the same: those parts in their own pink on flat grey. With Saturation 10
+  on the node, the keyed parts show desaturated on grey.
+- **Matte finesse against a plain key,** both desaturating the magenta: the forearm loses its pink
+  more evenly with matte finesse.
+- **Sat vs Lum** lowered towards full saturation: the saturated blue wall goes much darker, and the
+  light bar, near white and so less saturated, stays bright. The pink on the arm darkens a little.
+- Nothing looked wrong. Not compared with Resolve itself.
 
