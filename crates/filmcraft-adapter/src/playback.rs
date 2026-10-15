@@ -152,7 +152,9 @@ impl Playback for Snapshot {
         let gpu = in_frame_pool(|| {
             cancel::with_cancel(&hints.cancel, || {
                 cancel::with_catch_up(catch_up, || {
-                    cancel::with_draft(hints.draft, || self.graded.render(self.seq, t, opts, &provider, hints.gpu))
+                    cancel::with_draft(hints.draft, || {
+                        self.graded.render(self.seq, t, opts, &provider, hints.gpu, hints.highlight)
+                    })
                 })
             })
         });

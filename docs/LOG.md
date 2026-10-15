@@ -109,7 +109,8 @@ doc is updated *and* the entry says which section moved.
 | D-046 | 2026-10-14 | color | Matte finesse for the qualifier: Denoise, Clean Black, Clean White, Blur Radius; the GPU's grade stage | active |
 | B-037 | 2026-10-14 | color | Since D-044 the colour tests of the Lumetri compile drew their frames on the GPU | fixed |
 | D-047 | 2026-10-14 | color | Sat vs Lum, with a node carrying it baked into a table in the compile | active |
-| B-038 | 2026-10-14 | color | A Deliver render could stop at 0 %: export frames waited for renderers their own threads held | fixed (upstream: unchecked) |
+| B-038 | 2026-10-14 | color | A Deliver render could stop at 0 %: export frames waited for renderers their own threads held | fixed here; upstream #1531, #1956 (fix in PR #861) |
+| D-048 | 2026-10-14 | color | The Highlight view: a front-end viewer option, drawn by the GPU's grade stage | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2749,3 +2750,62 @@ approval first.
 
 **Not done:** a test that brings this about every time. The Deliver UI test catches it about one
 run in five, beside other tests.
+
+### D-048 — The Highlight view: a front-end viewer option, drawn by the GPU's grade stage
+**Area:** color · **Status:** active · **Doc:** `crates/engine-api` (`Highlight`,
+`RenderHints::highlight`); `crates/renderer` (`Layer::highlight`, `fs_highlight`);
+`crates/grade` (`Grade::highlight_image`); `apps/resolution-app` (`color.highlight`, `color.highlightBW`)
+
+**Decision (Truman, 2026-10-14, from two options put to him):** the Highlight view is a viewer
+option the front end owns, as Resolve's viewer menu has it, passed down to the renderer with each
+frame. Not an engine command: which node is current already lives in the front end
+(`color.nextNode` is a front-end command), and a vocabulary id is stable API for good. Agents can
+be given it later as an option on rendering a frame.
+
+**What it shows**, as in Resolve's manual ("Using Highlight to See What You're Isolating"):
+- **Highlight** (Shift+H): the picture where the current node's matte keys it, flat grey (0.5,
+  display-encoded, `HIGHLIGHT_GRAY`) elsewhere, in proportion to the matte. The keyed part shows
+  the whole grade, so a correction can be judged while keying.
+- **Highlight B/W** (Alt+Shift+H): the matte itself, white where keyed.
+- The matte is the node's qualifier with its matte finesse, times its windows. A node without a
+  qualifier keys everything. Each key turns its own kind on, or off again; View > Highlight and
+  Highlight B/W do the same, on the Color page.
+
+**How:**
+- `RenderHints::highlight` names the clip and node. The frame cache's key carries it
+  (`FrameKey::highlight`), so turning it on or off draws anew and never shows the other kind's
+  frame.
+- The adapter matches the clip to its layer (`Graded::render`). A grade with a key or a window now
+  gets a stand-in even before its nodes correct anything, so a key can be seen as it is set up.
+- The renderer draws a highlighted layer through the grade stage (D-046). The highlighted node is
+  drawn even if it corrects nothing; its matte is made in a mask and kept, and a last pass
+  (`fs_highlight`) shows it.
+- The scopes and the qualifier's picker read the frame without the highlight
+  (`Monitor::graded_picture`), which the viewer also asks for while paused.
+
+**Not covered yet:** a clip with other effects (graded at its source, D-044) and frames FilmCraft
+draws itself show as they are, without the highlight. So does a clip whose grade has neither a
+correction, a key nor a window (there is no stand-in to draw). Agents cannot ask for it yet.
+
+**Measured, the renderer against `Grade::highlight_image`** (768 × 64, a red block in grey noise;
+four nodes: a key with matte finesse, a key read pixel by pixel, a key on a node that corrects
+nothing, no key):
+- in flat grey, within 0.81 to 1.20 code values;
+- in black and white, within 0.93 where the matte is fully on or off. On its soft edge the matte
+  shows what its key read magnified: 0.64 for the first node, 1.92 and 3.26 for the nodes keying
+  the results before them, which the stage holds at half-float precision.
+
+**Wrong turns:**
+- The first lightness test of a key on greys keyed by hue as well, and was 57.5 code values off.
+  The grey pixels nearest the blurred red key carry the faintest tint, and that tint decides the
+  hue, so the CPU and GPU keyed them differently. Keyed by lightness alone, it is within 0.94.
+- The first renderer tolerance was one figure for the whole matte, before measuring where the
+  error lies. It is now one for the matte's on and off parts and one for its soft edge.
+
+**Checked:** grade test (keyed as graded, the rest grey; the matte in black and white; no key
+keys everything; a disabled or missing node shows the grade); the renderer tests above, and a
+window's circle in black and white (with the windows left out of the last pass, it fails); UI
+test: a key with no correction, Alt+Shift+H shows only greys, white and black, the graded picture
+beside it for the scopes, Shift+H flat grey, Shift+H again off. 219 tests in the workspace.
+
+**Not checked by eye** in the editor yet.

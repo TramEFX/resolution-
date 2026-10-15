@@ -219,6 +219,17 @@ pub struct Layer<'a> {
     pub managed: Option<Managed>,
     /// The layer's grade, if it has one.
     pub grade: Option<&'a Grade>,
+    /// Shown in the Highlight view of one of its grade's nodes instead (LOG D-048).
+    pub highlight: Option<Highlight>,
+}
+
+/// The Highlight view of a layer (LOG D-048), as `resolution_grade::Grade::highlight_image`
+/// shows it: node `node` (its index in the grade's nodes) keys the graded picture against flat
+/// grey, or with `black_white` shows its matte in black and white.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Highlight {
+    pub node: usize,
+    pub black_white: bool,
 }
 
 /// A part of a frame, drawn onto what the parts before it drew.
@@ -336,6 +347,7 @@ struct StagePipelines {
     clean: wgpu::RenderPipeline,
     blur: wgpu::RenderPipeline,
     node: wgpu::RenderPipeline,
+    highlight: wgpu::RenderPipeline,
 }
 
 /// A texture drawn into.
@@ -457,6 +469,7 @@ impl Renderer {
             clean: full("clean", "fs_clean"),
             blur: full("blur", "fs_blur"),
             node: full("node", "fs_node"),
+            highlight: full("highlight", "fs_highlight"),
         };
         let dummy = device
             .create_texture(&wgpu::TextureDescriptor {
@@ -790,6 +803,7 @@ impl Renderer {
                         height: size.1,
                         matrix: [a * kx, b * kx, c * ky, d * ky, e, f],
                         grade: None,
+                        highlight: None,
                         managed: None,
                         ..*l
                     };
@@ -807,7 +821,7 @@ impl Renderer {
                 None => self.upload(l),
             };
             let (node_data, tone_data, count) =
-                if graded { (Vec::new(), Vec::new(), 0) } else { grade_data(l.grade, (l.width, l.height)) };
+                if graded { (Vec::new(), Vec::new(), 0) } else { grade_data(l.grade, (l.width, l.height), None) };
             let uniforms = uniforms(l, Decoding { kind, code_scale, alpha_scale, chroma }, out, count, [0.0; 4]);
             let ub = self.buffer(wgpu::BufferUsages::UNIFORM, &uniforms);
             let nb = self.buffer(wgpu::BufferUsages::STORAGE, &node_data);
@@ -857,10 +871,11 @@ impl Renderer {
     }
 
     /// Records the grade stage of `l` (LOG D-046), when its grade has a node whose qualifier cleans
-    /// its key over the picture (Denoise, Blur Radius): the layer drawn at its working size (as big
-    /// as it shows, at most its own size) as straight, display-encoded colour, then graded node by
-    /// node, each node's matte made in a mask first where it needs one. The graded texture and its
-    /// size; `None` for a layer graded as it is composited.
+    /// its key over the picture (Denoise, Blur Radius), or the layer is shown in the Highlight
+    /// view (D-048): the layer drawn at its working size (as big as it shows, at most its own size)
+    /// as straight, display-encoded colour, then graded node by node, each node's matte made in a
+    /// mask first where it needs one (and the highlighted node's, kept for the last pass). The
+    /// graded texture and its size; `None` for a layer graded as it is composited.
     fn stage(
         &self,
         enc: &mut wgpu::CommandEncoder,
@@ -868,9 +883,12 @@ impl Renderer {
         keep: &mut Vec<wgpu::BindGroup>,
     ) -> Option<(Target, (u32, u32))> {
         let grade = l.grade?;
-        let active: Vec<&resolution_grade::Node> =
-            grade.nodes.iter().filter(|n| n.enabled && !n.is_neutral()).collect();
-        if !active.iter().any(|n| n.keyed().is_some_and(resolution_grade::Qualifier::is_spatial)) {
+        let highlight = l.highlight.filter(|h| grade.nodes.get(h.node).is_some_and(|n| n.enabled));
+        let active = active_nodes(grade, highlight.map(|h| h.node));
+        // the highlighted node among those drawn
+        let lit = highlight.and_then(|h| active.iter().position(|(i, _)| *i == h.node));
+        if lit.is_none() && !active.iter().any(|(_, n)| n.keyed().is_some_and(resolution_grade::Qualifier::is_spatial))
+        {
             return None;
         }
         let [a, b, c, d, ..] = l.matrix;
@@ -883,7 +901,7 @@ impl Renderer {
         let mut next = self.target(size, ACCUM_FORMAT, usage);
         let mut mask = self.target(size, ACCUM_FORMAT, usage);
         let mut spare = self.target(size, ACCUM_FORMAT, usage);
-        let (node_data, tone_data, count) = grade_data(Some(grade), (l.width, l.height));
+        let (node_data, tone_data, count) = grade_data(Some(grade), (l.width, l.height), highlight.map(|h| h.node));
         let nb = self.buffer(wgpu::BufferUsages::STORAGE, &node_data);
         let tb = self.buffer(wgpu::BufferUsages::STORAGE, &tone_data);
         let (views, kind, code_scale, alpha_scale, chroma) = self.upload(l);
@@ -933,9 +951,11 @@ impl Renderer {
             6,
         );
         let dummy = &self.dummy;
-        for (i, n) in active.iter().enumerate() {
+        let mut held = None;
+        for (i, (_, n)) in active.iter().enumerate() {
             let node = i as f32;
-            let spatial = n.keyed().filter(|q| q.is_spatial());
+            // a matte made over the picture: one that needs neighbours, or the highlighted node's
+            let spatial = n.keyed().filter(|q| q.is_spatial() || lit == Some(i));
             if let Some(q) = spatial {
                 run(enc, &self.stage.key, &mask, [&image.view, dummy, dummy, dummy], u([node, 0.0, 0.0, 0.0]), 3);
                 for _ in 0..q.denoise_passes(ww as usize) {
@@ -971,6 +991,20 @@ impl Renderer {
             let from_mask = if spatial.is_some() { 1.0 } else { 0.0 };
             let m = if spatial.is_some() { &mask.view } else { dummy };
             run(enc, &self.stage.node, &next, [&image.view, m, dummy, dummy], u([node, 0.0, 0.0, from_mask]), 3);
+            std::mem::swap(&mut image, &mut next);
+            if lit == Some(i) && spatial.is_some() {
+                held = Some(std::mem::replace(&mut mask, self.target(size, ACCUM_FORMAT, usage)));
+            }
+        }
+        if let (Some(at), Some(h)) = (lit, highlight) {
+            let m = held.as_ref().map_or(dummy, |t: &Target| &t.view);
+            let g0 = [
+                at as f32,
+                if h.black_white { 1.0 } else { 0.0 },
+                if held.is_some() { 1.0 } else { 0.0 },
+                resolution_grade::HIGHLIGHT_GRAY,
+            ];
+            run(enc, &self.stage.highlight, &next, [&image.view, m, dummy, dummy], u(g0), 3);
             std::mem::swap(&mut image, &mut next);
         }
         Some((image, size))
@@ -1120,14 +1154,21 @@ fn uniforms(l: &Layer<'_>, src: Decoding, out: (u32, u32), nodes: usize, stage: 
     u
 }
 
+/// The nodes the shader draws, with their indices in the grade: the enabled ones that change
+/// something, and node `keep` if it is enabled (the highlighted node, whose matte shows even
+/// before it corrects anything).
+fn active_nodes(grade: &Grade, keep: Option<usize>) -> Vec<(usize, &resolution_grade::Node)> {
+    grade.nodes.iter().enumerate().filter(|(i, n)| n.enabled && (!n.is_neutral() || keep == Some(*i))).collect()
+}
+
 /// A grade as the shader reads it: [`NODE_FLOATS`] numbers per enabled node (tone on, the
 /// saturation step, the qualifier, which hue curves are on, the windows in the picture's pixels),
 /// and the nodes' tables ([`TABLES`] each); and how many nodes. Windows beyond [`MAX_WINDOWS`] are
 /// left out.
-pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32)) -> (Vec<f32>, Vec<f32>, usize) {
+pub fn grade_data(grade: Option<&Grade>, (w, h): (u32, u32), keep: Option<usize>) -> (Vec<f32>, Vec<f32>, usize) {
     let Some(grade) = grade else { return (Vec::new(), Vec::new(), 0) };
     let (w, h) = (w as f32, h as f32);
-    let active: Vec<_> = grade.nodes.iter().filter(|n| n.enabled && !n.is_neutral()).collect();
+    let active: Vec<_> = active_nodes(grade, keep).into_iter().map(|(_, n)| n).collect();
     let mut nodes = Vec::with_capacity(active.len() * NODE_FLOATS);
     let mut tones = Vec::with_capacity(active.len() * TABLES * TONE_N);
     for n in &active {

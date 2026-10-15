@@ -63,6 +63,14 @@ else belongs in Resolution's own crates.
    overrides at the new base with ours in `Cargo.toml`, and mirror any for crates in our graph
    (`cargo tree -i <crate>`). Commit the pin bump and adapter fixes together.
 
+## Our workarounds for upstream bugs
+
+Each one can go when a sync takes upstream's fix; check it still passes without the workaround.
+
+- **B-038**, the export's renderer pool deadlocking (storytold/filmcraft#1531, #1956; a fix in
+  PR #861): `apart` in `crates/filmcraft-adapter/src/gpu.rs` runs each export frame on a pool of
+  its own.
+
 ## Patches worth sending upstream
 
 They shrink our patch stack and help FilmCraft:

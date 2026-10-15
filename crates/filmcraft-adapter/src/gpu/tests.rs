@@ -32,7 +32,8 @@ fn both_at(e: &FilmCraftEngine, side: f32) -> Option<(Frame, Frame)> {
     let (w, h) = s.project.sequence(seq).map(|q| (q.settings.width, q.settings.height)).unwrap();
     let opts = RenderOptions { scale: side / w.max(h) as f32, captions: true, ..Default::default() };
     let provider = s.media.provider(s.project.clone(), s.services.clone());
-    let gpu = Graded::of(&s.project, seq).render(seq, t, opts, &provider, false).expect("the GPU draws this frame");
+    let gpu =
+        Graded::of(&s.project, seq).render(seq, t, opts, &provider, false, None).expect("the GPU draws this frame");
     let img = render_sequence(&s.project, seq, t, opts, &provider);
     Some((gpu, Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8())))
 }
@@ -218,7 +219,9 @@ fn a_push_between_graded_clips_draws_on_the_gpu() {
 fn plan_both(plan: &FramePlan) -> Option<(Frame, Frame)> {
     let gpu = renderer()?;
     let n = parts(plan).map_or(0, |(_, _, p)| p.iter().map(|x| x.layers().count()).sum());
-    let Some(Drawn::Frame(ours)) = draw(gpu, plan, &vec![None; n], Out::Pixels) else { panic!("drawn") };
+    let Some(Drawn::Frame(ours)) = draw(gpu, plan, &vec![None; n], &vec![None; n], Out::Pixels) else {
+        panic!("drawn")
+    };
     let img = execute_cpu(plan);
     Some((ours, Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8())))
 }
@@ -329,7 +332,7 @@ fn draft_playback_keeps_graded_frames_on_the_gpu() {
     let opts = RenderOptions { scale: 0.25, captions: true, ..Default::default() };
     if renderer().is_some() {
         let graded = Graded::of(&s.project, seq);
-        assert!(cancel::with_draft(true, || graded.render(seq, s.playhead(), opts, &provider, false)).is_some());
+        assert!(cancel::with_draft(true, || graded.render(seq, s.playhead(), opts, &provider, false, None)).is_some());
     }
 }
 
