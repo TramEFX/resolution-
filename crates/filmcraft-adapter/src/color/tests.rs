@@ -89,6 +89,27 @@ fn the_rendered_frame_follows_the_grade() {
     assert!(before.iter().zip(&after).any(|(b, a)| (b[0] - a[0]).abs() > 0.02), "the grade changed the picture");
 }
 
+/// Shadows and Highlights (LOG D-055), in the tone functions, through the compile.
+#[test]
+fn the_rendered_frame_follows_shadows_and_highlights() {
+    let mut e = demo();
+    let before = frame(&e, 1920);
+    let controls = json!({"shadows": 70.0, "highlights": -60.0});
+    adjust(&mut e, controls.clone());
+    let after = frame(&e, 1920);
+    let n = node(controls);
+    let worst = before
+        .iter()
+        .zip(&after)
+        .map(|(b, a)| {
+            let want = n.apply(*b);
+            (0..3).map(|k| (want[k] - a[k]).abs()).fold(0.0, f32::max)
+        })
+        .fold(0.0, f32::max);
+    assert!(worst <= 1.0 / 255.0, "the render strays from the math by {:.1} code values", worst * 255.0);
+    assert!(before.iter().zip(&after).any(|(b, a)| (b[0] - a[0]).abs() > 0.02), "the grade changed the picture");
+}
+
 /// The hue curves compiled to Lumetri's HSL curves (LOG D-043): the CPU's render follows the
 /// grade's math.
 #[test]

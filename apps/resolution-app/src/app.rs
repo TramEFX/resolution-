@@ -2903,6 +2903,21 @@ mod tests {
     }
 
     #[test]
+    fn shadows_highlights_and_midtone_detail_are_dragged_in_the_primaries() {
+        let mut h = on_color_page();
+        let node = |a: &ResolutionApp| a.color.current().cloned().unwrap_or_default();
+        for (label, dx) in [("Shadows", 60.0), ("Highlights", -60.0), ("Mid/Detail", 60.0)] {
+            let field = h.get_by_label(label).rect();
+            drag(&mut h, field.center(), field.center() + vec2(dx, 0.0));
+        }
+        pump(&mut h, "all three set, through the engine", |a| {
+            let n = node(a);
+            !a.color.dragging && n.shadows > 5.0 && n.highlights < -5.0 && n.midtone_detail > 5.0
+        });
+        assert!(graded_clip(h.state()).is_some_and(|c| c.graded));
+    }
+
+    #[test]
     fn a_gradient_window_is_added_without_a_size() {
         let mut h = on_color_page();
         click(&mut h, "Window palette");

@@ -93,8 +93,8 @@ read, never copied into the repo.
       Primaries controls and Custom Curves, and the `color.*` vocabulary (D-028)
 - [x] The Color page: viewer, Node Editor, clip strip with thumbnails, Primaries wheels, Custom
       Curves, Resolve's node keys (D-029)
-- [ ] The rest of the Color page's first look: Gallery, Mini-Timeline, Bars and Log modes, Shadows,
-      Highlights, Midtone Detail, Lum Mix
+- [x] Primaries: Shadows, Highlights, Midtone Detail (D-055)
+- [ ] The rest of the Color page's first look: Gallery, Mini-Timeline, Bars and Log modes, Lum Mix
 - [x] Scopes from `filmcraft-scopes`: Waveform, Parade, Vectorscope, Histogram on the Color page;
       `scopes.read` for agents (D-030)
 - [x] Windows: Linear and Circle, as FilmCraft effect masks, with an on-screen control (D-031)

@@ -593,6 +593,13 @@ fn fs_highlight(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return vec4(mix(vec3(u.g0.w), s.rgb, k), s.a);
 }
 
+// Midtone Detail (LOG D-055): the luma of each pixel of the node's input, to be blurred.
+@fragment
+fn fs_luma(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let s = texel(tex0, vec2<i32>(pos.xy));
+    return vec4(luma(clamp(s.rgb, vec3(0.0), vec3(1.0))), 0.0, 0.0, 1.0);
+}
+
 // The node on each pixel: its correction blended by its matte (from the mask, or keyed here) and
 // its windows, at the pixel's place in the layer's own pixels.
 @fragment
@@ -601,7 +608,19 @@ fn fs_node(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let s = texel(tex0, p);
     let n = u32(u.g0.x);
     let inp = clamp(s.rgb, vec3(0.0), vec3(1.0));
-    let o = node_color(n, inp);
+    var o = node_color(n, inp);
+    // Midtone Detail (LOG D-055; `Node::detailed`): the input's luma against its blur (tex2),
+    // Midtone Detail / 100 in g0.y, the detail that stops softening in g0.z
+    let md = u.g0.y;
+    if abs(md) > 1e-6 {
+        let l = luma(inp);
+        let d = l - texel(tex2, p).r;
+        var a = md;
+        if md < 0.0 {
+            a = md * clamp(1.0 - abs(d) / u.g0.z, 0.0, 1.0);
+        }
+        o = clamp(o + vec3(a * d * 4.0 * l * (1.0 - l)), vec3(0.0), vec3(1.0));
+    }
     var k = 1.0;
     if nf(n, 4u) > 0.5 {
         if u.g0.w > 0.5 {

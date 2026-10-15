@@ -24,6 +24,27 @@ use serde_json::Value;
 /// The most points [`Node::tone_points`] gives for one channel.
 pub const MAX_TONE_POINTS: usize = 129;
 
+/// How much local detail (luma against its blur) keeps lowered Midtone Detail from softening a
+/// pixel: none at all from this much (LOG D-055).
+pub const DETAIL_EDGE: f32 = 0.08;
+
+/// Shadows and Highlights (LOG D-055) on a tone `x`, each -100 to 100. Below mid grey, `x` moves
+/// by Shadows / 100 × 0.5·t·(1 − t)² with t = x / 0.5: most a third of the way up, nothing at
+/// black or mid grey. Above it, mirrored from white, by Highlights. For any setting in range the
+/// result rises with `x`.
+pub fn shadows_highlights(x: f32, shadows: f32, highlights: f32) -> f32 {
+    const MID: f32 = 0.5;
+    let bump = |t: f32| MID * t * (1.0 - t) * (1.0 - t);
+    let mut v = x;
+    if shadows != 0.0 && x < MID {
+        v += shadows / 100.0 * bump(x / MID);
+    }
+    if highlights != 0.0 && x > MID {
+        v += highlights / 100.0 * bump((1.0 - x) / MID);
+    }
+    v
+}
+
 /// The flat grey the Highlight view shows where a node's matte does not key the picture
 /// ([`Grade::highlight_image`]), display-encoded.
 pub const HIGHLIGHT_GRAY: f32 = 0.5;
@@ -85,8 +106,14 @@ impl Grade {
             if highlight.is_some_and(|(at, _)| at == i) {
                 matte = Some(keys.clone().unwrap_or_else(|| vec![1.0; px.len()]));
             }
+            // Midtone Detail's blurred luma of the node's input (LOG D-055)
+            let blurred = (n.midtone_detail != 0.0).then(|| {
+                let l: Vec<f32> = px.iter().map(|p| luma(*p)).collect();
+                let weights = gaussian(Node::detail_sigma(w));
+                convolve(&convolve(&l, w, h, &weights, true), w, h, &weights, false)
+            });
             for (i, p) in px.iter_mut().enumerate() {
-                *p = n.apply_keyed(*p, keys.as_ref().map(|k| k[i]));
+                *p = n.apply_detailed(*p, keys.as_ref().map(|k| k[i]), blurred.as_ref().map(|b| b[i]));
             }
         }
         let (Some(matte), Some((_, black_white))) = (matte, highlight) else { return };
@@ -144,6 +171,17 @@ pub struct Node {
     pub color_boost: f32,
     pub temp: f32,
     pub tint: f32,
+    /// Shadows and Highlights (LOG D-055), -100 to 100, 0 neutral: the darkest and the lightest
+    /// tones moved, black, white and the midtones kept. Grades stored before them have none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub shadows: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub highlights: f32,
+    /// Midtone Detail (LOG D-055), -100 to 100, 0 neutral: raised, local contrast in the
+    /// midtones (definition); lowered, low-detail regions softened. It needs a pixel's
+    /// neighbours, so it is left out of [`Node::apply`] (see [`Grade::apply_image`]).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub midtone_detail: f32,
     pub curves: Curves,
     /// Where the node's correction applies (LOG D-031): inside the enabled windows, which add
     /// up; everywhere when none is enabled. Grades stored before windows existed have none.
@@ -171,6 +209,9 @@ impl Default for Node {
             color_boost: 0.0,
             temp: 0.0,
             tint: 0.0,
+            shadows: 0.0,
+            highlights: 0.0,
+            midtone_detail: 0.0,
             curves: Curves::default(),
             windows: Vec::new(),
             qualifier: None,
@@ -187,7 +228,38 @@ impl Node {
 
     /// Whether the node changes nothing.
     pub fn is_neutral(&self) -> bool {
-        self.tone_is_identity() && self.saturation().is_identity() && self.curves.hsl_is_identity()
+        self.tone_is_identity()
+            && self.saturation().is_identity()
+            && self.curves.hsl_is_identity()
+            && self.midtone_detail == 0.0
+    }
+
+    /// Whether the node needs a pixel's neighbours: Midtone Detail, or a qualifier cleaned over
+    /// the picture (LOG D-046, D-055).
+    pub fn is_spatial(&self) -> bool {
+        self.midtone_detail != 0.0 || self.keyed().is_some_and(Qualifier::is_spatial)
+    }
+
+    /// Midtone Detail's blur, a Gaussian's standard deviation in pixels of a picture `width`
+    /// wide: 10 pixels at 1920, in proportion at other widths.
+    pub fn detail_sigma(width: usize) -> f32 {
+        width as f32 / 192.0
+    }
+
+    /// Midtone Detail on a pixel's correction `out`, from its input's luma `luma` and that luma
+    /// blurred, `blurred` (LOG D-055): the local detail, `luma - blurred`, added to each channel
+    /// by Midtone Detail / 100, most in the midtones (by 4·l·(1 − l)). Lowered, it moves the
+    /// pixel towards the blur instead, the less the more detail there is (none past 0.08), so
+    /// edges stay.
+    pub fn detailed(&self, out: [f32; 3], luma: f32, blurred: f32) -> [f32; 3] {
+        let md = self.midtone_detail / 100.0;
+        if md == 0.0 {
+            return out;
+        }
+        let d = luma - blurred;
+        let a = if md < 0.0 { md * (1.0 - d.abs() / DETAIL_EDGE).clamp(0.0, 1.0) } else { md };
+        let w = 4.0 * luma * (1.0 - luma);
+        out.map(|v| (v + a * d * w).clamp(0.0, 1.0))
     }
 
     /// Whether every channel's tone function is the identity.
@@ -200,6 +272,8 @@ impl Node {
             && self.contrast == d.contrast
             && self.temp == 0.0
             && self.tint == 0.0
+            && self.shadows == 0.0
+            && self.highlights == 0.0
             && self.curves.is_identity()
     }
 
@@ -226,6 +300,7 @@ impl Node {
         v = gain * (v + lift * (1.0 - v));
         v = v.max(0.0).powf(GAMMA_BASE.powf(-gamma));
         v = contrast(v.clamp(0.0, 1.0), self.contrast, self.pivot);
+        v = shadows_highlights(v, self.shadows, self.highlights);
         v = self.curves.y.eval(v);
         v = self.curves.channel(k).eval(v);
         v.clamp(0.0, 1.0)
@@ -289,11 +364,19 @@ impl Node {
     /// The node applied to one pixel inside its windows, its correction blended by `key` (the
     /// qualifier's matte at that pixel) when it has one.
     pub fn apply_keyed(&self, rgb: [f32; 3], key: Option<f32>) -> [f32; 3] {
+        self.apply_detailed(rgb, key, None)
+    }
+
+    /// [`Node::apply_keyed`] with the pixel's blurred input luma for Midtone Detail (LOG D-055).
+    pub fn apply_detailed(&self, rgb: [f32; 3], key: Option<f32>, blurred: Option<f32>) -> [f32; 3] {
         if !self.enabled {
             return rgb;
         }
         let toned = [self.tone(0, rgb[0]), self.tone(1, rgb[1]), self.tone(2, rgb[2])];
-        let out = self.color(toned);
+        let mut out = self.color(toned);
+        if let Some(b) = blurred {
+            out = self.detailed(out, luma(rgb), b);
+        }
         match key {
             // the correction, blended by how much the node's input is in the key
             Some(k) => [0, 1, 2].map(|c| rgb[c] + (out[c] - rgb[c]) * k),
@@ -369,6 +452,9 @@ impl Node {
         self.color_boost = self.color_boost.clamp(-100.0, 100.0);
         self.temp = self.temp.clamp(-4000.0, 4000.0);
         self.tint = self.tint.clamp(-100.0, 100.0);
+        self.shadows = self.shadows.clamp(-100.0, 100.0);
+        self.highlights = self.highlights.clamp(-100.0, 100.0);
+        self.midtone_detail = self.midtone_detail.clamp(-100.0, 100.0);
         self.windows.iter_mut().for_each(Window::clamp);
         if let Some(q) = &mut self.qualifier {
             q.clamp();
