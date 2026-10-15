@@ -19,6 +19,8 @@
 //! along the bottom and the right; the bottom one marks where the playhead is. When the playhead
 //! moves out of view (playing, stepping, a seek from a viewer), the view pages to it.
 
+use std::collections::HashMap;
+
 use egui::{
     Align2, Color32, CornerRadius, CursorIcon, Id, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2,
 };
@@ -147,6 +149,8 @@ const SNAP: f32 = 8.0;
 pub struct View<'a> {
     pub tool: Tool,
     pub waveforms: &'a Ready,
+    /// By clip, the picture at its head and that picture's size (LOG D-073).
+    pub thumbnails: &'a HashMap<u64, (egui::TextureId, egui::Vec2)>,
 }
 
 /// Where the timeline is zoomed and scrolled. The app keeps it between frames.
@@ -280,6 +284,9 @@ pub fn show(
             let r =
                 Rect::from_x_y_ranges(x0..=(x1 - 1.0).min(lane.right()), (lane.top() + 3.0)..=(lane.bottom() - 3.0));
             draw_clip(painter, look, r, c, fill, *video, silent);
+            if *video && let Some(&(tex, size)) = view.thumbnails.get(&c.id) {
+                draw_thumbnail(painter, r, tex, size, c.enabled && !silent);
+            }
             if !*video && let Some(peaks) = view.waveforms.get(&c.item) {
                 draw_waveform(painter, look, r, x_of(c.start), pps, c, peaks, c.enabled && !silent);
             }
@@ -639,6 +646,22 @@ fn draw_clip(painter: &egui::Painter, look: &Look, r: Rect, c: &Clip, fill: Colo
         look.small(),
         if live { t.clip_text } else { t.dim },
     );
+}
+
+/// The picture at a video clip's head, under its name and as tall as the room there, as Resolve's
+/// Thumbnail view of the timeline shows it (LOG D-073); left out where the clip is too short for it.
+fn draw_thumbnail(painter: &egui::Painter, r: Rect, tex: egui::TextureId, size: egui::Vec2, live: bool) {
+    let h = r.bottom() - 2.0 - (r.top() + 18.0);
+    if h < 10.0 || size.y <= 0.0 {
+        return;
+    }
+    let w = h * size.x / size.y;
+    if r.width() < w + 4.0 {
+        return;
+    }
+    let img = Rect::from_min_size(pos2(r.left() + 2.0, r.top() + 18.0), vec2(w, h));
+    let tint = if live { Color32::WHITE } else { Color32::from_gray(90) };
+    painter.image(tex, img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), tint);
 }
 
 /// The clip's sound as a waveform under its name, from its media's peaks: one column per pixel,

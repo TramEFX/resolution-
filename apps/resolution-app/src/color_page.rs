@@ -1290,6 +1290,12 @@ impl Thumbs {
         }
     }
 
+    /// How many clips have a thumbnail on screen.
+    #[cfg(test)]
+    pub fn shown(&self) -> usize {
+        self.textures.len()
+    }
+
     /// The newest thumbnail of `clip` that has arrived.
     pub fn texture(&mut self, ctx: &egui::Context, clip: u64) -> Option<&TextureHandle> {
         let arrived: Vec<(Key, ColorImage)> =

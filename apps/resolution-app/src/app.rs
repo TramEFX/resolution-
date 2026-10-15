@@ -11,6 +11,7 @@
 //! Media Pool, the timeline viewer the timeline (`monitor.rs`). Playback keys, marks and frame
 //! steps act on the active one; clicking a viewer or pressing Q makes it active.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -174,6 +175,10 @@ pub struct ResolutionApp {
     /// The Color page: the clip being graded, its grade, the current node (LOG D-029).
     color: ColorPage,
     thumbs: Thumbs,
+    /// The pictures at the head of the timeline's video clips (LOG D-073), and per clip the head
+    /// they were last asked for (its start and source In, in frames) with a count of the asks.
+    edit_thumbs: Thumbs,
+    edit_thumb_heads: HashMap<u64, ((i64, i64), u64)>,
     /// The Color page's Scopes panel (LOG D-030).
     scope_view: ScopeView,
     /// Where the timeline viewer drew its picture last frame (the Color page's window outlines).
@@ -287,6 +292,11 @@ impl ResolutionApp {
                 let ctx = cc.egui_ctx.clone();
                 Thumbs::new(move || ctx.request_repaint())
             },
+            edit_thumbs: {
+                let ctx = cc.egui_ctx.clone();
+                Thumbs::new(move || ctx.request_repaint())
+            },
+            edit_thumb_heads: HashMap::new(),
             scope_view: {
                 let ctx = cc.egui_ctx.clone();
                 ScopeView::new(scopes, move || ctx.request_repaint())
@@ -1419,7 +1429,22 @@ impl ResolutionApp {
                         EditMode::Blade => timeline_ui::Tool::Blade,
                     };
                     let waveforms = self.waveforms.ready();
-                    let view = timeline_ui::View { tool, waveforms: &waveforms };
+                    // each video clip's head, asked for again when the clip's start or In moves
+                    let mut thumbnails = HashMap::new();
+                    if let Some(program) = self.timeline_viewer.program.clone() {
+                        for c in tl.video.iter().flat_map(|tr| &tr.clips) {
+                            let head = (rate.frame_at(c.start), rate.frame_at(c.source_in));
+                            let entry = self.edit_thumb_heads.entry(c.id).or_insert((head, 0));
+                            if entry.0 != head {
+                                *entry = (head, entry.1 + 1);
+                            }
+                            self.edit_thumbs.want((c.id, entry.1), head.0, &program);
+                            if let Some(tex) = self.edit_thumbs.texture(ui.ctx(), c.id) {
+                                thumbnails.insert(c.id, (tex.id(), tex.size_vec2()));
+                            }
+                        }
+                    }
+                    let view = timeline_ui::View { tool, waveforms: &waveforms, thumbnails: &thumbnails };
                     let (actions, rects) = timeline_ui::show(ui, &look, tl, playhead, &view, &mut self.nav);
                     self.clip_rects = rects;
                     for a in actions {
@@ -2234,6 +2259,26 @@ mod tests {
             a.timeline.as_ref().and_then(|t| t.video.get(1)).and_then(|v| v.clips.first().cloned()).expect("V2 clip");
         let rect = a.clip_rects.iter().find(|(_, id)| *id == c.id).map(|(r, _)| *r).expect("V2 clip on screen");
         (c, rect)
+    }
+
+    /// Each video clip on the timeline shows the picture at its head (LOG D-073), asked for again
+    /// when the clip moves.
+    #[test]
+    fn video_clips_show_the_picture_at_their_head() {
+        let mut h = demo();
+        let video = |a: &ResolutionApp| a.timeline.as_ref().map_or(0, |t| t.video.iter().map(|v| v.clips.len()).sum());
+        pump(&mut h, "a picture at every video clip's head", |a| a.edit_thumbs.shown() == video(a) && video(a) > 0);
+        // a move: that clip's head asked for again
+        if h.state().timeline.as_ref().is_some_and(|t| t.snapping) {
+            h.state_mut().command("timeline.snapping");
+            pump(&mut h, "snapping off", |a| a.timeline.as_ref().is_some_and(|t| !t.snapping));
+        }
+        pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
+        let (c, r) = v2_clip(h.state());
+        let asked = |a: &ResolutionApp| a.edit_thumb_heads.get(&c.id).map_or(0, |e| e.1);
+        let before = asked(h.state());
+        drag(&mut h, r.center(), r.center() + egui::vec2(80.0, 0.0));
+        pump(&mut h, "the moved clip's head asked for again", |a| asked(a) > before);
     }
 
     #[test]

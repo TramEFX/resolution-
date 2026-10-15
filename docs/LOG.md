@@ -151,6 +151,7 @@ doc is updated *and* the entry says which section moved.
 | B-052 | 2026-10-15 | ui | Each window added grew the palettes and shrank the Color page's viewer | fixed |
 | B-053 | 2026-10-15 | ui | Self-test runs saved their layout into the user's editor | fixed |
 | B-054 | 2026-10-15 | ui | Nodes past the fourth ran off the Node Editor's edge | fixed |
+| D-073 | 2026-10-15 | ui | The timeline's video clips show the picture at their head | active (Resolve's default view unchecked) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4093,3 +4094,33 @@ click was lost and the test timed out. Not traced: perhaps the click arrives in 
 palette is not drawn while the grade is fetched again. The test now sets the nine windows through
 the engine in one `color.adjust`, since its point is the viewer's size. The circle test still
 clicks Add Circle.
+
+### D-073 — The timeline's video clips show the picture at their head
+**Area:** ui · **Status:** active; which view Resolve starts in is from memory, unchecked ·
+**Doc:** `timeline_ui.rs` (`draw_thumbnail`, `View::thumbnails`); `app.rs` (`edit_thumbs`)
+
+**Decision:** Resolve's timeline can show clips as Filmstrip, Thumbnail or Minimized (21.1
+Reference Manual, Timeline View Options). The manual does not say which is the default; from
+memory it is Thumbnail, the picture at each clip's head. Resolution's clips showed only their names.
+- **What shows:** each video clip shows the picture at its head under its name, as tall as the room
+  there. It is left out where the clip is too short for it, and dimmed on a clip that is off or a
+  hidden track's.
+- **How:** a second thumbnail renderer, as the Color page's clip strip has (D-029), draws each
+  clip's head frame at 160 pixels. A clip's picture is asked for again when its start or its
+  source In moves, so a moved, trimmed or slipped clip shows its new head.
+
+**Not as Resolve:**
+- The picture is the timeline's frame at the clip's head, so a clip with another over it shows
+  both. Resolve shows the clip on its own.
+- There is no Filmstrip or Minimized view, and no menu to choose, until Timeline View Options is
+  built.
+
+**Cost:** playback stays real time: 287 frames in 12 s, 23.9 fps, as before. The first play
+straight after opening a project waited 359 ms instead of 44 ms to start, while the heads were
+still rendering.
+
+**Checked:**
+- UI test: on the demo, a picture for every video clip; a clip moved is asked for again. Mutation
+  checks: not asked again on a move, and never asked for, each caught.
+- By eye on the second screen, the rehearsal's timeline: each clip's head under its name, the
+  Samsung clips pillarboxed, the V2 cutaway's head over V1's picture.
