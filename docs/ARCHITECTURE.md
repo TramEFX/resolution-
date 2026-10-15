@@ -94,7 +94,9 @@ and the hue curves as tables, the saturation step, then the qualifier's key and 
 coverage blending the node's result into its input. A layer whose qualifier denoises or blurs its
 key is graded first in a stage of its own (`Renderer::stage`, D-046): drawn at its working size, each such node's matte made in a mask (the
 key, the medians, Clean Black and White, the Gaussian), the nodes applied one by one, and the
-result composited as an 8-bit picture. The renderer knows nothing of FilmCraft.
+result composited as an 8-bit picture. A layer shown in the Highlight view (D-048) goes through it
+too, the highlighted node's matte kept for a last pass that shows it. The front end asks for that
+view with each frame (`RenderHints::highlight`); it is not an engine command. The renderer knows nothing of FilmCraft.
 
 The adapter (`gpu.rs`) uses it for the viewers' frames. Each playback snapshot keeps a copy of the
 timeline in which each graded clip we draw has its Lumetri effects taken off and points at a

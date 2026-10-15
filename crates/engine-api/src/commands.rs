@@ -272,6 +272,8 @@ pub const COMMANDS: &[CommandSpec] = &[
     c("color.resetAll", "Reset All Grades and Nodes", Color, r#"{"clip"?: id}"#),
     c("color.previousNode", "Previous Node", Color, ""),
     c("color.nextNode", "Next Node", Color, ""),
+    c("color.highlight", "Highlight", Color, ""),
+    c("color.highlightBW", "Highlight B/W", Color, ""),
     // the video scopes as numbers, so agents can check a grade without looking (LOG D-030)
     c("scopes.read", "Read Video Scopes", Color, ""),
 ];

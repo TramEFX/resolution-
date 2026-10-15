@@ -127,7 +127,7 @@ fn main() {
     );
 
     let server = FrameServer::new(workers);
-    let key = |frame| FrameKey { revision: p.revision(), frame, side, draft: false };
+    let key = |frame| FrameKey { revision: p.revision(), frame, side, draft: false, highlight: None };
     let t0 = Instant::now();
     let now = || t0.elapsed().as_secs_f64();
     let mut transport = Transport::default();

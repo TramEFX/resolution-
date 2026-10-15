@@ -545,6 +545,26 @@ fn fs_blur(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return vec4(acc / total, 0.0, 0.0, 1.0);
 }
 
+// The Highlight view (LOG D-048) of node g0.x on the graded picture (tex0): its matte (tex1 when
+// g0.z is 1, else everything keyed) with its windows; the picture where keyed and flat grey g0.w
+// elsewhere, or with g0.y the matte in black and white (`Grade::highlight_image`).
+@fragment
+fn fs_highlight(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(pos.xy);
+    let s = texel(tex0, p);
+    let n = u32(u.g0.x);
+    var k = 1.0;
+    if u.g0.z > 0.5 {
+        k = texel(tex1, p).r;
+    }
+    let dims = vec2<f32>(textureDimensions(tex0));
+    k *= coverage(n, pos.xy * u.src.xy / dims);
+    if u.g0.y > 0.5 {
+        return vec4(vec3(k), s.a);
+    }
+    return vec4(mix(vec3(u.g0.w), s.rgb, k), s.a);
+}
+
 // The node on each pixel: its correction blended by its matte (from the mask, or keyed here) and
 // its windows, at the pixel's place in the layer's own pixels.
 @fragment

@@ -54,7 +54,7 @@ impl Playback for Fake {
 }
 
 fn key(frame: i64) -> FrameKey {
-    FrameKey { revision: 1, frame, side: 16, draft: false }
+    FrameKey { revision: 1, frame, side: 16, draft: false, highlight: None }
 }
 
 fn wait(what: &str, mut done: impl FnMut() -> bool) {

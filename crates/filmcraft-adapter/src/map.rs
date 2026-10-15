@@ -37,6 +37,8 @@ pub const MAP: &[(&str, Target)] = &[
     ("color.resetAll", Adapter),
     ("color.previousNode", Ui),
     ("color.nextNode", Ui),
+    ("color.highlight", Ui),
+    ("color.highlightBW", Ui),
     ("scopes.read", Engine("scopes.read")),
     ("page.media", Ui),
     ("page.cut", Ui),

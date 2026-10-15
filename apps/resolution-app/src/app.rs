@@ -18,7 +18,7 @@ use egui::{
     Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, Ui, UiBuilder,
     ViewportCommand, pos2, vec2,
 };
-use resolution_engine_api::{Engine as _, Page};
+use resolution_engine_api::{Engine as _, Highlight, Page};
 use resolution_filmcraft_adapter::FilmCraftEngine;
 use resolution_keymap::Keymap;
 use resolution_playback::AudioOut;
@@ -422,7 +422,7 @@ impl ResolutionApp {
         let front_end = id.starts_with("workspace.")
             || id.starts_with("view.")
             || id.starts_with("mode.")
-            || matches!(id, "color.previousNode" | "color.nextNode");
+            || matches!(id, "color.previousNode" | "color.nextNode" | "color.highlight" | "color.highlightBW");
         let active = self.active;
         if !id.starts_with("playback.") && !front_end {
             for v in [Viewer::Source, Viewer::Timeline] {
@@ -658,6 +658,19 @@ impl ResolutionApp {
             ui.menu_button("Edit", |ui| {
                 self.menu_command(ui, "edit.undo");
                 self.menu_command(ui, "edit.redo");
+            });
+            ui.menu_button("View", |ui| {
+                let lit = self.color.highlight;
+                for (id, on) in [("color.highlight", lit == Some(false)), ("color.highlightBW", lit == Some(true))] {
+                    let text = match self.keys(id) {
+                        Some(k) => format!("{}   {k}", Self::label(id)),
+                        None => Self::label(id).to_string(),
+                    };
+                    if ui.add_enabled(self.page == Page::Color, egui::Button::selectable(on, text)).clicked() {
+                        ui.close();
+                        self.command(id);
+                    }
+                }
             });
             ui.menu_button("Timeline", |ui| {
                 for id in ["timeline.split", "timeline.rippleDelete", "view.zoomToFit"] {
@@ -1551,6 +1564,16 @@ impl ResolutionApp {
         if self.page != Page::Color {
             return;
         }
+        // the Highlight view, on and off; each key turns its own kind on, or off again
+        if let Some(black_white) = match id {
+            "color.highlight" => Some(false),
+            "color.highlightBW" => Some(true),
+            _ => None,
+        } {
+            let lit = &mut self.color.highlight;
+            *lit = (*lit != Some(black_white)).then_some(black_white);
+            return;
+        }
         let (Some(clip), Some(count)) = (self.color.clip, self.color.view.as_ref().map(|v| v.grade.nodes.len())) else {
             return;
         };
@@ -1590,13 +1613,20 @@ impl ResolutionApp {
 
     /// The Color page (LOG D-029): the timeline viewer with the Node Editor to its right, the
     /// clip strip under them, and the Primaries and Curves palettes at the bottom.
+    /// The Highlight view the timeline viewer shows (LOG D-048): on the Color page, of the
+    /// current clip's current node, while it is on.
+    fn highlight(&self) -> Option<Highlight> {
+        let black_white = self.color.highlight.filter(|_| self.page == Page::Color)?;
+        Some(Highlight { clip: self.color.clip?, node: self.color.node, black_white })
+    }
+
     fn color_page(&mut self, ui: &mut Ui) {
         let look = self.look;
         let t = look.theme;
         let fill = |c: Color32| Frame::new().fill(c);
         self.active = Viewer::Timeline;
         self.color_follow();
-        self.scope_view.follow(ui.ctx(), self.timeline_viewer.picture.as_ref());
+        self.scope_view.follow(ui.ctx(), self.timeline_viewer.graded_picture());
         self.draft_banner(ui);
         let mut asks = Vec::new();
         egui::Panel::bottom("color-palettes")
@@ -1652,7 +1682,7 @@ impl ResolutionApp {
             if self.color.palette == color_page::Palette::Qualifier
                 && let Some(pic) = self.picture_rect
             {
-                let picture = self.timeline_viewer.picture.clone();
+                let picture = self.timeline_viewer.graded_picture().cloned();
                 asks.extend(color_page::qualifier_picker(ui, pic, picture.as_ref(), &mut self.color));
             }
         });
@@ -1786,6 +1816,7 @@ impl eframe::App for ResolutionApp {
             self.apply(reply);
         }
         self.read_keys(&ctx);
+        self.timeline_viewer.highlight = self.highlight();
         self.advance_viewers(&ctx);
         self.deliver_tick(&ctx);
 
@@ -2653,6 +2684,38 @@ mod tests {
             !a.color.dragging
                 && graded_clip(a).is_some_and(|c| c.graded)
                 && a.color.current().is_some_and(|n| n.curves.sat_lum.eval(0.95, false) < 0.35)
+        });
+    }
+
+    #[test]
+    fn shift_h_highlights_what_the_current_node_keys() {
+        let mut h = on_color_page();
+        h.state().worker.run("playhead.set", json!({ "seconds": 2.0 }));
+        pump(&mut h, "the playhead at 2 s", |a| a.timeline.as_ref().is_some_and(|t| t.playhead_frame > 24));
+        let clip = h.state().color.clip.expect("a clip");
+        // a key, and no correction yet: the Highlight view shows what it keys all the same
+        let q = resolution_grade::Qualifier::picked([0.9, 0.5, 0.2]);
+        h.state().worker.run("color.adjust", json!({ "clip": clip, "node": 1, "controls": { "qualifier": q } }));
+        pump(&mut h, "the key on the node", |a| a.color.current().is_some_and(|n| n.qualifier.is_some()));
+        h.key_press_modifiers(Modifiers::ALT | Modifiers::SHIFT, Key::H);
+        pump(&mut h, "the matte in black and white", |a| {
+            a.timeline_viewer.shown.is_some_and(|k| k.highlight.is_some_and(|l| l.black_white))
+        });
+        let px = h.state().timeline_viewer.picture.as_ref().expect("a picture").pixels().to_vec();
+        assert!(px.chunks(4).all(|p| p[0].abs_diff(p[1]) <= 1 && p[1].abs_diff(p[2]) <= 1), "only greys");
+        assert!(px.chunks(4).any(|p| p[0] > 200) && px.chunks(4).any(|p| p[0] < 30), "white keyed, black not");
+        // the scopes and the picker still read the graded picture
+        pump(&mut h, "the graded picture beside it", |a| {
+            a.timeline_viewer.graded_picture().is_some_and(|f| f.pixels().chunks(4).any(|p| p[0].abs_diff(p[2]) > 30))
+        });
+        // Shift+H: flat grey instead; again, off
+        h.key_press_modifiers(Modifiers::SHIFT, Key::H);
+        pump(&mut h, "the flat-grey highlight", |a| {
+            a.timeline_viewer.shown.is_some_and(|k| k.highlight.is_some_and(|l| !l.black_white))
+        });
+        h.key_press_modifiers(Modifiers::SHIFT, Key::H);
+        pump(&mut h, "the picture again", |a| {
+            a.color.highlight.is_none() && a.timeline_viewer.shown.is_some_and(|k| k.highlight.is_none())
         });
     }
 

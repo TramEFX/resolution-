@@ -507,3 +507,34 @@ fn qualifiers_stored_before_matte_finesse_still_load() {
     let q = n.qualifier.unwrap();
     assert_eq!((q.blur, q.denoise), (100.0, 0.0), "held to 0..100");
 }
+
+#[test]
+fn the_highlight_view_shows_what_a_node_keys() {
+    // a red and a blue pixel, keyed on red, the node darkening what it keys
+    let px = vec![[0.8, 0.2, 0.2], [0.2, 0.3, 0.8]];
+    let mut n = node(json!({ "gain": { "y": 0.5 } }));
+    n.qualifier = Some(Qualifier::picked(px[0]));
+    let g = Grade { nodes: vec![n] };
+    let mut graded = px.clone();
+    g.apply_image(&mut graded, 2, 1);
+    let mut grey = px.clone();
+    g.highlight_image(&mut grey, 2, 1, 0, false);
+    assert!((0..3).all(|k| close(grey[0][k], graded[0][k], 1e-6)), "the keyed red as graded: {grey:?}");
+    assert!(grey[1].iter().all(|v| close(*v, HIGHLIGHT_GRAY, 1e-6)), "the blue flat grey: {grey:?}");
+    let mut bw = px.clone();
+    g.highlight_image(&mut bw, 2, 1, 0, true);
+    assert!(bw[0].iter().all(|v| close(*v, 1.0, 1e-6)) && bw[1].iter().all(|v| close(*v, 0.0, 1e-6)), "{bw:?}");
+    // a node without a qualifier keys everything; a disabled node, or none, shows the grade
+    let open = Grade { nodes: vec![node(json!({ "gain": { "y": 0.5 } }))] };
+    let mut all = px.clone();
+    open.highlight_image(&mut all, 2, 1, 0, true);
+    assert!(all.iter().flatten().all(|v| close(*v, 1.0, 1e-6)), "{all:?}");
+    let mut off = g.clone();
+    off.nodes[0].enabled = false;
+    for (grade, at) in [(&off, 0), (&g, 5)] {
+        let (mut want, mut got) = (px.clone(), px.clone());
+        grade.apply_image(&mut want, 2, 1);
+        grade.highlight_image(&mut got, 2, 1, at, true);
+        assert_eq!(got, want, "node {at}");
+    }
+}

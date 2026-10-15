@@ -24,6 +24,10 @@ use serde_json::Value;
 /// The most points [`Node::tone_points`] gives for one channel.
 pub const MAX_TONE_POINTS: usize = 129;
 
+/// The flat grey the Highlight view shows where a node's matte does not key the picture
+/// ([`Grade::highlight_image`]), display-encoded.
+pub const HIGHLIGHT_GRAY: f32 = 0.5;
+
 /// How far [`Node::tone_points`] lets the joined points stray from the tone function: a quarter
 /// of an 8-bit code value.
 const TONE_TOLERANCE: f32 = 0.25 / 255.0;
@@ -62,11 +66,32 @@ impl Grade {
     /// over the picture by its Denoise and Blur Radius ([`Qualifier::matte`]). Windows are left
     /// out (they need the picture's place in the clip's).
     pub fn apply_image(&self, px: &mut [[f32; 3]], w: usize, h: usize) {
-        for n in self.nodes.iter().filter(|n| n.enabled) {
+        self.image(px, w, h, None);
+    }
+
+    /// The Highlight view of node `node` (its index in `nodes`, LOG D-048) over a whole picture,
+    /// as [`Grade::apply_image`] grades it: where the node's matte keys the picture, the graded
+    /// picture; elsewhere flat grey ([`HIGHLIGHT_GRAY`]), in proportion to the matte. With
+    /// `black_white`, the matte itself, white where keyed. A node without a qualifier keys
+    /// everything; a disabled node, or none at `node`, leaves the graded picture as it is.
+    pub fn highlight_image(&self, px: &mut [[f32; 3]], w: usize, h: usize, node: usize, black_white: bool) {
+        self.image(px, w, h, Some((node, black_white)));
+    }
+
+    fn image(&self, px: &mut [[f32; 3]], w: usize, h: usize, highlight: Option<(usize, bool)>) {
+        let mut matte = None;
+        for (i, n) in self.nodes.iter().enumerate().filter(|(_, n)| n.enabled) {
             let keys = n.keyed().map(|q| q.matte(px, w, h));
+            if highlight.is_some_and(|(at, _)| at == i) {
+                matte = Some(keys.clone().unwrap_or_else(|| vec![1.0; px.len()]));
+            }
             for (i, p) in px.iter_mut().enumerate() {
                 *p = n.apply_keyed(*p, keys.as_ref().map(|k| k[i]));
             }
+        }
+        let (Some(matte), Some((_, black_white))) = (matte, highlight) else { return };
+        for (p, k) in px.iter_mut().zip(matte) {
+            *p = if black_white { [k; 3] } else { p.map(|c| HIGHLIGHT_GRAY + (c - HIGHLIGHT_GRAY) * k) };
         }
     }
 

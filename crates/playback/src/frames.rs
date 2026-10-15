@@ -26,7 +26,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use resolution_engine_api::{Frame, Playback, RenderHints};
+use resolution_engine_api::{Frame, Highlight, Playback, RenderHints};
 
 /// One rendered picture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -39,6 +39,8 @@ pub struct FrameKey {
     /// Decoded in draft mode ([`RenderHints::draft`]). Draft frames have keys of their own, so a
     /// paused viewer never shows one.
     pub draft: bool,
+    /// Drawn in the Highlight view ([`RenderHints::highlight`]).
+    pub highlight: Option<Highlight>,
 }
 
 /// Frames queued ahead of the playhead while playing.
@@ -432,6 +434,7 @@ fn worker(sh: &Shared) {
             catch_up: job.catch_up,
             draft: job.key.draft,
             gpu: sh.gpu.load(Ordering::Relaxed),
+            highlight: job.key.highlight,
             ..Default::default()
         };
         // A panic while decoding one frame (bad media, a decoder bug) must not take the worker

@@ -56,7 +56,7 @@ use filmcraft_engine::render::{Image, RenderOptions, SourceProvider, render_sequ
 use filmcraft_engine::time::Tick;
 use filmcraft_frame::{AudioBuffer, Chroma, PixelData, VideoFrame};
 use filmcraft_media::{FrameRequest, MediaInfo, MediaSource, SharedSource, cancel};
-use resolution_engine_api::{Frame, GpuPicture};
+use resolution_engine_api::{Frame, GpuPicture, Highlight};
 use resolution_grade::Grade;
 use resolution_renderer::{Blend, Coding, Curve, Layer, Managed, Picture, Pixels, Renderer, Siting, Step, Transfer};
 
@@ -152,7 +152,11 @@ impl Graded {
         for it in s.video_tracks.iter().flat_map(|t| &t.items) {
             let size = project.source_size(it.item).unwrap_or((s.settings.width, s.settings.height));
             let Some((g, false)) = crate::color::grade_in(project, seq, it.id, size) else { continue };
-            if g.is_neutral() {
+            // a key or a window shows in the Highlight view before its node corrects anything
+            // (LOG D-048)
+            let mattes =
+                g.nodes.iter().any(|n| n.enabled && (n.keyed().is_some() || n.windows.iter().any(|w| w.enabled)));
+            if g.is_neutral() && !mattes {
                 continue;
             }
             let n = it.effects.iter().take_while(|e| e.effect == "lumetri").count();
@@ -235,7 +239,8 @@ impl Graded {
 
     /// The frame at `t` of timeline `seq`, drawn on the GPU, or `None` when the GPU renderer does
     /// not cover it (see the module notes) or there is no GPU. With `keep`, the frame is left on
-    /// the GPU when the renderer shares the front end's device.
+    /// the GPU when the renderer shares the front end's device. With `highlight`, the clip it
+    /// names is drawn in the Highlight view (LOG D-048), when the clip is graded in the shader.
     pub(crate) fn render(
         &self,
         seq: ItemId,
@@ -243,9 +248,10 @@ impl Graded {
         opts: RenderOptions,
         sources: &dyn SourceProvider,
         keep: bool,
+        highlight: Option<Highlight>,
     ) -> Option<Frame> {
         let out = if keep && SHARED.load(Ordering::Relaxed) { Out::Keep } else { Out::Pixels };
-        let Drawn::Frame(frame) = self.drawn(seq, t, opts, sources, out)? else { return None };
+        let Drawn::Frame(frame) = self.drawn(seq, t, opts, sources, out, highlight)? else { return None };
         GPU_FRAMES.fetch_add(1, Ordering::Relaxed);
         Some(frame)
     }
@@ -260,7 +266,7 @@ impl Graded {
         opts: RenderOptions,
         sources: &dyn SourceProvider,
     ) -> Option<Frame> {
-        if let Some(Drawn::Frame(f)) = self.drawn(seq, t, opts, sources, Out::Pixels) {
+        if let Some(Drawn::Frame(f)) = self.drawn(seq, t, opts, sources, Out::Pixels, None) {
             return Some(f);
         }
         let img = self.render_cpu(seq, t, opts, sources)?;
@@ -270,7 +276,7 @@ impl Graded {
     /// The frame at `t`, drawn on the GPU, as FilmCraft's CPU renderer hands frames to an export:
     /// linear light, premultiplied, not laid over black.
     fn render_linear(&self, seq: ItemId, t: Tick, opts: RenderOptions, sources: &dyn SourceProvider) -> Option<Image> {
-        let Drawn::Linear(w, h, px) = self.drawn(seq, t, opts, sources, Out::Linear)? else { return None };
+        let Drawn::Linear(w, h, px) = self.drawn(seq, t, opts, sources, Out::Linear, None)? else { return None };
         Some(Image { w: w as usize, h: h as usize, px })
     }
 
@@ -281,6 +287,7 @@ impl Graded {
         opts: RenderOptions,
         sources: &dyn SourceProvider,
         out: Out,
+        highlight: Option<Highlight>,
     ) -> Option<Drawn> {
         if !GPU_ON.load(Ordering::Relaxed) {
             return None;
@@ -298,18 +305,29 @@ impl Graded {
         let seen = std::mem::take(&mut *seen.lock().ok()?);
         let (_, _, parts) = parts(&plan)?;
         let layers: Vec<&PlanLayer> = parts.iter().flat_map(Part::layers).collect();
-        let grades = self.layer_grades(&layers, &seen)?;
-        draw(gpu, &plan, &grades, out)
+        let graded = self.layer_grades(&layers, &seen)?;
+        let grades: Vec<Option<&Grade>> = graded.iter().map(|g| g.map(|(g, _)| g)).collect();
+        // the highlighted clip's layers
+        let lit: Vec<Option<resolution_renderer::Highlight>> = graded
+            .iter()
+            .map(|g| {
+                let h = highlight?;
+                let (_, clip) = (*g)?;
+                (clip.0 == h.clip)
+                    .then_some(resolution_renderer::Highlight { node: h.node, black_white: h.black_white })
+            })
+            .collect();
+        draw(gpu, &plan, &grades, &lit, out)
     }
 
-    /// Each layer's grade: the grade of the clip whose decoded picture it draws, if that clip is
-    /// graded. `None` when a graded clip's picture went somewhere a grade cannot follow (see the
-    /// module notes).
+    /// Each layer's grade and clip: the grade of the clip whose decoded picture it draws, if that
+    /// clip is graded. `None` when a graded clip's picture went somewhere a grade cannot follow
+    /// (see the module notes).
     fn layer_grades<'a>(
         &'a self,
         layers: &[&PlanLayer],
         seen: &[(Arc<VideoFrame>, ClipId)],
-    ) -> Option<Vec<Option<&'a Grade>>> {
+    ) -> Option<Vec<Option<(&'a Grade, ClipId)>>> {
         let mut clip_of: HashMap<*const VideoFrame, ClipId> = HashMap::new();
         for (f, clip) in seen {
             if clip_of.insert(Arc::as_ptr(f), *clip).is_some_and(|c| c != *clip) {
@@ -328,7 +346,7 @@ impl Graded {
                     if l.fx.is_some() || l.input.is_some() {
                         return None;
                     }
-                    Some(&*self.stand_ins.values().find(|s| s.clip == *clip)?.grade)
+                    Some((&*self.stand_ins.values().find(|s| s.clip == *clip)?.grade, *clip))
                 }
                 None => None,
             };
@@ -389,9 +407,15 @@ enum Drawn {
     Linear(u32, u32, Vec<f32>),
 }
 
-/// Draws `plan` on the GPU, its layers (in plan order, Push sides included) with `grades`, as
-/// `out` asks. `None` when a layer cannot be drawn there or the GPU failed.
-fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>], out: Out) -> Option<Drawn> {
+/// Draws `plan` on the GPU, its layers (in plan order, Push sides included) with `grades` and
+/// highlights `lit`, as `out` asks. `None` when a layer cannot be drawn there or the GPU failed.
+fn draw(
+    gpu: &Mutex<Renderer>,
+    plan: &FramePlan,
+    grades: &[Option<&Grade>],
+    lit: &[Option<resolution_renderer::Highlight>],
+    out: Out,
+) -> Option<Drawn> {
     let (width, height, parts) = parts(plan)?;
     let all: Vec<&PlanLayer> = parts.iter().flat_map(Part::layers).collect();
     // standard effects the GPU does not run yet: on the CPU, layer by layer (with the layer's
@@ -399,7 +423,7 @@ fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>], out:
     let images: Vec<_> =
         all.iter().map(|l| l.fx.as_ref().map(|fx| effect_image_with(&l.frame, fx, l.input.as_deref()))).collect();
     let mut layers = Vec::with_capacity(all.len());
-    for ((l, grade), image) in all.iter().zip(grades).zip(&images) {
+    for (((l, grade), image), light) in all.iter().zip(grades).zip(&images).zip(lit) {
         let m = l.matrix;
         let matrix = [m.a, m.b, m.c, m.d, m.e, m.f];
         let blend = Blend::ALL.get(l.blend.index() as usize).copied()?;
@@ -414,13 +438,14 @@ fn draw(gpu: &Mutex<Renderer>, plan: &FramePlan, grades: &[Option<&Grade>], out:
                 blend,
                 managed: None,
                 grade: None,
+                highlight: None,
             },
             None => {
                 let managed = match &l.input {
                     Some(t) => Some(managed(t)?),
                     None => None,
                 };
-                Layer { blend, managed, ..layer(&l.frame, matrix, l.opacity, *grade)? }
+                Layer { blend, managed, highlight: *light, ..layer(&l.frame, matrix, l.opacity, *grade)? }
             }
         });
     }
@@ -703,6 +728,7 @@ fn layer<'a>(f: &'a VideoFrame, matrix: [f64; 6], opacity: f32, grade: Option<&'
         blend: Blend::Normal,
         managed: None,
         grade,
+        highlight: None,
     })
 }
 

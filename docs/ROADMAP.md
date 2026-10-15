@@ -104,8 +104,9 @@ read, never copied into the repo.
       (D-047)
 - [ ] Picking a hue curve's points from the viewer
 - [x] Matte finesse: Denoise, Clean Black, Clean White, Blur Radius (D-046)
-- [ ] More matte finesse (Black and White Clip, In/Out Ratio, Morph), Highlight view, RGB and Luma
-      qualifier modes
+- [x] The Highlight view: Highlight and Highlight B/W of the current node (D-048)
+- [ ] More matte finesse (Black and White Clip, In/Out Ratio, Morph), Highlight Difference, RGB
+      and Luma qualifier modes
 - [ ] Polygon, Curve and Gradient windows; window handles on screen; tracking
 - [ ] Parallel and layer nodes
 - [ ] **Our own GPU renderer** (D-035, Truman's choice), replacing the Lumetri compile for grades:

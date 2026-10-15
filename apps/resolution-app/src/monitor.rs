@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use eframe::egui_wgpu::{self, wgpu};
 use egui::{ColorImage, TextureHandle, TextureId, TextureOptions, Vec2, vec2};
-use resolution_engine_api::{Frame, Playback};
+use resolution_engine_api::{Frame, Highlight, Playback};
 use resolution_playback::{AudioLost, AudioOut, AudioStats, FrameKey, FrameServer, Step, Transport, ahead};
 use serde_json::json;
 
@@ -108,8 +108,12 @@ pub struct Monitor {
     gpu: Option<egui_wgpu::RenderState>,
     /// The frame in `frame`.
     pub shown: Option<FrameKey>,
-    /// The picture in `frame`, for the scopes.
+    /// The picture in `frame`.
     pub picture: Option<Arc<Frame>>,
+    /// Frames are asked for in this Highlight view (LOG D-048), set by the page showing them.
+    pub highlight: Option<Highlight>,
+    /// While the Highlight view is on: the frame on screen without it, once rendered.
+    plain: Option<Arc<Frame>>,
     /// Longest side, in pixels, of the frames asked for: the viewer's size on screen.
     pub view_side: u32,
     pub transport: Transport,
@@ -137,6 +141,8 @@ impl Monitor {
             gpu: None,
             shown: None,
             picture: None,
+            highlight: None,
+            plain: None,
             view_side: 960,
             transport: Transport::default(),
             pending_seek: None,
@@ -163,7 +169,13 @@ impl Monitor {
     }
 
     fn frame_key(&self, p: &Arc<dyn Playback>, frame: i64) -> FrameKey {
-        FrameKey { revision: p.revision(), frame, side: self.view_side, draft: false }
+        FrameKey { revision: p.revision(), frame, side: self.view_side, draft: false, highlight: self.highlight }
+    }
+
+    /// The picture as graded, for the scopes and the qualifier's picker: the one on screen, or
+    /// in the Highlight view the same frame without it (`None` until that is rendered).
+    pub fn graded_picture(&self) -> Option<&Arc<Frame>> {
+        if self.highlight.is_some() { self.plain.as_ref() } else { self.picture.as_ref() }
     }
 
     /// Shows frames the renderer leaves on egui's own GPU device, without reading them back
@@ -323,6 +335,18 @@ impl Monitor {
             self.frames.request(&p, key);
             self.frames.get(&key).map(|f| (key, f))
         };
+        if self.highlight.is_some() {
+            // the frame without the highlight too, for what reads the graded picture
+            let plain = FrameKey { highlight: None, ..key };
+            if !self.transport.is_playing() {
+                self.frames.request(&p, plain);
+            }
+            if let Some(f) = self.frames.get(&plain) {
+                self.plain = Some(f);
+            }
+        } else {
+            self.plain = None;
+        }
         match found {
             Some((k, f)) if self.shown != Some(k) => {
                 let on_gpu = f.gpu.as_ref().and_then(|g| g.texture().downcast_ref::<wgpu::TextureView>());

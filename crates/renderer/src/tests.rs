@@ -26,6 +26,7 @@ fn rgba_layer<'a>(w: u32, h: u32, rgba: &'a [u8], grade: Option<&'a Grade>) -> L
         blend: Blend::Normal,
         managed: None,
         grade,
+        highlight: None,
     }
 }
 
@@ -92,6 +93,7 @@ fn video_range_rec709_decodes_to_white_black_and_red() {
             blend: Blend::Normal,
             managed: None,
             grade: None,
+            highlight: None,
         };
         let out = r.render((w, h), &[layer]).unwrap();
         let got = [out[0], out[1], out[2]];
@@ -162,6 +164,7 @@ fn ycbcr_mid_tones_decode_as_the_formula_says() {
             blend: Blend::Normal,
             managed: None,
             grade: None,
+            highlight: None,
         };
         let out = r.render((n as u32, n as u32), &[layer]).unwrap();
         let (worst, bias) = off(&out, &want);
@@ -186,6 +189,7 @@ fn ten_bit_white_is_white() {
         blend: Blend::Normal,
         managed: None,
         grade: None,
+        highlight: None,
     };
     let out = r.render((8, 8), &[layer]).unwrap();
     assert!(out[..3].iter().all(|v| *v >= 253), "{:?}", &out[..3]);
@@ -364,6 +368,7 @@ fn chroma_sited_left_is_read_where_it_was_taken() {
                 blend: Blend::Normal,
                 managed: None,
                 grade: None,
+                highlight: None,
             };
             r.render((w, h), &[l]).unwrap()
         };
@@ -402,6 +407,7 @@ fn the_linear_canvas_keeps_alpha_and_matches_the_frame() {
         blend: Blend::Normal,
         managed: None,
         grade: None,
+        highlight: None,
     };
     let steps = [Step::Layers(vec![l])];
     let lin = r.render_linear((8, 4), &steps).unwrap();
@@ -419,14 +425,9 @@ fn the_linear_canvas_keeps_alpha_and_matches_the_frame() {
     }
 }
 
-/// The grade stage (LOG D-046): a qualifier cleaning its key over the picture (Denoise, Clean
-/// Black and White, Blur Radius), against the CPU's `Grade::apply_image`, drawn one to one.
-#[test]
-fn a_matte_cleaned_over_the_picture_matches_its_math() {
-    let Some(r) = renderer() else { return };
-    // wide enough for Blur Radius to spread a few pixels (it scales with the picture's width)
-    let (w, h) = (768u32, 64u32);
-    // grey noise, a red block, and red specks in the grey
+/// Grey noise, `w` × `h`, with a red block and red specks in the grey: something for a red key
+/// to clean.
+fn red_block(w: u32, h: u32) -> Vec<u8> {
     let mut px = noise((w * h) as usize);
     for (i, p) in px.chunks_mut(4).enumerate() {
         let (x, y) = (i as u32 % w, i as u32 / w);
@@ -439,6 +440,25 @@ fn a_matte_cleaned_over_the_picture_matches_its_math() {
             p[..3].copy_from_slice(&[g, g, g]);
         }
     }
+    px
+}
+
+/// The largest difference, in code values, between the GPU's frame and the CPU's picture.
+fn off_by(cpu: &[[f32; 3]], out: &[u8]) -> f32 {
+    cpu.iter()
+        .zip(out.chunks(4))
+        .map(|(c, o)| (0..3).map(|k| (c[k] * 255.0 - f32::from(o[k])).abs()).fold(0.0, f32::max))
+        .fold(0.0, f32::max)
+}
+
+/// The grade stage (LOG D-046): a qualifier cleaning its key over the picture (Denoise, Clean
+/// Black and White, Blur Radius), against the CPU's `Grade::apply_image`, drawn one to one.
+#[test]
+fn a_matte_cleaned_over_the_picture_matches_its_math() {
+    let Some(r) = renderer() else { return };
+    // wide enough for Blur Radius to spread a few pixels (it scales with the picture's width)
+    let (w, h) = (768u32, 64u32);
+    let px = red_block(w, h);
     let mut q = Qualifier::picked([0.8, 0.16, 0.12]);
     (q.denoise, q.clean_black, q.clean_white, q.blur) = (40.0, 20.0, 20.0, 60.0);
     assert!(q.is_spatial());
@@ -447,11 +467,7 @@ fn a_matte_cleaned_over_the_picture_matches_its_math() {
     let out = r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap();
     let mut cpu: Vec<[f32; 3]> = px.chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect();
     g.apply_image(&mut cpu, w as usize, h as usize);
-    let worst = cpu
-        .iter()
-        .zip(out.chunks(4))
-        .map(|(c, o)| (0..3).map(|k| (c[k] * 255.0 - f32::from(o[k])).abs()).fold(0.0, f32::max))
-        .fold(0.0, f32::max);
+    let worst = off_by(&cpu, &out);
     eprintln!("the grade stage against its math: worst {worst:.2} code values");
     assert!(worst <= 1.5, "the GPU's cleaned matte strays from the math by {worst} code values");
     // and the cleaning matters: pixel by pixel (no Denoise, no Blur) is far off
@@ -463,4 +479,77 @@ fn a_matte_cleaned_over_the_picture_matches_its_math() {
         .map(|(a, b)| (0..3).map(|k| (a[k] - b[k]).abs() * 255.0).fold(0.0, f32::max))
         .fold(0.0, f32::max);
     assert!(apart > 20.0, "Denoise and Blur changed nothing ({apart})");
+}
+
+/// The Highlight view (LOG D-048) against the CPU's `Grade::highlight_image`, drawn one to one, of
+/// each kind of node: one whose key is cleaned over the picture, one keyed pixel by pixel, one
+/// keyed that corrects nothing yet, and one without a key; in flat grey and in black and white.
+#[test]
+fn the_highlight_view_matches_its_math() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (768u32, 64u32);
+    let px = red_block(w, h);
+    let red = Qualifier::picked([0.8, 0.16, 0.12]);
+    let mut cleaned = red;
+    (cleaned.denoise, cleaned.clean_black, cleaned.blur) = (40.0, 20.0, 60.0);
+    // by lightness alone: a hue key on greys is unstable (the faintest tint decides the hue)
+    let grey = Qualifier { hue_on: false, sat_on: false, ..Qualifier::picked([0.4, 0.4, 0.4]) };
+    let g = Grade {
+        nodes: vec![
+            node(json!({ "gain": {"y": 0.6, "b": 1.4}, "saturation": 30.0, "qualifier": cleaned })),
+            node(json!({ "contrast": 1.2, "qualifier": red })),
+            node(json!({ "qualifier": grey })),
+            node(json!({ "lift": {"y": 0.03} })),
+        ],
+    };
+    assert!(g.nodes[2].is_neutral(), "a node that corrects nothing");
+    for at in 0..4 {
+        for black_white in [false, true] {
+            let mut l = rgba_layer(w, h, &px, Some(&g));
+            l.highlight = Some(Highlight { node: at, black_white });
+            let out = r.render((w, h), &[l]).unwrap();
+            let mut cpu: Vec<[f32; 3]> =
+                px.chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect();
+            g.highlight_image(&mut cpu, w as usize, h as usize, at, black_white);
+            // a matte shown in black and white magnifies what its key reads: nodes 1 and 2 key the
+            // nodes' results before them, which the GPU holds at half-float precision, so their
+            // soft edges stray more (measured 2026-10-14: 1.9 and 3.3 code values)
+            let edge = |c: &[f32; 3]| black_white && c[0] > 0.002 && c[0] < 0.998;
+            let (inner, outer): (Vec<_>, Vec<_>) = cpu.iter().zip(out.chunks(4)).partition(|(c, _)| edge(c));
+            let off = |v: &[(&[f32; 3], &[u8])]| {
+                let (c, o): (Vec<[f32; 3]>, Vec<u8>) =
+                    (v.iter().map(|p| *p.0).collect(), v.iter().flat_map(|p| p.1.to_vec()).collect());
+                off_by(&c, &o)
+            };
+            let (hard, soft) = (off(&outer), off(&inner));
+            eprintln!(
+                "node {at}, black and white {black_white}: worst {hard:.2}, on the matte's soft edge {soft:.2} code values"
+            );
+            assert!(hard <= 1.5, "node {at}, black and white {black_white}: {hard} code values off");
+            assert!(soft <= 4.0, "node {at}, black and white {black_white}: {soft} off on the soft edge");
+            // and it shows a matte: both kinds of pixel, except for the node without a key
+            if black_white && at < 3 {
+                assert!(out.chunks(4).any(|p| p[0] > 250) && out.chunks(4).any(|p| p[0] < 5), "node {at}");
+            }
+        }
+    }
+}
+
+/// The Highlight view of a node with a window (LOG D-048): its matte is the window's shape.
+#[test]
+fn the_highlight_view_shows_a_windows_shape() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (200u32, 100u32);
+    let px: Vec<u8> = (0..w * h).flat_map(|_| [128u8, 128, 128, 255]).collect();
+    let mut n = node(json!({"gain": {"y": 0.5}}));
+    // 0.3 of the width across: a radius of 30 pixels about the middle
+    n.windows = vec![Window { softness: 0.0, ..Window::new(resolution_grade::Shape::Circle) }];
+    n.windows[0].size = [0.3, 0.3];
+    let g = Grade { nodes: vec![n] };
+    let mut l = rgba_layer(w, h, &px, Some(&g));
+    l.highlight = Some(Highlight { node: 0, black_white: true });
+    let out = r.render((w, h), &[l]).unwrap();
+    let at = |x: u32, y: u32| out[((y * w + x) * 4) as usize];
+    assert!(at(100, 50) > 250 && at(100, 50 - 25) > 250, "white inside the circle");
+    assert!(at(5, 5) < 5 && at(100, 50 - 35) < 5, "black outside it");
 }

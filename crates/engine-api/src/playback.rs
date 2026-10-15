@@ -70,6 +70,20 @@ pub struct RenderHints {
     /// The caller shows frames on the renderer's GPU device: a frame drawn there may be left
     /// there ([`crate::Frame::gpu`]) instead of read back (LOG D-039).
     pub gpu: bool,
+    /// The Highlight view of one node of a clip's grade, instead of the program picture.
+    pub highlight: Option<Highlight>,
+}
+
+/// The Highlight view (LOG D-048), as the Color page's viewer shows it: the picture where one
+/// node of a clip's grade keys it, flat grey elsewhere; or, `black_white`, the node's matte in
+/// black and white. Other clips are drawn as they are.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Highlight {
+    /// The clip, by its id in `color.inspect`.
+    pub clip: u64,
+    /// The node, its index in the grade from 0.
+    pub node: usize,
+    pub black_white: bool,
 }
 
 /// Sound from the timeline: `mix(start, buffer, channels)` writes interleaved frames into

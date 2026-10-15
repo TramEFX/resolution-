@@ -60,6 +60,8 @@ pub struct ColorPage {
     moving_window: bool,
     /// Per clip, the revision at which its grade last changed: when its thumbnail is due again.
     pub stamps: HashMap<u64, u64>,
+    /// The Highlight view of the current node, when on (LOG D-048): `true` in black and white.
+    pub highlight: Option<bool>,
 }
 
 impl ColorPage {

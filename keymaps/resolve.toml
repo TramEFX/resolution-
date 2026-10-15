@@ -261,3 +261,10 @@ command = "color.previousNode"
 [[bind]]
 keys = "Alt+Shift+'"
 command = "color.nextNode"
+# the Highlight view (Reference Manual, "Using Highlight to See What You're Isolating")
+[[bind]]
+keys = "Shift+H"
+command = "color.highlight"
+[[bind]]
+keys = "Alt+Shift+H"
+command = "color.highlightBW"
