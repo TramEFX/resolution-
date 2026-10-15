@@ -181,3 +181,35 @@ fn fit_to_fill_retimes_the_source_into_the_timelines_in_and_out() {
         assert_eq!(track(&e, 0), v1, "one undo step");
     }
 }
+
+/// Add Transition (Ctrl+T, LOG B-043): with nothing selected, a video and an audio transition at
+/// the edit at the playhead (FilmCraft takes one within three frames), as one undo step; with no
+/// edit there, nothing.
+#[test]
+fn add_transition_puts_video_and_audio_transitions_at_the_edit_at_the_playhead() {
+    let (mut e, _) = with_source("City_Night_Drive.mp4");
+    e.execute("timeline.new", json!({ "name": "Cuts" })).unwrap();
+    // the source's two seconds twice, end to end: a cut at two seconds on V1 and on A1
+    seek(&mut e, 0.0);
+    e.execute("edit.insert", json!({})).unwrap();
+    seek(&mut e, TWO_S);
+    e.execute("edit.insert", json!({})).unwrap();
+    assert_eq!(track(&e, 0).len(), 2);
+    let transitions = |e: &FilmCraftEngine| {
+        let seq = e.session.active_sequence().unwrap();
+        (seq.video_tracks[0].transitions.len(), seq.audio_tracks[0].transitions.len())
+    };
+    assert_eq!(transitions(&e), (0, 0));
+    // FilmCraft leaves the inserted clip selected, and a selected clip takes transitions at both
+    // its edges
+    e.execute("edit.deselectAll", json!({})).unwrap();
+    seek(&mut e, 1.0);
+    assert!(e.execute("timeline.addTransition", json!({})).is_err(), "no edit a second from the cut");
+    assert_eq!(transitions(&e), (0, 0));
+    seek(&mut e, TWO_S - 2.0 * 1001.0 / 24000.0);
+    let done = e.execute("timeline.addTransition", json!({})).unwrap();
+    assert_eq!(done.undo_label.as_deref(), Some("Add Transition"));
+    assert_eq!(transitions(&e), (1, 1), "{}", done.result);
+    e.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(transitions(&e), (0, 0), "one undo step");
+}

@@ -2315,6 +2315,144 @@ mod tests {
         assert_eq!(v1_clips(h.state()), clips + 1, "V1 as it was");
     }
 
+    /// Open `name` in the source viewer and mark it from frame `from` to frame `to`, stepping
+    /// there with the arrow keys as an editor would.
+    fn mark_source(h: &mut Harness<'_, ResolutionApp>, name: &str, from: i64, to: i64) {
+        let item = h.state().media.iter().find(|m| m.name == name).cloned().expect("demo clip");
+        h.state_mut().open_media(&item);
+        pump(h, "the clip in the source viewer", |a| {
+            a.source_clip.as_ref().is_some_and(|s| s.item == item.id) && a.source_viewer.program.is_some()
+        });
+        let step = |h: &mut Harness<'_, ResolutionApp>, to: i64| {
+            let at = h.state().source_clip.as_ref().map_or(0, |s| s.playhead_frame);
+            let key = if to > at { Key::ArrowRight } else { Key::ArrowLeft };
+            for _ in 0..(to - at).abs() {
+                h.key_press(key);
+            }
+            pump(h, "the source playhead to step there", |a| {
+                a.source_clip.as_ref().is_some_and(|s| s.playhead_frame == to)
+            });
+        };
+        step(h, from);
+        h.key_press(Key::I);
+        pump(h, "the source In", |a| a.source_clip.as_ref().is_some_and(|s| s.mark_in == Some(from)));
+        step(h, to);
+        h.key_press(Key::O);
+        pump(h, "the source Out", |a| a.source_clip.as_ref().is_some_and(|s| s.mark_out == Some(to)));
+    }
+
+    /// V1's clips as (start, end) in seconds.
+    fn v1_spans(a: &ResolutionApp) -> Vec<(f64, f64)> {
+        a.timeline.as_ref().map_or(Vec::new(), |t| t.video[0].clips.iter().map(|c| (c.start, c.end)).collect())
+    }
+
+    /// The one-minute edit (ROADMAP step 2's bar) through the editor's keys and mouse, as an
+    /// editor cuts it on an empty timeline: source ranges marked and edited in with F9, F10 and
+    /// Shift+F12, a split pair and a ripple delete between, a trim, a transition, a marker, undo
+    /// and redo. `scripts/rehearse-edit.py` rehearses the engine's side (LOG B-042); this is the
+    /// front end's.
+    #[test]
+    fn the_one_minute_edit_through_the_keys_and_mouse() {
+        let mut h = demo();
+        let demo_name = h.state().timeline.as_ref().map(|t| t.name.clone()).expect("the demo timeline");
+        h.key_press_modifiers(Modifiers::COMMAND, Key::N);
+        pump(&mut h, "a new, empty timeline", |a| {
+            a.timeline.as_ref().is_some_and(|t| t.name != demo_name && t.video.iter().all(|tr| tr.clips.is_empty()))
+        });
+        let fps = h.state().timeline.as_ref().map(|t| t.fps).expect("timeline");
+        let secs = |frames: i64| frames as f64 / fps;
+        // F9: two seconds of Ocean Sunset at the start
+        mark_source(&mut h, "Ocean_Sunset.mp4", 10, 57);
+        h.key_press(Key::F9);
+        pump(&mut h, "the insert on V1", |a| v1_spans(a).len() == 1);
+        let first = v1_spans(h.state())[0];
+        assert!(first.0.abs() < 1e-6 && (first.1 - secs(48)).abs() < 0.5 / fps, "{first:?}");
+        // F10: Resolve leaves the playhead at the edit's end, so the next edit follows on
+        pump(&mut h, "the playhead after the insert", |a| {
+            (a.playhead_frame() as f64 / fps - first.1).abs() < 0.5 / fps
+        });
+        mark_source(&mut h, "City_Night_Drive.mp4", 24, 95);
+        h.key_press(Key::F10);
+        pump(&mut h, "the overwrite on V1", |a| v1_spans(a).len() == 2);
+        let second = v1_spans(h.state())[1];
+        assert!(
+            (second.0 - first.1).abs() < 0.5 / fps && (second.1 - second.0 - secs(72)).abs() < 0.5 / fps,
+            "{second:?}"
+        );
+        // Shift+F12: the marked range of a third clip at the end, wherever the playhead is
+        mark_source(&mut h, "Misty_Forest.mp4", 0, 71);
+        h.key_press_modifiers(Modifiers::SHIFT, Key::F12);
+        pump(&mut h, "the append on V1", |a| v1_spans(a).len() == 3);
+        let third = v1_spans(h.state())[2];
+        assert!((third.0 - second.1).abs() < 0.5 / fps, "{third:?} after {second:?}");
+        // back to the timeline: Home, Down to the first cut, half a second on, split; another
+        // half second, split again
+        h.key_press(Key::Q);
+        h.key_press(Key::Home);
+        pump(&mut h, "the playhead at the start", |a| a.active == Viewer::Timeline && a.playhead_frame() == 0);
+        h.key_press(Key::ArrowDown);
+        pump(&mut h, "Down to the first cut", |a| (a.playhead_frame() as f64 / fps - first.1).abs() < 0.5 / fps);
+        let cut = h.state().playhead_frame();
+        for (k, at) in [(4, cut + 12), (5, cut + 24)] {
+            while h.state().playhead_frame() < at {
+                h.key_press(Key::ArrowRight);
+                h.step();
+            }
+            pump(&mut h, "the playhead there", |a| a.playhead_frame() == at);
+            h.key_press_modifiers(Modifiers::COMMAND, Key::B);
+            pump(&mut h, "Ctrl+B to split V1", |a| v1_spans(a).len() == k);
+        }
+        // click the half second between the splits, and Shift+Backspace ripple-deletes it
+        let length = |a: &ResolutionApp| v1_spans(a).last().map_or(0.0, |c| c.1);
+        let before = length(h.state());
+        let piece = h.state().timeline.as_ref().map(|t| t.video[0].clips[2].id).expect("the piece");
+        pump(&mut h, "the piece on screen", |a| a.clip_rects.iter().any(|(_, id)| *id == piece));
+        let r = h.state().clip_rects.iter().find(|(_, id)| *id == piece).map(|(r, _)| *r).expect("drawn");
+        click_at(&mut h, r.center());
+        pump(&mut h, "the piece selected", |a| {
+            a.timeline.as_ref().and_then(|t| t.selected()).is_some_and(|(_, c)| c.id == piece)
+        });
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Backspace);
+        pump(&mut h, "the piece ripple-deleted", |a| v1_spans(a).len() == 4);
+        assert!((before - length(h.state()) - secs(12)).abs() < 0.5 / fps, "half a second shorter");
+        let spans = v1_spans(h.state());
+        assert!(spans.windows(2).all(|p| (p[1].0 - p[0].1).abs() < 0.5 / fps), "no gaps: {spans:?}");
+        // the last clip's end dragged 40 pixels earlier with the selection tool, snapping off
+        if h.state().timeline.as_ref().is_some_and(|t| t.snapping) {
+            h.key_press(Key::N);
+            pump(&mut h, "snapping off", |a| a.timeline.as_ref().is_some_and(|t| !t.snapping));
+        }
+        let last = h.state().timeline.as_ref().and_then(|t| t.video[0].clips.last().cloned()).expect("the last clip");
+        let r = h.state().clip_rects.iter().find(|(_, id)| *id == last.id).map(|(r, _)| *r).expect("drawn");
+        drag(&mut h, pos2(r.right() - 2.0, r.center().y), pos2(r.right() - 42.0, r.center().y));
+        pump(&mut h, "the last clip trimmed", |a| v1_spans(a).last().is_some_and(|c| c.1 < last.end - 0.1));
+        // Ctrl+T at the first cut: a transition there
+        h.key_press(Key::Home);
+        h.key_press(Key::ArrowDown);
+        pump(&mut h, "Down to the first cut", |a| (a.playhead_frame() as f64 / fps - first.1).abs() < 0.5 / fps);
+        h.key_press_modifiers(Modifiers::COMMAND, Key::T);
+        pump(&mut h, "a transition at the first cut", |a| {
+            a.timeline
+                .as_ref()
+                .is_some_and(|t| t.video[0].transitions.iter().any(|x| x.start <= first.1 && first.1 <= x.end))
+        });
+        // M, then undo and redo it
+        h.key_press(Key::M);
+        pump(&mut h, "a marker", |a| a.timeline.as_ref().is_some_and(|t| t.markers.len() == 1));
+        h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+        pump(&mut h, "the marker undone", |a| a.timeline.as_ref().is_some_and(|t| t.markers.is_empty()));
+        h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+        pump(&mut h, "the marker redone", |a| a.timeline.as_ref().is_some_and(|t| t.markers.len() == 1));
+        // the sound followed the picture: A1 cut as V1 is
+        let a1: Vec<(f64, f64)> = h
+            .state()
+            .timeline
+            .as_ref()
+            .map(|t| t.audio[0].clips.iter().map(|c| (c.start, c.end)).collect())
+            .expect("the timeline");
+        assert_eq!(a1.len(), 4, "{a1:?}");
+    }
+
     #[test]
     fn the_source_viewer_plays_on_its_own() {
         let mut h = demo();

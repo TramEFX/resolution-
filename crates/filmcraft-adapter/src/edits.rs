@@ -15,16 +15,34 @@
 //!   whatever the timeline's In and Out.
 //! - **Fit to Fill** (Shift+F11): the source's In to Out, its speed changed so it fills the
 //!   timeline's In to Out on the destination tracks (LOG D-060).
+//! - **Add Transition** (Ctrl+T, LOG B-043): the default video and audio transitions together,
+//!   where Add Video Only Transition and Add Audio Only Transition each put theirs: at the
+//!   selected clips' edges, else the selected edit points, else the edit nearest the playhead on
+//!   the targeted tracks.
 
 use filmcraft_engine::project::{ClipId, ItemKind, Track, TrackId};
 use filmcraft_engine::time::Tick;
 use filmcraft_engine::{EngineError, Session};
 use serde_json::{Value, json};
 
+/// The composed edits' ids.
+pub(crate) fn composes(id: &str) -> bool {
+    matches!(
+        id,
+        "edit.replace"
+            | "edit.placeOnTop"
+            | "edit.rippleOverwrite"
+            | "edit.appendAtEnd"
+            | "edit.fitToFill"
+            | "timeline.addTransition"
+    )
+}
+
 /// Runs composed edit `id`; `None` for an id that is not one of them.
 pub(crate) fn run(s: &mut Session, id: &str) -> Option<Result<Value, EngineError>> {
     Some(match id {
         "edit.replace" => replace(s),
+        "timeline.addTransition" => add_transition(s),
         "edit.placeOnTop" => place_on_top(s),
         "edit.rippleOverwrite" => ripple_overwrite(s),
         "edit.appendAtEnd" => append_at_end(s),
@@ -91,6 +109,18 @@ fn append_at_end(s: &mut Session) -> Result<Value, EngineError> {
         let placed = s.execute("source.overwrite", json!({}))?;
         set_marks(s, marks)?;
         Ok(placed)
+    })
+}
+
+/// Add Transition: both kinds as one undo step; it fails only when neither can be placed.
+fn add_transition(s: &mut Session) -> Result<Value, EngineError> {
+    s.edit_group("Add Transition", |s| {
+        let video = s.execute("sequence.applyVideoTransition", json!({}));
+        let audio = s.execute("sequence.applyAudioTransition", json!({}));
+        match (video, audio) {
+            (Err(e), Err(_)) => Err(e),
+            (video, audio) => Ok(json!({ "video": video.ok(), "audio": audio.ok() })),
+        }
     })
 }
 
