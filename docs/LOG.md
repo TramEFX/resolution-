@@ -127,6 +127,7 @@ doc is updated *and* the entry says which section moved.
 | D-059 | 2026-10-14 | engine | Replace, Place on Top, Ripple Overwrite and Append at End, composed from FilmCraft's commands | active |
 | D-060 | 2026-10-14 | engine | Fit to Fill: the source retimed to fill the timeline's In to Out | active |
 | D-061 | 2026-10-15 | color | The Curve window: a closed Catmull-Rom curve through its points | active (format with D-053's, provisional) |
+| D-062 | 2026-10-15 | color | The Highlight view for clips graded at their source, and frames FilmCraft draws itself | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3305,3 +3306,26 @@ drag. Ours are always the spline's; they could be stored on the points later.
   beyond it. Drawn as a plain polygon, the bulge test fails.
 - The GPU against the compile, a turned five-point curve: mean 0.07 code values, 99 % within 1.0.
 - UI test: Add Curve, a point dragged out.
+
+### D-062 — The Highlight view for clips graded at their source, and frames FilmCraft draws itself
+**Area:** color · **Status:** active · **Doc:** `crates/filmcraft-adapter/src/gpu.rs` (`Grading`,
+`GradedSource`, `graded_picture`, `render_cpu`)
+
+**Decision:** two of D-048's limits gone. A clip whose pictures are graded at their source shows
+the Highlight view too: one with other effects (D-044), and every graded clip in a frame
+FilmCraft draws itself.
+
+**How:** the stand-ins' source provider (`Grading`) now carries the highlight with each frame,
+on the GPU path and on FilmCraft's own one (`render_cpu`, which playback's CPU fallback now asks
+with the frame's hint). The highlighted clip's `GradedSource` draws its pictures through the
+renderer's highlight stage (D-048), rather than the plain grade. FilmCraft then lays the clip's
+other effects over the highlighted picture, as over the graded one: the drop shadow stays.
+
+**Still not:** a clip with no stand-in (nothing on its grade), and agents asking for it (an MCP
+parameter, for Truman).
+
+**Checked:** adapter test, V2's Misty Forest (graded at its source, under its drop shadow) in
+black and white with a node that keys everything:
+- on the GPU path and in FilmCraft's own render, over 1000 pixels changed, at least nine in ten
+  of them white;
+- with the highlight not handed to the source, nothing changed and the test fails.

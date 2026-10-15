@@ -167,7 +167,7 @@ impl Playback for Snapshot {
                             cancel::with_draft(hints.draft, || {
                                 // grades graded at their source (LOG D-044), else as compiled
                                 self.graded
-                                    .render_cpu(self.seq, t, opts, &provider)
+                                    .render_cpu(self.seq, t, opts, &provider, hints.highlight)
                                     .unwrap_or_else(|| render_sequence(&self.project, self.seq, t, opts, &provider))
                             })
                         })

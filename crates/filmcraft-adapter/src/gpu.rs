@@ -211,7 +211,8 @@ impl Graded {
         let mut opened = Vec::with_capacity(self.stand_ins.len());
         for (id, s) in &self.stand_ins {
             let Some(inner) = sources.source(s.real) else { return false };
-            opened.push((*id, Arc::new(GradedSource { inner, grade: s.grade.clone() }) as SharedSource));
+            opened
+                .push((*id, Arc::new(GradedSource { inner, grade: s.grade.clone(), highlight: None }) as SharedSource));
         }
         for (id, src) in opened {
             pool.insert(id, src);
@@ -220,27 +221,29 @@ impl Graded {
     }
 
     /// The frame at `t` of timeline `seq` as FilmCraft's CPU renderer draws it from the copy, every
-    /// graded clip's pictures graded at their source (LOG D-044). `None` when there is nothing to
-    /// grade, no GPU, or the GPU renderer is off: then FilmCraft draws from the real project.
+    /// graded clip's pictures graded at their source (LOG D-044), the clip `highlight` names in
+    /// the Highlight view (LOG D-062). `None` when there is nothing to grade, no GPU, or the GPU
+    /// renderer is off: then FilmCraft draws from the real project.
     pub(crate) fn render_cpu(
         &self,
         seq: ItemId,
         t: Tick,
         opts: RenderOptions,
         sources: &dyn SourceProvider,
+        highlight: Option<Highlight>,
     ) -> Option<Image> {
         if self.stand_ins.is_empty() || !GPU_ON.load(Ordering::Relaxed) {
             return None;
         }
         renderer()?;
-        let graded = Grading { inner: sources, stand_ins: &self.stand_ins, seen: None };
+        let graded = Grading { inner: sources, stand_ins: &self.stand_ins, seen: None, highlight };
         Some(render_sequence(&self.project, seq, t, opts, &graded))
     }
 
     /// The frame at `t` of timeline `seq`, drawn on the GPU, or `None` when the GPU renderer does
     /// not cover it (see the module notes) or there is no GPU. With `keep`, the frame is left on
     /// the GPU when the renderer shares the front end's device. With `highlight`, the clip it
-    /// names is drawn in the Highlight view (LOG D-048), when the clip is graded in the shader.
+    /// names is drawn in the Highlight view (LOG D-048, D-062).
     pub(crate) fn render(
         &self,
         seq: ItemId,
@@ -269,7 +272,7 @@ impl Graded {
         if let Some(Drawn::Frame(f)) = self.drawn(seq, t, opts, sources, Out::Pixels, None) {
             return Some(f);
         }
-        let img = self.render_cpu(seq, t, opts, sources)?;
+        let img = self.render_cpu(seq, t, opts, sources, None)?;
         Some(Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8()))
     }
 
@@ -298,7 +301,7 @@ impl Graded {
             return None;
         }
         let seen = Seen::default();
-        let tagging = Grading { inner: sources, stand_ins: &self.stand_ins, seen: Some(seen.clone()) };
+        let tagging = Grading { inner: sources, stand_ins: &self.stand_ins, seen: Some(seen.clone()), highlight };
         // Planned without draft playback's shortcut, which hands over shrunk copies of the decoded
         // pictures: a graded clip's layer is known by its picture.
         let plan = cancel::with_draft(false, || plan_frame(&self.project, seq, t, opts, &tagging));
@@ -601,11 +604,12 @@ fn managed(t: &InputTransform) -> Option<Managed> {
 /// A source provider for a [`Graded`] copy: each stand-in opens its clip's real media. With
 /// `seen` (the GPU path), a clip graded in the shader hands over its pictures as decoded, each
 /// noted with its clip (kept, so their addresses stay theirs); every other stand-in hands over
-/// its pictures graded ([`GradedSource`]).
+/// its pictures graded ([`GradedSource`]), the clip `highlight` names in the Highlight view.
 struct Grading<'a> {
     inner: &'a dyn SourceProvider,
     stand_ins: &'a HashMap<ItemId, StandIn>,
     seen: Option<Seen>,
+    highlight: Option<Highlight>,
 }
 
 impl SourceProvider for Grading<'_> {
@@ -614,7 +618,15 @@ impl SourceProvider for Grading<'_> {
         let inner = self.inner.source(s.real)?;
         Some(match &self.seen {
             Some(seen) if s.in_shader => Arc::new(Tagged { inner, clip: s.clip, seen: seen.clone() }),
-            _ => Arc::new(GradedSource { inner, grade: s.grade.clone() }),
+            _ => Arc::new(GradedSource {
+                inner,
+                grade: s.grade.clone(),
+                // the Highlight view of a clip graded at its source (LOG D-062)
+                highlight: self
+                    .highlight
+                    .filter(|h| h.clip == s.clip.0)
+                    .map(|h| resolution_renderer::Highlight { node: h.node, black_white: h.black_white }),
+            }),
         })
     }
 }
@@ -625,6 +637,7 @@ impl SourceProvider for Grading<'_> {
 struct GradedSource {
     inner: SharedSource,
     grade: Arc<Grade>,
+    highlight: Option<resolution_renderer::Highlight>,
 }
 
 impl MediaSource for GradedSource {
@@ -633,7 +646,7 @@ impl MediaSource for GradedSource {
     }
     fn video_frame(&self, req: FrameRequest) -> filmcraft_media::Result<Arc<VideoFrame>> {
         let f = self.inner.video_frame(req)?;
-        Ok(graded_picture(&f, &self.grade).map_or(f, Arc::new))
+        Ok(graded_picture(&f, &self.grade, self.highlight).map_or(f, Arc::new))
     }
     fn audio(&self, start: i64, frames: usize, sample_rate: u32) -> filmcraft_media::Result<AudioBuffer> {
         self.inner.audio(start, frames, sample_rate)
@@ -649,10 +662,15 @@ impl MediaSource for GradedSource {
     }
 }
 
-/// `f` graded by `grade` on the GPU, the same size, linear light and premultiplied.
-fn graded_picture(f: &VideoFrame, grade: &Grade) -> Option<VideoFrame> {
+/// `f` graded by `grade` on the GPU (in the Highlight view with `highlight`), the same size,
+/// linear light and premultiplied.
+fn graded_picture(
+    f: &VideoFrame,
+    grade: &Grade,
+    highlight: Option<resolution_renderer::Highlight>,
+) -> Option<VideoFrame> {
     let gpu = renderer()?;
-    let l = layer(f, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 1.0, Some(grade))?;
+    let l = Layer { highlight, ..layer(f, [1.0, 0.0, 0.0, 1.0, 0.0, 0.0], 1.0, Some(grade))? };
     let px = gpu.lock().ok()?.render_linear((f.width, f.height), &[Step::Layers(vec![l])])?;
     Some(VideoFrame { par: f.par, pts: f.pts, ..VideoFrame::rgba_f32(f.width, f.height, px) })
 }
