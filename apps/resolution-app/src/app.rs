@@ -80,6 +80,8 @@ pub struct Options {
     pub palette: Option<String>,
     /// Start with the Primaries in Bars mode (`--bars`, for self-tests; LOG D-069).
     pub bars: bool,
+    /// Start with the Color page's Mini-Timeline open (`--mini-timeline`; LOG D-071).
+    pub mini_timeline: bool,
     /// Also write the action journal to this file, a line of JSON per start and end
     /// (`--journal`, LOG D-054).
     pub journal: Option<PathBuf>,
@@ -271,6 +273,7 @@ impl ResolutionApp {
                 c.highlight = options.highlight;
                 c.highlight_difference = options.highlight_difference;
                 c.bars = options.bars;
+                c.mini_timeline = options.mini_timeline;
                 if let Some((palette, curve)) = options.palette.as_deref().and_then(color_page::palette_of) {
                     c.palette = palette;
                     c.curve_mode = curve;
@@ -1696,9 +1699,47 @@ impl ResolutionApp {
                 ui.allocate_rect(rect, Sense::hover());
             });
         let clips = self.strip_clips();
-        egui::Panel::bottom("color-clips").exact_size(126.0).frame(fill(t.panel)).show(ui, |ui| {
+        // the Mini-Timeline above the clips, when it is open (LOG D-071)
+        let tracks = self.timeline.as_ref().map_or(0, |t| t.video.len());
+        let mini_h = if self.color.mini_timeline { color_page::mini_timeline_height(tracks) } else { 0.0 };
+        egui::Panel::bottom("color-clips").exact_size(126.0 + mini_h).frame(fill(t.panel)).show(ui, |ui| {
+            let rect = ui.max_rect();
+            let top = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + mini_h));
+            let side = Rect::from_min_max(pos2(rect.right() - 96.0, top.bottom()), rect.max);
+            let below = Rect::from_min_max(pos2(rect.left(), top.bottom()), pos2(side.left(), rect.bottom()));
+            if let (true, Some(tl)) = (self.color.mini_timeline, &self.timeline) {
+                let minis: Vec<color_page::MiniClip> = tl
+                    .video
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(k, tr)| {
+                        tr.clips.iter().map(move |c| color_page::MiniClip {
+                            id: c.id,
+                            track: k,
+                            start: c.start,
+                            end: c.end,
+                        })
+                    })
+                    .collect();
+                let playhead = tl.rate.seconds_of(self.playhead_frame());
+                asks.extend(color_page::mini_timeline(
+                    ui,
+                    &look,
+                    top,
+                    &minis,
+                    tracks,
+                    tl.duration,
+                    playhead,
+                    tl.rate,
+                    &self.color,
+                ));
+            }
             let playback = self.timeline_viewer.program.clone();
-            asks.extend(color_page::strip(ui, &look, &clips, &self.color, &mut self.thumbs, playback.as_ref()));
+            asks.extend(color_page::within(ui, below, |ui| {
+                color_page::strip(ui, &look, &clips, &self.color, &mut self.thumbs, playback.as_ref())
+            }));
+            color_page::within(ui, side, |ui| color_page::strip_buttons(ui, &look, side, &mut self.color));
+            ui.allocate_rect(rect, Sense::hover());
         });
         egui::Panel::right("color-nodes")
             .resizable(true)
@@ -2926,6 +2967,26 @@ mod tests {
         click(&mut h, "Yellow");
         pump(&mut h, "the yellow patch's points", |a| curve(a).0.iter().any(|p| (p[0] - 1.0 / 6.0).abs() < 1e-4));
         assert!(curve(h.state()).0.len() >= 5, "{:?}", curve(h.state()));
+    }
+
+    /// The Mini-Timeline (LOG D-071): closed at first, opened beside the clips; a click on it moves
+    /// the playhead there, and the clip graded follows it.
+    #[test]
+    fn the_mini_timeline_opens_and_moves_the_playhead() {
+        let mut h = on_color_page();
+        assert!(h.query_by_label("Mini-Timeline").is_none(), "closed at first");
+        click(&mut h, "Mini-Timeline on");
+        h.step();
+        let mini = h.get_by_label("Mini-Timeline").rect();
+        let first = h.state().color.clip;
+        click_at(&mut h, pos2(mini.left() + mini.width() * 0.75, mini.center().y));
+        let along =
+            |a: &ResolutionApp| a.timeline.as_ref().map_or(0.0, |t| t.rate.seconds_of(a.playhead_frame()) / t.duration);
+        pump(&mut h, "the playhead three quarters along", |a| (along(a) - 0.75).abs() < 0.02);
+        pump(&mut h, "another clip graded", |a| a.color.clip.is_some() && a.color.clip != first);
+        click(&mut h, "Mini-Timeline on");
+        h.step();
+        assert!(h.query_by_label("Mini-Timeline").is_none(), "closed again");
     }
 
     #[test]

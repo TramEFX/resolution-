@@ -49,6 +49,8 @@ pub struct ColorPage {
     pub curve_mode: CurveMode,
     /// The Primaries palette shows its wheels, or its bars (LOG D-067).
     pub bars: bool,
+    /// The Mini-Timeline is open above the clips (LOG D-071).
+    pub mini_timeline: bool,
     /// The clip and revision of the last `color.inspect` asked for.
     pub asked: Option<(u64, u64)>,
     /// A control is being dragged.
@@ -1070,6 +1072,93 @@ pub struct StripClip {
 }
 
 /// The clips of the timeline in order, each with a picture from its middle: click one to grade it.
+/// A clip as the Mini-Timeline draws it (LOG D-071): its video track (0 is V1) and its span in
+/// seconds.
+pub struct MiniClip {
+    pub id: u64,
+    pub track: usize,
+    pub start: f64,
+    pub end: f64,
+}
+
+/// The height of a Mini-Timeline track's row.
+const MINI_ROW: f32 = 12.0;
+
+/// The Mini-Timeline's height for `tracks` video tracks (LOG D-071).
+pub fn mini_timeline_height(tracks: usize) -> f32 {
+    12.0 + MINI_ROW * tracks.max(1) as f32
+}
+
+/// The Mini-Timeline (LOG D-071), as Resolve's Color page has it above the clips: the timeline's
+/// video tracks in `rect`, V1 at the bottom, each clip as long as it is, the clip being graded
+/// bright and the playhead a line. A click or a drag moves the playhead there.
+#[allow(clippy::too_many_arguments)]
+pub fn mini_timeline(
+    ui: &mut Ui,
+    look: &Look,
+    rect: Rect,
+    clips: &[MiniClip],
+    tracks: usize,
+    duration: f64,
+    playhead: f64,
+    rate: resolution_engine_api::Rate,
+    page: &ColorPage,
+) -> Vec<Ask> {
+    let mut asks = Vec::new();
+    let t = look.theme;
+    let area = rect.shrink2(vec2(8.0, 4.0));
+    let lanes = Rect::from_min_max(pos2(area.left() + 28.0, area.top()), area.max);
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, CornerRadius::ZERO, t.panel);
+    let length = duration.max(1e-6);
+    let x_of = |s: f64| lanes.left() + lanes.width() * (s / length).clamp(0.0, 1.0) as f32;
+    let row = |track: usize| {
+        let bottom = lanes.bottom() - MINI_ROW * track as f32;
+        Rect::from_min_max(pos2(lanes.left(), bottom - MINI_ROW + 1.0), pos2(lanes.right(), bottom - 1.0))
+    };
+    for k in 0..tracks.max(1) {
+        let lane = row(k);
+        painter.rect_filled(lane, CornerRadius::ZERO, t.field);
+        painter.text(
+            pos2(area.left(), lane.center().y),
+            Align2::LEFT_CENTER,
+            format!("V{}", k + 1),
+            look.small(),
+            t.dim,
+        );
+    }
+    for c in clips {
+        let lane = row(c.track);
+        // the Edit page's video colour, a point's gap at each cut
+        let (x0, x1) = (x_of(c.start), x_of(c.end));
+        let r = Rect::from_min_max(pos2(x0, lane.top()), pos2((x1 - 1.0).max(x0 + 1.0), lane.bottom()));
+        let current = page.clip == Some(c.id);
+        painter.rect_filled(r, CornerRadius::ZERO, if current { t.accent } else { t.video });
+    }
+    let x = x_of(playhead);
+    painter.line_segment([pos2(x, lanes.top() - 2.0), pos2(x, lanes.bottom())], Stroke::new(1.5, t.accent));
+    let r = ui.interact(lanes, ui.id().with("mini timeline"), Sense::click_and_drag());
+    name(&r, WidgetType::Slider, "Mini-Timeline");
+    if (r.clicked() || r.dragged())
+        && let Some(p) = r.interact_pointer_pos()
+    {
+        let s = f64::from(((p.x - lanes.left()) / lanes.width().max(1.0)).clamp(0.0, 1.0)) * length;
+        let frame = rate.frame_at(s);
+        if frame != rate.frame_at(playhead) {
+            asks.push(Ask::Seek(frame));
+        }
+    }
+    asks
+}
+
+/// The buttons beside the clips: the Mini-Timeline on and off (LOG D-071).
+pub fn strip_buttons(ui: &mut Ui, look: &Look, rect: Rect, page: &mut ColorPage) {
+    let b = Rect::from_min_size(rect.left_top() + vec2(6.0, 8.0), vec2(rect.width() - 14.0, look.skin.button));
+    if toggle(ui, look, b, "Timeline", "Mini-Timeline on", page.mini_timeline) {
+        page.mini_timeline = !page.mini_timeline;
+    }
+}
+
 pub fn strip(
     ui: &mut Ui,
     look: &Look,

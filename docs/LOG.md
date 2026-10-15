@@ -145,6 +145,7 @@ doc is updated *and* the entry says which section moved.
 | B-049 | 2026-10-15 | engine | Agents could not learn most of a node's controls: `color.adjust`'s description stopped at D-028 | fixed |
 | B-050 | 2026-10-15 | engine | A clip of another size than its timeline showed cropped at its own size, not fitted as in Resolve | fixed |
 | D-070 | 2026-10-15 | color | Highlight Difference: how far a node moves each pixel, drawn; its command waits on Truman | active (gain provisional; command proposed) |
+| D-071 | 2026-10-15 | color | The Color page's Mini-Timeline | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3951,3 +3952,35 @@ difference.
 - By eye on the second screen: the Sony clip with Hue vs Sat dipped at magenta and red gain 1.15.
   The skin, the pink lights and the light bar's edge show light, and the deep blue background
   dark.
+
+### D-071 — The Color page's Mini-Timeline
+**Area:** color · **Status:** active · **Doc:** `color_page.rs` (`mini_timeline`, `strip_buttons`);
+`app.rs` (`color_page`)
+
+**Decision:** Resolve's Color page has a Mini-Timeline, "a small representation of the Timeline
+in the Edit page wherein each clip is as long as its actual duration" (21.1 Reference Manual). It
+is hidden by default and opened with a button. Ours is the same:
+- **Opening it:** a Timeline button beside the clips opens the strip above them and closes it again.
+  It starts closed. `--mini-timeline` opens it for self-tests.
+- **What it draws:** each video track as a row, V1 at the bottom and named at the left. Each clip
+  is as long as it is, in the Edit page's video colour, with a point's gap at each cut. The clip
+  being graded is bright, and the playhead is a line.
+- **Using it:** a click or a drag moves the playhead there, and the clip graded follows it, as
+  everywhere on the page.
+
+It is the front end's own view, drawn from the timeline the editor already holds: no new
+commands.
+
+**Not as Resolve:** Resolve's opens from the toolbar at the top of the Color page, which ours does
+not have yet. No audio tracks, clip names or thumbnails in it.
+
+**Checked:**
+- UI test: closed at first; opened; a click three quarters along moves the playhead there, and
+  another clip is graded; closed again.
+- Mutation checks, each caught: the click mirrored, the button doing nothing, the strip never
+  drawn.
+- By eye on the second screen, with the rehearsal's timeline:
+  - the first version drew the clips not being graded in a colour too close to their row's, so
+    only the current clip showed;
+  - now in the video colour: V1's six clips with their cuts, V2's clip at 5 s, the graded clip
+    bright, and the playhead in it.
