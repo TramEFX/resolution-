@@ -5,7 +5,7 @@
 //!                [--mute] [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>]
 //!                [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>]
 //!                [--highlight grey|bw|diff] [--palette <name>] [--bars]
-//!                [--mini-timeline] [--journal <file.jsonl>]
+//!                [--mini-timeline] [--window-size <w,h>] [--journal <file.jsonl>]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
@@ -17,7 +17,8 @@
 //! quits; `--screenshot` saves the window as a PNG once a frame is on screen (after the play test,
 //! with both) and quits. `--window-at` puts the window's top left corner at that position, in
 //! the screens' own pixels as Windows lays them out (LOG D-049): self-tests go on a screen of
-//! their own, away from the user's. `--highlight` starts with the Color page's Highlight view on
+//! their own, away from the user's. `--window-size` makes the window that size, in points (at
+//! least 1000 × 640), to look at a smaller window. `--highlight` starts with the Color page's Highlight view on
 //! (LOG D-048), flat grey or black and white, or Highlight Difference (D-070), for self-tests of it. `--palette` opens a Color page
 //! palette (`curves`, `qualifier`, `window`, or a hue curve as `curves:hue_sat` and so on) and
 //! `--bars` the Primaries' Bars mode, and `--mini-timeline` the Mini-Timeline, for self-tests of them
@@ -40,7 +41,7 @@ mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw|diff] [--palette <name>] [--bars] [--mini-timeline] [--journal <file>]";
+                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw|diff] [--palette <name>] [--bars] [--mini-timeline] [--window-size <w,h>] [--journal <file>]";
 
 fn options() -> Result<(app::Options, bool, bool), String> {
     let mut o = app::Options::default();
@@ -63,6 +64,11 @@ fn options() -> Result<(app::Options, bool, bool), String> {
             "--page" => o.page = Some(value("--page")?),
             "--screenshot" => o.screenshot = Some(value("--screenshot")?.into()),
             "--window-at" => o.window_at = Some(position(&value("--window-at")?)?),
+            "--window-size" => {
+                let text = value("--window-size")?;
+                let [w, h] = position(&text).map_err(|_| format!("--window-size: `{text}` is not w,h"))?;
+                o.window_size = Some([w.max(1000.0), h.max(640.0)]);
+            }
             "--journal" => o.journal = Some(value("--journal")?.into()),
             "--highlight" => {
                 o.highlight = Some(match value("--highlight")?.as_str() {
@@ -125,7 +131,7 @@ fn main() -> eframe::Result {
             .with_inner_size([1600.0, 920.0])
             .with_min_inner_size([1000.0, 640.0]),
         // a window put somewhere on purpose is not kept there for next time
-        persist_window: options.window_at.is_none(),
+        persist_window: options.window_at.is_none() && options.window_size.is_none(),
         ..Default::default()
     };
     eframe::run_native("Resolution", native, Box::new(move |cc| Ok(Box::new(app::ResolutionApp::new(cc, options)))))

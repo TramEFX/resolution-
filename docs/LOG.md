@@ -159,6 +159,7 @@ doc is updated *and* the entry says which section moved.
 | D-076 | 2026-10-15 | tests | The Edit page's tools rehearsed in a row | active |
 | B-057 | 2026-10-15 | ui | B-056's fix let go of the new window too early, one run in seven | fixed |
 | D-077 | 2026-10-15 | engine | Thumbnails show each clip on its own | active |
+| B-058 | 2026-10-15 | ui | On a laptop's screen the Color page's viewer was squeezed and the scope buttons ran over the Curves palette | fixed (the 1000 × 640 minimum still cramped) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4268,3 +4269,34 @@ made once per clip and change.
   and differs from the two together. With the hint ignored it fails.
 - By eye: the strip's V2 cutaway, and its head on the timeline, show the portrait clip alone
   between black bars.
+
+### B-058 — On a laptop's screen the Color page's viewer was squeezed and the scope buttons ran over the Curves palette
+**Area:** ui · **Status:** fixed at 1366 × 768; the 1000 × 640 minimum is still cramped ·
+**Caught by:** screenshots at smaller window sizes on the second screen, with a new self-test flag,
+`--window-size w,h`
+
+**Symptom:**
+- **At 1366 × 768:** the viewer's picture was 77 points tall. The palettes, a fixed 340 points, and
+  the clip strip took the rest. The scopes' four buttons, right-aligned and wider than their panel,
+  ran left over the Curves palette's menu.
+- **At the minimum, 1000 × 640:** the viewer was all but gone. The Primaries' names ran into their
+  values ("Contras1.000"), and the wheels' YRGB numbers ran together.
+
+**Cause:** the palettes started at a fixed height whatever the window's, and the scopes' buttons
+had no form for a narrow panel.
+
+**Fix:**
+- The palettes start at two fifths of the window's height, between 220 and 340 points; they are
+  still resizable.
+- When the four scope buttons do not fit, the scopes header is one menu named for the scope shown.
+- `--window-size` makes the window that size on its first frame, as `--window-at` moves it
+  (D-049): eframe would otherwise restore the size it last saved.
+
+**Still not right:** at 1000 × 640 the Primaries' numbers and the page's height. The minimum
+window could be raised, or the Primaries made compact; for later.
+
+**Checked:**
+- UI test at 1366 × 768: the viewer's picture is 162 points tall (77 with the fixed 340), and the
+  scopes' menu is clear of the Curves menu. Each part, undone, fails it.
+- Screenshots of a stored session open with the user's own palette height, which a default does
+  not change.
