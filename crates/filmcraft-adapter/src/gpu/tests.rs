@@ -228,6 +228,51 @@ fn a_graded_clip_with_other_effects_is_graded_at_its_source() {
     agrees(&e, "the same media on V1, its own grade");
 }
 
+/// The Highlight view of a clip graded at its source (LOG D-062): V2's Misty Forest, under its
+/// drop shadow, in black and white. Its node has no key, so it keys everything: every pixel the
+/// highlight changes is white, drawn on the GPU and by FilmCraft's own renderer alike.
+#[test]
+fn a_clip_graded_at_its_source_shows_in_the_highlight_view() {
+    if renderer().is_none() {
+        return;
+    }
+    let mut e = demo();
+    grade_at(&mut e, 7.0, warm());
+    let s = &e.session;
+    let seq = s.state.active_sequence.unwrap();
+    let clip = s.project.sequence(seq).unwrap().video_tracks[1].items[0].id;
+    let graded = Graded::of(&s.project, seq);
+    assert!(graded.stand_ins.values().any(|st| st.clip == clip && !st.in_shader), "graded at its source");
+    let highlight = Some(resolution_engine_api::Highlight { clip: clip.0, node: 0, black_white: true });
+    let t = s.playhead();
+    let opts = RenderOptions { scale: 960.0 / 1920.0, captions: true, ..Default::default() };
+    let provider = s.media.provider(s.project.clone(), s.services.clone());
+    let pixels = |img: Image| Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8());
+    let frames = [
+        (
+            "the GPU's",
+            graded.render(seq, t, opts, &provider, false, None).unwrap(),
+            graded.render(seq, t, opts, &provider, false, highlight).unwrap(),
+        ),
+        (
+            "FilmCraft's",
+            pixels(graded.render_cpu(seq, t, opts, &provider, None).unwrap()),
+            pixels(graded.render_cpu(seq, t, opts, &provider, highlight).unwrap()),
+        ),
+    ];
+    for (what, plain, lit) in frames {
+        let changed: Vec<(&[u8], &[u8])> = plain
+            .rgba
+            .chunks(4)
+            .zip(lit.rgba.chunks(4))
+            .filter(|(a, b)| (0..3).any(|k| a[k].abs_diff(b[k]) > 20))
+            .collect();
+        assert!(changed.len() > 1000, "{what}: the highlight changed {} pixels", changed.len());
+        let white = changed.iter().filter(|(_, b)| b[..3].iter().all(|v| *v > 240)).count();
+        assert!(white * 10 >= changed.len() * 9, "{what}: {white} of {} changed pixels white", changed.len());
+    }
+}
+
 #[test]
 fn a_clip_with_a_lumetri_of_its_own_is_drawn_as_filmcraft_draws_it() {
     let mut e = demo();
@@ -557,7 +602,7 @@ fn cpu_frame(e: &FilmCraftEngine, seq: ItemId, t: f64) -> Frame {
     let opts = RenderOptions { scale: 0.5, captions: true, ..Default::default() };
     let tk = Tick::from_seconds_f64(t);
     let img = Graded::of(&s.project, seq)
-        .render_cpu(seq, tk, opts, &provider)
+        .render_cpu(seq, tk, opts, &provider, None)
         .unwrap_or_else(|| render_sequence(&s.project, seq, tk, opts, &provider));
     Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8())
 }
