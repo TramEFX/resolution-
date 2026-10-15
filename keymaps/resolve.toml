@@ -3,13 +3,15 @@
 # Key notation: `Mod` = Cmd on macOS, Ctrl on Windows/Linux. `Alt` = Option on macOS.
 # Key assignments are functional facts about how Resolve is operated; no Blackmagic files are used.
 #
-# STATUS: seed table. Every entry must be checked against Resolve's own default map
-# (DaVinci Resolve > Keyboard Customization, "DaVinci Resolve" preset) before 1.0.
-# Mark an entry `verified = true` once it has been checked on a real Resolve install.
+# STATUS: `verified = true` marks a key the DaVinci Resolve 21.1 Reference Manual gives for that
+# action (checked 2026-10-14, LOG D-051). The rest are still to check in a real install's
+# Keyboard Customization ("DaVinci Resolve" preset): the page keys (the manual says Shift-2 to
+# Shift-8 in page order but its list did not survive extraction), Mod+B (the manual gives it as
+# Razor, which cuts at the playhead as Split does) and Shift+Backspace (not in the manual).
 
 [meta]
 name = "DaVinci Resolve"
-resolve_version = "20"
+resolve_version = "21.1"
 
 # ---- pages ----
 [[bind]]
@@ -38,140 +40,183 @@ command = "page.deliver"
 [[bind]]
 keys = "Mod+Z"
 command = "edit.undo"
+verified = true
 [[bind]]
 keys = "Mod+Shift+Z"
 command = "edit.redo"
+verified = true
 [[bind]]
 keys = "Mod+X"
 command = "edit.cut"
+verified = true
 [[bind]]
 keys = "Mod+C"
 command = "edit.copy"
+verified = true
 [[bind]]
 keys = "Mod+V"
 command = "edit.paste"
+verified = true
 [[bind]]
 keys = "Mod+Shift+V"
 command = "edit.pasteInsert"
+verified = true
 [[bind]]
 keys = "Alt+V"
 command = "edit.pasteAttributes"
+verified = true
 [[bind]]
 keys = "Mod+A"
 command = "edit.selectAll"
+verified = true
 [[bind]]
 keys = "Mod+Shift+A"
 command = "edit.deselectAll"
+verified = true
 [[bind]]
 keys = "Mod+S"
 command = "project.save"
+verified = true
 [[bind]]
 keys = "Mod+I"
 command = "media.import"
+verified = true
 
 # ---- transport ----
 [[bind]]
 keys = "Space"
 command = "playback.playStop"
+verified = true
 [[bind]]
 keys = "J"
 command = "playback.reverse"
+verified = true
 [[bind]]
 keys = "K"
 command = "playback.stop"
+verified = true
 [[bind]]
 keys = "L"
 command = "playback.forward"
+verified = true
 [[bind]]
 keys = "Mod+/"
 command = "playback.loop"
+verified = true
 [[bind]]
 keys = "Alt+/"
 command = "playback.inToOut"
+verified = true
 [[bind]]
 keys = "Left"
 command = "playhead.previousFrame"
+verified = true
 [[bind]]
 keys = "Right"
 command = "playhead.nextFrame"
+verified = true
 [[bind]]
 keys = "Up"
 command = "playhead.previousEdit"
+verified = true
 [[bind]]
 keys = "Down"
 command = "playhead.nextEdit"
+verified = true
 [[bind]]
 keys = "Home"
 command = "playhead.timelineStart"
+verified = true
 [[bind]]
 keys = "End"
 command = "playhead.timelineEnd"
+verified = true
 
 # ---- marking ----
 [[bind]]
 keys = "I"
 command = "mark.in"
+verified = true
 [[bind]]
 keys = "O"
 command = "mark.out"
+verified = true
 [[bind]]
 keys = "X"
 command = "mark.clip"
+verified = true
 [[bind]]
 keys = "Alt+I"
 command = "mark.clearIn"
+verified = true
 [[bind]]
 keys = "Alt+O"
 command = "mark.clearOut"
+verified = true
 [[bind]]
 keys = "Alt+X"
 command = "mark.clearInOut"
+verified = true
 [[bind]]
 keys = "M"
 command = "marker.add"
+verified = true
 [[bind]]
 keys = "Shift+Down"
 command = "marker.next"
+verified = true
 [[bind]]
 keys = "Shift+Up"
 command = "marker.previous"
+verified = true
 
 # ---- edit modes ----
 [[bind]]
 keys = "A"
 command = "mode.selection"
+verified = true
 [[bind]]
 keys = "T"
 command = "mode.trim"
+verified = true
 [[bind]]
 keys = "B"
 command = "mode.blade"
+verified = true
 [[bind]]
 keys = "W"
 command = "mode.dynamicTrim"
+verified = true
 
 # ---- source → timeline edits ----
 [[bind]]
 keys = "F9"
 command = "edit.insert"
+verified = true
 [[bind]]
 keys = "F10"
 command = "edit.overwrite"
+verified = true
 [[bind]]
 keys = "F11"
 command = "edit.replace"
+verified = true
 [[bind]]
 keys = "F12"
 command = "edit.placeOnTop"
+verified = true
 [[bind]]
 keys = "Shift+F10"
 command = "edit.rippleOverwrite"
+verified = true
 [[bind]]
 keys = "Shift+F11"
 command = "edit.fitToFill"
+verified = true
 [[bind]]
 keys = "Shift+F12"
 command = "edit.appendAtEnd"
+verified = true
 
 # ---- timeline ----
 [[bind]]
@@ -180,91 +225,117 @@ command = "timeline.split"
 [[bind]]
 keys = "Mod+\\"
 command = "timeline.split"
+verified = true
 [[bind]]
 keys = "Backspace"
 command = "timeline.delete"
+verified = true
 [[bind]]
 keys = "Shift+Backspace"
 command = "timeline.rippleDelete"
 [[bind]]
 keys = "Delete"
 command = "timeline.rippleDelete"
+verified = true
 [[bind]]
 keys = "Mod+Shift+["
 command = "timeline.rippleStartToPlayhead"
+verified = true
 [[bind]]
 keys = "Mod+Shift+]"
 command = "timeline.rippleEndToPlayhead"
+verified = true
 [[bind]]
 keys = "D"
 command = "timeline.toggleClipEnable"
+verified = true
 [[bind]]
 keys = "F"
 command = "timeline.matchFrame"
+verified = true
 [[bind]]
 keys = "Mod+T"
 command = "timeline.addTransition"
-[[bind]]
-keys = "Shift+T"
-command = "timeline.addVideoTransition"
+verified = true
 [[bind]]
 keys = "Alt+T"
+command = "timeline.addVideoTransition"
+verified = true
+[[bind]]
+keys = "Shift+T"
 command = "timeline.addAudioTransition"
+verified = true
 [[bind]]
 keys = "N"
 command = "timeline.snapping"
+verified = true
 [[bind]]
 keys = "Mod+Shift+L"
 command = "timeline.linkedSelection"
+verified = true
 
 # ---- view ----
 [[bind]]
 keys = "Mod+="
 command = "view.zoomIn"
+verified = true
 [[bind]]
 keys = "Mod+-"
 command = "view.zoomOut"
+verified = true
 [[bind]]
 keys = "Shift+Z"
 command = "view.zoomToFit"
+verified = true
 
 # ---- viewers ----
 # Q toggles keyboard focus between the source and timeline viewers (Reference Manual p. 795).
 [[bind]]
 keys = "Q"
 command = "view.toggleViewer"
+verified = true
 
 # File > New Timeline (Command-N in the Reference Manual, p. 839).
 [[bind]]
 keys = "Mod+N"
 command = "timeline.new"
+verified = true
 
 # ---- the Color page's nodes (Reference Manual, "Node Editing Basics": Option is Alt here) ----
 [[bind]]
 keys = "Alt+S"
 command = "color.addSerialNode"
+verified = true
 [[bind]]
 keys = "Shift+S"
 command = "color.addNodeBefore"
+verified = true
 [[bind]]
 keys = "Alt+K"
 command = "color.appendNode"
+verified = true
 [[bind]]
 keys = "Mod+D"
 command = "color.toggleNodes"
+verified = true
 [[bind]]
 keys = "Alt+D"
 command = "color.toggleAllNodes"
+verified = true
 [[bind]]
 keys = "Alt+Shift+;"
 command = "color.previousNode"
+verified = true
 [[bind]]
 keys = "Alt+Shift+'"
 command = "color.nextNode"
+verified = true
 # the Highlight view (Reference Manual, "Using Highlight to See What You're Isolating")
 [[bind]]
 keys = "Shift+H"
 command = "color.highlight"
+verified = true
 [[bind]]
 keys = "Alt+Shift+H"
 command = "color.highlightBW"
+verified = true

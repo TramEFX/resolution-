@@ -113,6 +113,8 @@ doc is updated *and* the entry says which section moved.
 | D-048 | 2026-10-14 | color | The Highlight view: a front-end viewer option, drawn by the GPU's grade stage | active |
 | D-049 | 2026-10-14 | tools | `--window-at`: the editor's self-tests open on a screen of their own | active |
 | D-050 | 2026-10-14 | tools | `--highlight` self-test flag; the Highlight view, matte finesse and Sat vs Lum seen by eye on the Sony clip | active |
+| B-039 | 2026-10-14 | ui | The keymap had Add Video Only and Add Audio Only Transition on each other's keys | fixed |
+| D-051 | 2026-10-14 | ui | The keymap checked against the 21.1 Reference Manual: 69 of 78 bindings confirmed | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2856,3 +2858,54 @@ as `Qualifier::picked` makes it), each screenshot at the Color page's viewer siz
   light bar, near white and so less saturated, stays bright. The pink on the arm darkens a little.
 - Nothing looked wrong. Not compared with Resolve itself.
 
+### B-039 — The keymap had Add Video Only and Add Audio Only Transition on each other's keys
+**Area:** ui · **Status:** fixed · **Caught by:** review, checking the keymap against the
+Reference Manual (D-051)
+
+**Symptom:** Shift+T added a video-only transition and Alt+T an audio-only one.
+
+**Cause:** the seed keymap (D-017) had them the wrong way round. The manual's Edit page chapter on
+transitions gives Option-T (Alt+T here) for video only and Shift-T for audio only.
+
+**Fix:** swapped in `keymaps/resolve.toml`, both marked verified.
+
+### D-051 — The keymap checked against the 21.1 Reference Manual: 69 of 78 bindings confirmed
+**Area:** ui · **Status:** active · **Doc:** `keymaps/resolve.toml` (its header); HANDOFF §4
+
+**Decision:** `verified = true` now marks a key the DaVinci Resolve 21.1 Reference Manual gives
+for that action. The header said a real install; HANDOFF's step was the manual first, then the
+install for what the manual leaves out (D-017). `resolve_version` is now 21.1.
+
+**How:** a subagent read the manual's text (`target/resolve-manual/manual.txt`) for each of the
+78 bindings and reported each one with line numbers. Nothing was copied into the repo. I checked
+its two discrepancies and a sample of its confirmations against the text myself (transitions,
+the Color page's node keys, Delete and Forward Delete, Split).
+
+**Result:**
+- 67 confirmed as they were, and the two transition keys once swapped (B-039): 69 verified.
+- Not settled by the manual, so not verified:
+  - the page keys Shift+2 to Shift+8: the manual says Shift and the page's number in page order,
+    but its list did not survive extraction, and 21.1 adds a Photo page whose key it doesn't give;
+  - Mod+B: the manual gives Command-B as Razor (in the Fairlight chapter), which cuts at the
+    playhead as Split Clip (`Mod+\`, verified) does;
+  - Shift+Backspace for ripple delete: not in the manual.
+
+**Found on the way:**
+- **The keymap is not page-scoped,** but Resolve's is. Shift+S is Add Before Current on the
+  Color page and Audio Scrubbing on the Edit page; Alt+K, Mod+D and Mod+T differ the same way.
+  Today each key has one binding and the Color page's commands act only on that page, so nothing
+  clashes yet. The Edit page's meanings of these keys need page-scoped bindings first. That is a
+  change to the keymap's format, left for Truman to decide.
+- **Keys the manual gives that have no command yet:**
+  - Shift+I and Shift+O, go to In and Out;
+  - Shift+Left and Shift+Right, a second at a time;
+  - V and Shift+V, select the nearest edit or the clip at the playhead;
+  - comma and period, nudge;
+  - Shift+[ and Shift+], trim to the playhead;
+  - E, extend the edit;
+  - Mod+Shift+X, ripple cut;
+  - Mod+M, Shift+M and Alt+M, markers;
+  - Shift+J, Shift+K and Shift+L, play speeds;
+  - Alt+1 to 8, destination tracks.
+
+  Each needs a new vocabulary id first.
