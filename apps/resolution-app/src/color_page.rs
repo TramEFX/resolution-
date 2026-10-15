@@ -106,6 +106,12 @@ impl ColorPage {
             Some(_) => {}
             None => self.node = self.node.min(len.saturating_sub(1)),
         }
+        // the window added is in the engine's grade: it need be held no longer (LOG B-056)
+        if let Some((node, w)) = self.new_window
+            && v.grade.nodes.get(node).is_some_and(|n| n.windows.len() > w)
+        {
+            self.new_window = None;
+        }
         self.view = Some(v);
     }
 
@@ -1722,8 +1728,9 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     let Some(node) = page.current().cloned() else { return asks };
     let mut wins = node.windows.clone();
     match page.new_window {
-        // a grade from before the window added: it stays chosen
-        Some((node, w)) if node == page.node && w >= wins.len() => {}
+        // the window added stays chosen until a grade from the engine has it (`take`): the grade
+        // shown here has it at once, patched locally, and answers from before it can still come
+        Some((node, _)) if node == page.node => {}
         _ => {
             page.new_window = None;
             page.window = page.window.min(wins.len().saturating_sub(1));

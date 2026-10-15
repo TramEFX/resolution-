@@ -156,6 +156,8 @@ doc is updated *and* the entry says which section moved.
 | D-075 | 2026-10-15 | tests | A short grade rehearsed through the Color page's keys and mouse | active |
 | B-055 | 2026-10-15 | ui | Alt+S right after a change left the old node current | fixed |
 | B-056 | 2026-10-15 | ui | A window added right after a change left the old window chosen | fixed |
+| D-076 | 2026-10-15 | tests | The Edit page's tools rehearsed in a row | active |
+| B-057 | 2026-10-15 | ui | B-056's fix let go of the new window too early, one run in seven | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4206,3 +4208,38 @@ arrive. A grade that has it, another node, or a failed adjustment lets the palet
 **Checked:** the UI test (a Size drag, then Add Linear at once: window 2 is chosen) passes three in
 three; before, it failed three in three. Curve points need nothing: a point index is checked
 against the curve before use.
+
+### D-076 — The Edit page's tools rehearsed in a row
+**Area:** tests · **Status:** active · **Doc:** `app.rs` (`the_edit_pages_tools_in_a_row`)
+
+**Decision:** after D-075 found B-055, the Edit page's tools get the same treatment, chained in one
+UI test:
+- M at two places, among the demo's own markers;
+- Shift+Up and Shift+Down between them;
+- a clip clicked, then D to turn it off and on;
+- B and a click to cut it;
+- A for the selection tool;
+- Ctrl+Z back through all of it.
+
+It found no bug in the editor. One lesson for the tests: egui_kittest takes a key press at the next
+step. A key pressed just before a command sent straight to the engine (`worker.run`) is seen
+after it. So the first draft's marker landed where the second's playhead was.
+
+**Checked:** with Shift+Up mapped to the next marker, the test fails.
+
+### B-057 — B-056's fix let go of the new window too early, one run in seven
+**Area:** ui · **Status:** fixed · **Caught by:** B-056's UI test, failing in about one full run of
+the app's tests in seven. Debug output tagged by test thread found why.
+
+**Symptom:** as B-056, now and then. Window 2 was added but window 1 ended chosen.
+
+**Cause:** an adjustment patches the grade on show at once, before the engine answers
+(`ColorPage::adjust`). So the frame after Add showed two windows, and B-056's fix took that as the
+window having arrived and let go of it. The Size drag's answers, from before the add, then put
+back a one-window grade, and the palette clamped the choice to window 1.
+
+**Fix:** the window added is held until a grade from the engine has it (`ColorPage::take`). The
+grade the palette shows is not asked. A switch to another node, or a failed adjustment, still lets
+go of it. Nodes need no such care: adding one does not patch the grade on show.
+
+**Checked:** eight full runs of the app's tests, every one passing.
