@@ -450,3 +450,46 @@ fn a_qualified_nodes_lut_follows_its_math() {
     assert!(pct(0.99) <= 3.0, "99 % within three code values: {}", pct(0.99));
     assert!(pct(1.0) <= 8.0, "none more than eight off: {}", pct(1.0));
 }
+
+/// A grade's Lumetri effects read back from a saved project as exactly what it compiles to (LOG
+/// B-046). Parsed with serde_json's default float reading, their numbers came back a unit in the
+/// last place off, and every windowed clip looked foreign after reopening: its copies, split after
+/// that, lost their grade.
+#[test]
+fn a_saved_grade_reads_back_as_its_own_after_reopening() {
+    let dir = std::env::temp_dir().join(format!("resolution-b046-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("graded.fcproj").to_string_lossy().into_owned();
+    let mut e = demo();
+    // windows whose masks' numbers are long fractions: softnesses, turns and corners
+    let windows: Vec<Value> = (0..8)
+        .map(|i| {
+            let shape = if i % 2 == 0 { Shape::Linear } else { Shape::Polygon };
+            let mut w = serde_json::to_value(Window::new(shape)).unwrap();
+            w["softness"] = json!(0.013 + 0.0071 * i as f32);
+            w["rotation"] = json!(7.3 * i as f32);
+            if shape == Shape::Polygon {
+                w["points"] = json!([[0.0, -1.0], [0.93, 0.71], [-0.87, 0.77]]);
+            }
+            w
+        })
+        .collect();
+    adjust(&mut e, json!({"gain": {"y": 1.13}, "windows": windows}));
+    let before = e.execute("color.inspect", json!({})).unwrap().result;
+    assert_eq!(before["foreign"], false);
+    e.execute("project.saveAs", json!({ "path": path })).unwrap();
+    let mut f = FilmCraftEngine::new();
+    f.execute("project.open", json!({ "path": path })).unwrap();
+    f.execute("playhead.set", json!({"seconds": 2.0})).unwrap();
+    let after = f.execute("color.inspect", json!({})).unwrap().result;
+    assert_eq!(after["foreign"], false, "the grade's own effects, read back");
+    assert_eq!(after["nodes"], before["nodes"]);
+    // a copy split off after reopening takes the grade too
+    f.execute("playhead.set", json!({"seconds": 2.5})).unwrap();
+    f.execute("timeline.split", json!({})).unwrap();
+    f.execute("playhead.set", json!({"seconds": 2.7})).unwrap();
+    let copy = f.execute("color.inspect", json!({})).unwrap().result;
+    assert_ne!(copy["clip"], after["clip"], "the copy");
+    assert_eq!((&copy["foreign"], &copy["nodes"]), (&json!(false), &before["nodes"]));
+    let _ = std::fs::remove_dir_all(&dir);
+}

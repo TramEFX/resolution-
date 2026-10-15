@@ -3172,7 +3172,8 @@ mod tests {
             let n = node(a);
             !a.color.dragging && n.shadows > 5.0 && n.highlights < -5.0 && n.midtone_detail > 5.0
         });
-        assert!(graded_clip(h.state()).is_some_and(|c| c.graded));
+        // the timeline's view of the clip comes in its own answer, after the grade's (LOG B-047)
+        pump(&mut h, "the clip marked graded", |a| graded_clip(a).is_some_and(|c| c.graded));
     }
 
     #[test]
