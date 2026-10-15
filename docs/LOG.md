@@ -129,6 +129,7 @@ doc is updated *and* the entry says which section moved.
 | D-061 | 2026-10-15 | color | The Curve window: a closed Catmull-Rom curve through its points | active (format with D-053's, provisional) |
 | D-062 | 2026-10-15 | color | The Highlight view for clips graded at their source, and frames FilmCraft draws itself | active |
 | B-042 | 2026-10-15 | ui | The timeline did not show transitions | fixed |
+| D-063 | 2026-10-15 | color | Inside and Outside Softness for Polygon and Curve windows | active (field names provisional) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3360,3 +3361,45 @@ with AAC sound, as long as the timeline. Only the missing transitions turned up.
 
 **Checked:** UI test: the demo's four V1 transitions in the model, the dissolve at 4.46 to 5.46 s.
 By eye: the demo's transitions on V1 and its audio crossfade on A1, the clips' names readable.
+
+### D-063 — Inside and Outside Softness for Polygon and Curve windows
+**Area:** color · **Status:** active; the two field names are provisional, for Truman's review ·
+**Doc:** `crates/grade` (`Window::edge_softness`); `crates/renderer` (`grade_data`, `coverage`);
+`color.rs` (`mask`); `color_page.rs` (`window_fields`, the soft handle)
+
+**Decision:** a Polygon's or a Curve's soft edge has two widths, as in Resolve: how far it reaches
+into the shape (Inside Soft) and how far out of it (Outside Soft). Before, it had one softness,
+centred on the edge.
+
+- **In the grade:** a window gains `inside_softness` and `outside_softness`, fractions of the
+  picture's width like `softness`. Each is optional and written only when set. Without one, it is
+  half the softness, so every window stored before draws as it did.
+- **Other shapes:** a Linear, Circle or Gradient window keeps its one softness. Its two fields are
+  dropped when it is loaded.
+- **On the GPU:** the polygon path puts the two widths in the window slot's size floats (o+3 and
+  o+4), which its corners make unused. The ramp runs from full at the inside width to none at the
+  outside width; with both zero, it is hard.
+- **In the compile:** FilmCraft's feather is centred on the edge, so it takes the sum of the two.
+  Its expansion moves the centre out by half the outside width less half the inside width.
+- **In the palette:** a Polygon or Curve shows Inside Soft and Outside Soft in place of Softness
+  (two rows of four numbers). The soft handle below the window shows the Outside Soft and sets it.
+
+**Provisional:** the field names are an addition to the grade's JSON. Optional fields are cheap
+to rename now (a serde alias keeps old files loading) and harder once projects carry them.
+
+**Not as Resolve:** the numbers are in percent of the picture's width, not Resolve's scale. There
+is no handle for the Inside Soft; it is set by its number.
+
+**Checked:**
+- Grade test: half the softness each way by default; not written until set; one set leaves the
+  other at half; kept in range on a node; dropped from a circle.
+- Renderer test: a square 20 pixels soft all outside is black to its edge, half at 10 pixels out
+  and untouched from 20; all inside, the mirror of that.
+- The compile: the feather and expansion of both widths, either way round.
+- The GPU against the compile, a five-point polygon soft all outside and all inside: mean 0.78
+  and 0.65 code values, 99 % within 14 and 17. They differ along the ramp as soft Gradients do
+  (B-040). With the compile's ramp left centred on the edge, it is 5.0 and 74.
+- UI test: the palette's fields for each shape; the two fields set the window's own; the soft
+  handle sits at the Outside Soft and dragged lower reaches further, the rest kept.
+- Mutation checks: each test fails with its part broken (defaults, clamping, the shader's ramp,
+  the widths swapped, the expansion reversed, the handle, the fields).

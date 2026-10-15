@@ -122,6 +122,28 @@ fn a_polygon_draws_on_the_gpu_as_its_compiled_mask_does() {
     assert!(mean < 1.0 && p99 <= 3.0, "mean {mean}, 99% {p99}");
 }
 
+/// A Polygon's Inside and Outside Softness (LOG D-063) on the GPU against its compiled mask: a
+/// soft edge all outside, and all inside. They differ along the ramp as soft Gradients do (B-040),
+/// but the ramp is in the same place.
+#[test]
+fn a_polygons_inside_and_outside_softness_draw_as_their_compiled_mask_does() {
+    for (inside, outside) in [(0.0, 0.06), (0.06, 0.0)] {
+        let mut e = demo();
+        let mut polygon =
+            serde_json::to_value(resolution_grade::Window::new(resolution_grade::Shape::Polygon)).unwrap();
+        polygon["inside_softness"] = json!(inside);
+        polygon["outside_softness"] = json!(outside);
+        polygon["points"] = json!([[0.0, -1.0], [1.2, 0.3], [0.4, 1.0], [-1.0, 0.8], [-0.6, -0.2]]);
+        adjust(&mut e, json!({"gain": {"y": 0.4}, "windows": [polygon]}));
+        let Some((gpu, cpu)) = both(&e) else { return };
+        let (mean, p99) = differ(&gpu, &cpu);
+        // measured 2026-10-15: mean 0.78 and 99 % 14 all outside, 0.65 and 17 all inside; the
+        // ramp left centred on the edge (no expansion) is 5.0 and 74, and 3.4 and 61
+        eprintln!("polygon, inside {inside} and outside {outside}: mean {mean:.2}, 99% {p99:.1} code values");
+        assert!(mean < 1.5 && p99 <= 25.0, "inside {inside}, outside {outside}: mean {mean}, 99% {p99}");
+    }
+}
+
 /// A Curve window (LOG D-061), turned, on the GPU against its compiled mask: the same Bézier spans.
 #[test]
 fn a_curve_draws_on_the_gpu_as_its_compiled_mask_does() {

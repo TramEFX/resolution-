@@ -570,6 +570,37 @@ fn a_polygon_window_keeps_three_to_128_corners_and_other_shapes_none() {
     assert!(window(json!([[0.0, -1.0], [1.0, 1.0], [-1.0, 1.0]]), "circle").points.is_empty());
 }
 
+/// Inside and Outside Softness (LOG D-063): a Polygon's or a Curve's own, else half the softness
+/// each way; written only when set, and dropped from the other shapes.
+#[test]
+fn inside_and_outside_softness_default_to_half_the_softness_each_way() {
+    let w = Window::new(Shape::Polygon);
+    assert_eq!(w.edge_softness(), (w.softness / 2.0, w.softness / 2.0));
+    let j = serde_json::to_value(&w).unwrap();
+    assert!(j.get("inside_softness").is_none() && j.get("outside_softness").is_none(), "{j}");
+    let own = Window { inside_softness: Some(0.0), outside_softness: Some(0.3), ..w.clone() };
+    assert_eq!(own.edge_softness(), (0.0, 0.3));
+    let j = serde_json::to_value(&own).unwrap();
+    assert_eq!(serde_json::from_value::<Window>(j.clone()).unwrap(), own);
+    // only one of them: the other is still half the softness
+    let one = Window { outside_softness: Some(0.3), ..w.clone() };
+    assert_eq!(one.edge_softness(), (w.softness / 2.0, 0.3));
+    // on a node: kept in range, and a circle has none
+    let window = |shape: &str| {
+        let mut j = j.clone();
+        j["shape"] = json!(shape);
+        j["inside_softness"] = json!(-1.0);
+        j["outside_softness"] = json!(3.0);
+        node(json!({ "windows": [j] })).windows[0].clone()
+    };
+    for shape in ["polygon", "curve"] {
+        assert_eq!(window(shape).edge_softness(), (0.0, 1.0), "{shape}");
+    }
+    let circle = window("circle");
+    assert_eq!((circle.inside_softness, circle.outside_softness), (None, None));
+    assert_eq!(circle.edge_softness(), (circle.softness / 2.0, circle.softness / 2.0));
+}
+
 #[test]
 fn shadows_and_highlights_move_the_ends_and_keep_black_white_and_mid_grey() {
     let ramp: Vec<f32> = (0..=200).map(|i| i as f32 / 200.0).collect();
