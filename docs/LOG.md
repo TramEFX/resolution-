@@ -152,6 +152,7 @@ doc is updated *and* the entry says which section moved.
 | B-053 | 2026-10-15 | ui | Self-test runs saved their layout into the user's editor | fixed |
 | B-054 | 2026-10-15 | ui | Nodes past the fourth ran off the Node Editor's edge | fixed |
 | D-073 | 2026-10-15 | ui | The timeline's video clips show the picture at their head | active (Resolve's default view unchecked) |
+| D-074 | 2026-10-15 | ui | Keys for the node resets and Save Project As | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4124,3 +4125,23 @@ still rendering.
   checks: not asked again on a move, and never asked for, each caught.
 - By eye on the second screen, the rehearsal's timeline: each clip's head under its name, the
   Samsung clips pillarboxed, the V2 cutaway's head over V1's picture.
+
+### D-074 — Keys for the node resets and Save Project As
+**Area:** ui · **Status:** active · **Doc:** `keymaps/resolve.toml`
+
+**Decision:** four of the vocabulary's commands had no key, though the 21.1 Reference Manual gives
+them one ("Resetting Nodes"; "Methods of saving projects"):
+- Shift+Home resets the current node's grade (`color.resetNode`);
+- Mod+Home resets all grades and nodes (`color.resetAll`);
+- Mod+Shift+Home resets the grades and keeps the nodes (`color.resetGradesKeepNodes`);
+- Mod+Shift+S is Save Project As (`project.saveAs`).
+
+All four are marked verified: 73 of 82 bindings now come from the manual.
+
+The Home keys reset only on the Color page, as the node keys do (D-051). On the Edit page Home
+still goes to the timeline's start; the keymap is not page-scoped yet.
+
+**Checked:**
+- Key test: each chord reaches its command.
+- UI test: Shift+Home resets a graded node through the engine.
+- With Shift+Home bound elsewhere, both fail.

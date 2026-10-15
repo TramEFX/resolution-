@@ -2939,6 +2939,17 @@ mod tests {
         assert_eq!(h.state().color.node, 0);
     }
 
+    /// Shift+Home resets the current node's grade, as in Resolve (LOG D-074).
+    #[test]
+    fn shift_home_resets_the_current_node() {
+        let mut h = on_color_page();
+        let clip = h.state().color.clip.expect("a clip");
+        h.state().worker.run("color.adjust", json!({ "clip": clip, "node": 1, "controls": { "saturation": 20.0 } }));
+        pump(&mut h, "the node graded", |a| a.color.current().is_some_and(|n| !n.is_neutral()));
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Home);
+        pump(&mut h, "the node reset", |a| a.color.current().is_some_and(|n| n.is_neutral()));
+    }
+
     #[test]
     fn node_keys_do_nothing_on_the_edit_page() {
         let mut h = demo();
