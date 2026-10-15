@@ -225,7 +225,8 @@ pub fn primaries(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     );
     within(ui, chooser, |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.menu_button(if page.bars { "Bars ▾" } else { "Wheels ▾" }, |ui| {
+            let mode = if page.bars { "Bars" } else { "Wheels" };
+            ui.menu_button(format!("{mode} {}", crate::theme::MENU_MARK), |ui| {
                 for (bars, label) in [(false, "Color Wheels"), (true, "Color Bars")] {
                     if ui.selectable_label(page.bars == bars, label).clicked() {
                         page.bars = bars;
@@ -555,6 +556,20 @@ impl CurveMode {
     }
 }
 
+/// A Color page palette by name, for `--palette` (LOG D-069): `curves`, `qualifier`, `window`, or
+/// the Curves palette on a hue curve, `curves:` and its name in the grade (`curves:hue_sat`).
+pub fn palette_of(name: &str) -> Option<(Palette, CurveMode)> {
+    match name {
+        "curves" => Some((Palette::Curves, CurveMode::Custom)),
+        "qualifier" => Some((Palette::Qualifier, CurveMode::Custom)),
+        "window" => Some((Palette::Window, CurveMode::Custom)),
+        _ => {
+            let key = name.strip_prefix("curves:")?;
+            CurveMode::ALL.into_iter().find(|m| m.curve().is_some_and(|c| c.0 == key)).map(|m| (Palette::Curves, m))
+        }
+    }
+}
+
 fn hsl_curve_of<'a>(n: &'a Node, key: &str) -> &'a HslCurve {
     match key {
         "hue_hue" => &n.curves.hue_hue,
@@ -650,7 +665,7 @@ pub fn curves(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
         Rect::from_min_max(pos2(header.right() - 118.0, header.top()), pos2(header.right() - 6.0, header.bottom()));
     within(ui, chooser, |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.menu_button(format!("{} ▾", page.curve_mode.name()), |ui| {
+            ui.menu_button(format!("{} {}", page.curve_mode.name(), crate::theme::MENU_MARK), |ui| {
                 for m in CurveMode::ALL {
                     if ui.selectable_label(page.curve_mode == m, m.name()).clicked() {
                         page.curve_mode = m;
@@ -1448,7 +1463,7 @@ struct WindowField {
 /// Pan and Tilt in percent of the picture (50 is the middle; Tilt rises upwards); Size is the
 /// width in percent of the picture's width, Aspect the height to the width (50 is round or
 /// square); Rotate in degrees clockwise; Softness in percent of the picture's width, and in its
-/// place a Polygon's or a Curve's Inside Soft and Outside Soft (LOG D-063) and a Linear window's
+/// place a Polygon's or a Curve's In Soft and Out Soft (LOG D-063, D-069) and a Linear window's
 /// Soft 1 to 4, its top, bottom, left and right (LOG D-065).
 const WINDOW_FIELDS: [WindowField; 13] = [
     WindowField {
@@ -1492,14 +1507,14 @@ const WINDOW_FIELDS: [WindowField; 13] = [
         decimals: 2,
     },
     WindowField {
-        name: "Inside Soft",
+        name: "In Soft",
         get: |w| w.edge_softness().0 * 100.0,
         set: |w, v| w.inside_softness = Some((v / 100.0).clamp(0.0, 1.0)),
         step: 0.05,
         decimals: 2,
     },
     WindowField {
-        name: "Outside Soft",
+        name: "Out Soft",
         get: |w| w.edge_softness().1 * 100.0,
         set: |w, v| w.outside_softness = Some((v / 100.0).clamp(0.0, 1.0)),
         step: 0.05,
@@ -1745,13 +1760,13 @@ enum Handle {
 }
 
 /// The numbers a window of shape `s` shows: a gradient has no size, and a Polygon's or a Curve's
-/// softness is its Inside Soft and Outside Soft (LOG D-063).
+/// softness is its In Soft and Out Soft (LOG D-063, D-069).
 fn window_fields(s: WindowShape) -> impl Iterator<Item = &'static WindowField> {
     let points = s.has_points();
     WINDOW_FIELDS.iter().filter(move |f| match f.name {
         "Size" | "Aspect" => s != WindowShape::Gradient,
         "Softness" => !points && s != WindowShape::Linear,
-        "Inside Soft" | "Outside Soft" => points,
+        "In Soft" | "Out Soft" => points,
         "Soft 1" | "Soft 2" | "Soft 3" | "Soft 4" => s == WindowShape::Linear,
         _ => true,
     })
@@ -2370,29 +2385,27 @@ mod handle_tests {
         }
     }
 
-    /// A Polygon's or a Curve's softness is its Inside Soft and Outside Soft (LOG D-063): the
+    /// A Polygon's or a Curve's softness is its In Soft and Out Soft (LOG D-063, D-069): the
     /// palette shows those in place of Softness, and the soft handle sets how far out it reaches.
     #[test]
     fn a_polygons_soft_handle_and_fields_are_its_inside_and_outside_softness() {
         let names = |s: WindowShape| window_fields(s).map(|f| f.name).collect::<Vec<_>>();
         for s in [WindowShape::Polygon, WindowShape::Curve] {
             let n = names(s);
-            assert!(n.contains(&"Inside Soft") && n.contains(&"Outside Soft") && !n.contains(&"Softness"), "{n:?}");
+            assert!(n.contains(&"In Soft") && n.contains(&"Out Soft") && !n.contains(&"Softness"), "{n:?}");
             assert_eq!(n.len(), 8, "two rows of four: {n:?}");
         }
         for s in [WindowShape::Circle, WindowShape::Gradient] {
             let n = names(s);
-            assert!(n.contains(&"Softness") && !n.contains(&"Inside Soft"), "{n:?}");
+            assert!(n.contains(&"Softness") && !n.contains(&"In Soft"), "{n:?}");
         }
-        assert!(!names(WindowShape::Linear).contains(&"Inside Soft"), "a Linear window has Soft 1 to 4 (LOG D-065)");
+        assert!(!names(WindowShape::Linear).contains(&"In Soft"), "a Linear window has Soft 1 to 4 (LOG D-065)");
         // the fields set the window's own, one leaving the other
         let field = |name: &str| WINDOW_FIELDS.iter().find(|f| f.name == name).unwrap();
         let mut w = Window::new(WindowShape::Polygon);
-        (field("Outside Soft").set)(&mut w, 4.0);
+        (field("Out Soft").set)(&mut w, 4.0);
         assert_eq!(w.edge_softness(), (w.softness / 2.0, 0.04));
-        assert!(
-            ((field("Inside Soft").get)(&w) - 1.0).abs() < 1e-4 && ((field("Outside Soft").get)(&w) - 4.0).abs() < 1e-4
-        );
+        assert!(((field("In Soft").get)(&w) - 1.0).abs() < 1e-4 && ((field("Out Soft").get)(&w) - 4.0).abs() < 1e-4);
         // the soft handle sits that far out below the window, and dragged lower reaches further
         let pic = Rect::from_min_size(pos2(100.0, 50.0), vec2(1000.0, 500.0));
         let (_, soft) = handles(&w, pic).into_iter().find(|(k, _)| *k == Handle::Soft).unwrap();
@@ -2436,6 +2449,18 @@ mod sampling_tests {
         assert_eq!(xs(&sampled(&empty, false, &[0.5, 0.3])), xs(&[[0.3 - m, 0.0], [0.4, 0.0], [0.5 + m, 0.0]]));
         assert_eq!(xs(&sampled(&empty, false, &[0.0, 0.02])), xs(&[[0.0, 0.0], [0.01, 0.0], [0.02 + m, 0.0]]));
         assert!(sampled(&bent, true, &[]) == bent.0, "nothing sampled, nothing added");
+    }
+
+    /// `--palette`'s names (LOG D-069).
+    #[test]
+    fn palettes_are_named_for_the_command_line() {
+        assert_eq!(palette_of("window"), Some((Palette::Window, CurveMode::Custom)));
+        assert_eq!(palette_of("qualifier"), Some((Palette::Qualifier, CurveMode::Custom)));
+        assert_eq!(palette_of("curves"), Some((Palette::Curves, CurveMode::Custom)));
+        assert_eq!(palette_of("curves:hue_sat"), Some((Palette::Curves, CurveMode::HueSat)));
+        assert_eq!(palette_of("curves:sat_lum"), Some((Palette::Curves, CurveMode::SatLum)));
+        assert_eq!(palette_of("curves:custom"), None);
+        assert_eq!(palette_of("wheels"), None);
     }
 
     /// A six-vector patch: its middle on the vector, the outer two half way to its neighbours.

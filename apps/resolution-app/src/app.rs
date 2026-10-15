@@ -74,6 +74,10 @@ pub struct Options {
     /// Start with the Highlight view on, `true` in black and white (`--highlight`, for
     /// self-tests; LOG D-048).
     pub highlight: Option<bool>,
+    /// Start on this Color page palette (`--palette`, for self-tests; LOG D-069).
+    pub palette: Option<String>,
+    /// Start with the Primaries in Bars mode (`--bars`, for self-tests; LOG D-069).
+    pub bars: bool,
     /// Also write the action journal to this file, a line of JSON per start and end
     /// (`--journal`, LOG D-054).
     pub journal: Option<PathBuf>,
@@ -263,6 +267,11 @@ impl ResolutionApp {
             color: {
                 let mut c = ColorPage::default();
                 c.highlight = options.highlight;
+                c.bars = options.bars;
+                if let Some((palette, curve)) = options.palette.as_deref().and_then(color_page::palette_of) {
+                    c.palette = palette;
+                    c.curve_mode = curve;
+                }
                 c
             },
             thumbs: {
@@ -2865,7 +2874,7 @@ mod tests {
     #[test]
     fn a_hue_curve_is_chosen_from_the_curves_menu_and_bent_by_dragging() {
         let mut h = on_color_page();
-        click(&mut h, "Custom ▾");
+        click(&mut h, "Custom ⏷");
         click(&mut h, "Hue vs Sat");
         pump(&mut h, "the Hue vs Sat curve", |a| a.color.curve_mode == crate::color_page::CurveMode::HueSat);
         let plot = h.get_by_label("Hue vs Sat curve").rect();
@@ -2888,7 +2897,7 @@ mod tests {
     #[test]
     fn a_click_in_the_viewer_samples_the_open_hue_curve() {
         let mut h = on_color_page();
-        click(&mut h, "Custom ▾");
+        click(&mut h, "Custom ⏷");
         click(&mut h, "Hue vs Sat");
         pump(&mut h, "a picture in the viewer", |a| {
             a.color.curve_mode == crate::color_page::CurveMode::HueSat
@@ -2918,7 +2927,7 @@ mod tests {
     #[test]
     fn sat_vs_lum_is_on_the_curves_menu() {
         let mut h = on_color_page();
-        click(&mut h, "Custom ▾");
+        click(&mut h, "Custom ⏷");
         click(&mut h, "Sat vs Lum");
         pump(&mut h, "the Sat vs Lum curve", |a| a.color.curve_mode == crate::color_page::CurveMode::SatLum);
         let plot = h.get_by_label("Sat vs Lum curve").rect();
@@ -3119,7 +3128,7 @@ mod tests {
     #[test]
     fn the_primaries_bars_set_each_channel_on_its_own() {
         let mut h = color_page_of(demo_stepping(0.05));
-        click(&mut h, "Wheels ▾");
+        click(&mut h, "Wheels ⏷");
         click(&mut h, "Color Bars");
         pump(&mut h, "the bars", |a| a.color.bars);
         h.step();
@@ -3153,7 +3162,7 @@ mod tests {
             !a.color.dragging && gain(a).is_some_and(|g| (g.r - 1.0).abs() < 1e-6)
         });
         // and back to the wheels
-        click(&mut h, "Bars ▾");
+        click(&mut h, "Bars ⏷");
         click(&mut h, "Color Wheels");
         pump(&mut h, "the wheels", |a| !a.color.bars);
         h.step();
