@@ -48,12 +48,25 @@
 |---|---|
 | `Engine(id)` | Same behaviour in FilmCraft |
 | `Approx(id, note)` | Close FilmCraft command; the note records how it differs from Resolve |
-| `Adapter` | Implemented in the adapter: undo/redo, inspecting, commands on the project selection, the Color page's grades |
+| `Adapter` | Implemented in the adapter: undo/redo, inspecting, commands on the project selection, the Color page's grades, and Resolve's edits FilmCraft has no one command for, composed from its commands as one undo step (`edits.rs`: Replace, Place on Top, Ripple Overwrite, Append at End, Fit to Fill, Add Transition; LOG D-059, D-060, B-043) |
 | `Ui` | Owned by the Resolution front end: pages, zoom, edit modes, playback (FilmCraft keeps these in its egui crate) |
 | `Missing(note)` | No FilmCraft equivalent yet: Resolution work or an upstream PR |
 
 Its tests are the upstream-drift gate: every vocabulary id must be mapped, and every FilmCraft id
 we map to must still exist at the pinned revision.
+
+The vocabulary's parameter descriptions are what agents read about a command. `color.adjust`'s is
+held to the grade's own fields by a test, so a control added to the grade must be described
+(LOG B-049).
+
+Where FilmCraft's defaults differ from Resolve's, the adapter sets FilmCraft's own preferences when
+it starts its session. A clip of another size is fitted into its timeline, Resolve's "Scale entire
+image to fit", not left at its own size as FilmCraft's Premiere-like default does (LOG B-050).
+FilmCraft's code is never edited for it.
+
+FilmCraft reads project files with serde_json. The workspace turns on serde_json's
+`float_roundtrip`, and Cargo unites the feature for the one serde_json in the build, so a grade's
+masks read back exactly what they compile to (LOG B-046).
 
 ## Colour grades (`crates/grade`, LOG D-028)
 
@@ -95,8 +108,12 @@ coverage blending the node's result into its input. A layer whose qualifier deno
 key is graded first in a stage of its own (`Renderer::stage`, D-046): drawn at its working size, each such node's matte made in a mask (the
 key, the medians, Clean Black and White, the Gaussian), the nodes applied one by one, and the
 result composited as an 8-bit picture. A layer shown in the Highlight view (D-048) goes through it
-too, the highlighted node's matte kept for a last pass that shows it. The front end asks for that
-view with each frame (`RenderHints::highlight`); it is not an engine command. The renderer knows nothing of FilmCraft.
+too, the highlighted node's matte kept for a last pass that shows it. Highlight Difference (D-070)
+keeps the node's input instead, stops after the node, and shows how far it moved each pixel. The
+front end asks for that view with each frame (`RenderHints::highlight`); it is not an engine
+command. A thumbnail asks for one clip on its own (`RenderHints::solo`, D-077); the adapter
+renders it from a copy of the project with only that clip on the video tracks. The renderer knows
+nothing of FilmCraft.
 
 The adapter (`gpu.rs`) uses it for the viewers' frames. Each playback snapshot keeps a copy of the
 timeline in which each graded clip we draw has its Lumetri effects taken off and points at a
