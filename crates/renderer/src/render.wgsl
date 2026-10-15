@@ -593,6 +593,36 @@ fn fs_highlight(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     return vec4(mix(vec3(u.g0.w), s.rgb, k), s.a);
 }
 
+// Morph (LOG D-058; `resolution_grade::Morph`): the most (g0.w = 1) or the least of each mask
+// value and its neighbours up to g0.z away, across or down (g0.y).
+@fragment
+fn fs_morph(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let p = vec2<i32>(pos.xy);
+    var d = vec2(1, 0);
+    if u.g0.y > 0.5 { d = vec2(0, 1); }
+    let r = i32(u.g0.z);
+    let most = u.g0.w > 0.5;
+    var v = texel(tex1, p).r;
+    for (var i = 1; i <= r; i++) {
+        let a = texel(tex1, p - d * i).r;
+        let b = texel(tex1, p + d * i).r;
+        if most {
+            v = max(v, max(a, b));
+        } else {
+            v = min(v, min(a, b));
+        }
+    }
+    return vec4(v, 0.0, 0.0, 1.0);
+}
+
+// Black Clip and White Clip (LOG D-058; `Qualifier::clip`): the mask stretched between g0.y and
+// g0.z.
+@fragment
+fn fs_clip(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let k = texel(tex1, vec2<i32>(pos.xy)).r;
+    return vec4(clamp((k - u.g0.y) / max(u.g0.z - u.g0.y, 1e-3), 0.0, 1.0), 0.0, 0.0, 1.0);
+}
+
 // Midtone Detail (LOG D-055): the luma of each pixel of the node's input, to be blurred.
 @fragment
 fn fs_luma(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {

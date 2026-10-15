@@ -645,3 +645,28 @@ fn midtone_detail_matches_its_math() {
         assert!(off_by(&plain, &out) > 5.0, "Midtone Detail {md} changed nothing");
     }
 }
+
+/// Matte finesse's Morph and Clip (LOG D-058) on the GPU, against the CPU's
+/// `Grade::apply_image`, drawn one to one.
+#[test]
+fn morph_and_clip_match_their_math() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (768u32, 64u32);
+    let px = red_block(w, h);
+    for morph in [resolution_grade::Morph::Opening, resolution_grade::Morph::Closing] {
+        let q = Qualifier {
+            morph,
+            morph_radius: 60.0,
+            black_clip: 10.0,
+            white_clip: 90.0,
+            ..Qualifier::picked([0.8, 0.16, 0.12])
+        };
+        let g = Grade { nodes: vec![node(json!({ "gain": {"y": 0.5}, "saturation": 20.0, "qualifier": q }))] };
+        let out = r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap();
+        let mut cpu: Vec<[f32; 3]> = px.chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect();
+        g.apply_image(&mut cpu, w as usize, h as usize);
+        let worst = off_by(&cpu, &out);
+        eprintln!("{morph:?}: worst {worst:.2} code values");
+        assert!(worst <= 1.5, "{morph:?}: {worst} code values off");
+    }
+}

@@ -2942,6 +2942,27 @@ mod tests {
     }
 
     #[test]
+    fn morph_and_clip_are_set_in_matte_finesse() {
+        let mut h = on_color_page();
+        click(&mut h, "Qualifier palette");
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some() && a.timeline_viewer.picture.is_some());
+        h.step();
+        let picker = h.get_by_label("Qualifier picker").rect();
+        click_at(&mut h, picker.center());
+        let q = |a: &ResolutionApp| a.color.current().and_then(|n| n.qualifier);
+        pump(&mut h, "a qualifier", |a| !a.color.dragging && q(a).is_some());
+        click(&mut h, "Morph Operation");
+        pump(&mut h, "Shrink", |a| q(a).is_some_and(|q| q.morph == resolution_grade::Morph::Shrink));
+        for label in ["Morph Radius", "Black Clip"] {
+            let field = h.get_by_label(label).rect();
+            drag(&mut h, field.center(), field.center() + vec2(60.0, 0.0));
+        }
+        pump(&mut h, "a radius and a black clip, through the engine", |a| {
+            !a.color.dragging && q(a).is_some_and(|q| q.morph_radius > 2.0 && q.black_clip > 2.0)
+        });
+    }
+
+    #[test]
     fn a_gradient_window_is_added_without_a_size() {
         let mut h = on_color_page();
         click(&mut h, "Window palette");

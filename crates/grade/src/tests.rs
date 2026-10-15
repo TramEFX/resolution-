@@ -620,3 +620,42 @@ fn midtone_detail_sharpens_an_edge_and_lowered_softens_only_faint_detail() {
     assert!(ripple(&soft) < ripple(&px) * 0.8, "the faint ripple softened: {} from {}", ripple(&soft), ripple(&px));
     assert!((row(&soft, 205) - row(&px, 205)).abs() < 0.01, "the strong edge's side kept");
 }
+
+#[test]
+fn morph_shrinks_grows_opens_and_closes_the_key_and_clip_sets_its_levels() {
+    // red where keyed: a 20 x 12 block with a 2-pixel hole, and a lone speck, on grey
+    let (w, h) = (192usize, 40usize);
+    let red = [0.8, 0.15, 0.1];
+    let px: Vec<[f32; 3]> = (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            let block = (40..60).contains(&x) && (10..22).contains(&y) && !((49..51).contains(&x) && y == 15);
+            if block || (x, y) == (120, 30) { red } else { [0.5, 0.5, 0.5] }
+        })
+        .collect();
+    let base = Qualifier { sat_low: 30.0, ..Qualifier::picked(red) };
+    let matte = |morph: Morph| Qualifier { morph, morph_radius: 100.0, ..base }.matte(&px, w, h);
+    let at = |k: &[f32], x: usize, y: usize| k[y * w + x];
+    // 10 pixels at 1920 wide: 1 here
+    assert_eq!(Qualifier { morph: Morph::Grow, morph_radius: 100.0, ..base }.morph_pixels(w), 1);
+    let plain = base.matte(&px, w, h);
+    assert!(at(&plain, 120, 30) > 0.99 && at(&plain, 49, 15) < 0.01, "a speck and a hole");
+    let shrunk = matte(Morph::Shrink);
+    assert!(at(&shrunk, 120, 30) < 0.01 && at(&shrunk, 40, 16) < 0.01 && at(&shrunk, 45, 16) > 0.99);
+    let grown = matte(Morph::Grow);
+    assert!(at(&grown, 39, 16) > 0.99 && at(&grown, 49, 15) > 0.99, "edges out, the hole filled");
+    let opened = matte(Morph::Opening);
+    assert!(at(&opened, 120, 30) < 0.01 && at(&opened, 40, 16) > 0.99, "the speck gone, the block kept");
+    let closed = matte(Morph::Closing);
+    assert!(at(&closed, 49, 15) > 0.99 && at(&closed, 39, 16) < 0.01, "the hole filled, the edge kept");
+    // Clip: levels on the finished matte, pixel by pixel too
+    let q = Qualifier { black_clip: 20.0, white_clip: 80.0, ..base };
+    assert!(q.is_spatial() && q.is_clipped());
+    assert!((q.clip(0.5) - 0.5).abs() < 1e-6 && q.clip(0.15) == 0.0 && q.clip(0.85) == 1.0);
+    // a qualifier from before these fields writes none of them
+    let j = serde_json::to_value(base).unwrap();
+    for k in ["morph", "morph_radius", "black_clip", "white_clip"] {
+        assert!(j.get(k).is_none(), "{k}");
+    }
+    assert_eq!(serde_json::from_value::<Qualifier>(j).unwrap(), base);
+}

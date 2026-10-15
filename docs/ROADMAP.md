@@ -105,8 +105,8 @@ read, never copied into the repo.
 - [ ] Picking a hue curve's points from the viewer
 - [x] Matte finesse: Denoise, Clean Black, Clean White, Blur Radius (D-046)
 - [x] The Highlight view: Highlight and Highlight B/W of the current node (D-048)
-- [ ] More matte finesse (Black and White Clip, In/Out Ratio, Morph), Highlight Difference, RGB
-      and Luma qualifier modes
+- [x] More matte finesse: Black Clip, White Clip, Morph (D-058)
+- [ ] In/Out Ratio, Highlight Difference, RGB and Luma qualifier modes
 - [x] Gradient window (D-052)
 - [x] Polygon window: corners dragged, added and removed on screen (D-053)
 - [x] Window handles on screen: size, rotation, softness (D-057)
