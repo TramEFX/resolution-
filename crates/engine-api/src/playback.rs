@@ -72,6 +72,10 @@ pub struct RenderHints {
     pub gpu: bool,
     /// The Highlight view of one node of a clip's grade, instead of the program picture.
     pub highlight: Option<Highlight>,
+    /// This clip of the timeline's video on its own, graded, without the clips over or under it
+    /// or its transitions: its thumbnails' picture (LOG D-077). The clip, by its id in
+    /// `timeline.inspect`.
+    pub solo: Option<u64>,
 }
 
 /// The Highlight view (LOG D-048), as the Color page's viewer shows it: the picture where one
