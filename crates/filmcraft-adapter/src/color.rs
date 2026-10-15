@@ -444,6 +444,10 @@ fn mask(win: &Window, (w, h): (u32, u32), n: usize) -> Mask {
             let far = 4.0 * w.max(h);
             MaskPath::rect(c.x - far, c.y - far, c.x + far, c.y)
         }
+        // a Polygon's corners in its own space, placed (and turned below) as the others are
+        Shape::Polygon => MaskPath::polygon(
+            &win.points.iter().map(|p| c + Vec2::new(f64::from(p[0]) * r.x, f64::from(p[1]) * r.y)).collect::<Vec<_>>(),
+        ),
     };
     let a = f64::from(win.rotation).to_radians();
     if a != 0.0 {

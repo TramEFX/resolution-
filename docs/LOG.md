@@ -117,6 +117,7 @@ doc is updated *and* the entry says which section moved.
 | D-051 | 2026-10-14 | ui | The keymap checked against the 21.1 Reference Manual: 69 of 78 bindings confirmed | active |
 | D-052 | 2026-10-14 | color | The Gradient window: the picture divided by a line, the side above it keyed | active |
 | B-040 | 2026-10-14 | color | Soft windows in the Lumetri compile stray from the grade's math at their soft edge | known (compile only) |
+| D-053 | 2026-10-14 | color | The Polygon window: corners in the window's own space, edited on screen | active (point format provisional, for Truman's review) |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -2966,3 +2967,49 @@ matters only where the compile is what's shown: FilmCraft, and renders without a
 
 **Not fixed:** the GPU path is the grade's own math, the reference. The test keeps both figures
 (hard agreeing, soft within its measured bound), so a change in either shows.
+
+### D-053 — The Polygon window: corners in the window's own space, edited on screen
+**Area:** color · **Status:** active; the point format is provisional, for Truman's review ·
+**Doc:** `crates/grade` (`Window::points`, `MAX_POLYGON_POINTS`); `crates/renderer`
+(`polygon_distance`); `crates/filmcraft-adapter/src/color.rs` (`mask`);
+`apps/resolution-app/src/color_page.rs` (`window_overlay`)
+
+**Decision:** Resolve's Polygon window. The Reference Manual describes it as a four-point shape
+that grows corners, up to 128, which are dragged on screen. Clicking its surface adds a corner;
+middle-clicking one removes it.
+
+**The format (provisional):** `points` on a window, written only for polygons, so older grades
+load and save unchanged. Each corner is in the window's own space: -1 to 1 across its size,
+before Rotate and placing. A Linear window's corners are ±1 in the same space. So Pan, Tilt,
+Size, Aspect and Rotate move a polygon as they move the other shapes. This is a new field in a
+saved grade, so it is marked for review. The other way to store corners is as fractions of the
+picture, placed directly; then the palette's transforms would not apply to a polygon.
+
+Corners are held to ±4, at most 128. Fewer than three give the rectangle back, and other shapes
+keep none.
+
+**How:**
+- **GPU:** each polygon's corners, turned and placed in the picture's pixels, follow the node
+  tables in the same storage buffer. The window's slot in the node table holds where. The shader
+  takes the signed distance to the nearest side, inside by even-odd, with the softness centred on
+  the edge as for the other shapes.
+- **Compile:** `MaskPath::polygon` of the corners, placed and turned as the other shapes are.
+- **On screen:** the chosen polygon shows its corners as handles. Dragging a corner moves it, and
+  dragging elsewhere inside moves the window. A click on the surface adds a corner on the nearest
+  side, where the click falls across it. A middle click removes a corner while more than three
+  remain.
+
+**Simplified from Resolve:** one softness, centred on the edge. Resolve has an inside and an
+outside softness for polygons.
+
+**Checked:**
+- Grade test: a new polygon has four corners; the JSON name; a circle writes no points; two
+  corners give the rectangle back; 200 are cut to 128; a circle keeps none.
+- Renderer test: a triangle, black inside and untouched outside, and turned half way. With the
+  inside test inverted, it fails.
+- Compile test through FilmCraft's render: the same triangle. Compiled as its bounding rectangle,
+  it fails.
+- The GPU against the compile, a turned five-cornered polygon: mean 0.06 code values, 99 % within
+  1.0.
+- UI test: Add Polygon, a corner dragged out, a click on the surface adds a fifth on the bottom
+  side, and a middle click removes it.

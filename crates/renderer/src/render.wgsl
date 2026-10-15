@@ -381,6 +381,27 @@ fn key(n: u32, rgb: vec3<f32>) -> f32 {
 // How much of a node the windows let through at source position sp: each window's shape (turned
 // clockwise about its centre), its soft edge centred on the edge, inverted and scaled by its
 // opacity; windows add up. 1 when the node has none.
+// The signed distance from `p` to the polygon whose corners are at `at` in the tables (their
+// count, then x and y for each, in the picture's pixels): negative inside (even-odd), positive
+// outside.
+fn polygon_distance(at: u32, p: vec2<f32>) -> f32 {
+    let count = u32(tones[at]);
+    var best = 1e9;
+    var inside = false;
+    for (var i = 0u; i < count; i++) {
+        let j = (i + count - 1u) % count;
+        let a = vec2(tones[at + 1u + 2u * i], tones[at + 2u + 2u * i]);
+        let b = vec2(tones[at + 1u + 2u * j], tones[at + 2u + 2u * j]);
+        let e = b - a;
+        let t = clamp(dot(p - a, e) / max(dot(e, e), 1e-12), 0.0, 1.0);
+        best = min(best, length(p - a - e * t));
+        if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            inside = !inside;
+        }
+    }
+    return select(best, -best, inside);
+}
+
 fn coverage(n: u32, sp: vec2<f32>) -> f32 {
     let count = u32(nf(n, 20u));
     if count == 0u {
@@ -399,7 +420,10 @@ fn coverage(n: u32, sp: vec2<f32>) -> f32 {
         let q = vec2(d.x * cs + d.y * sn, -d.x * sn + d.y * cs);
         let shape = nf(n, o);
         var dist: f32;
-        if shape > 1.5 {
+        if shape > 2.5 {
+            // a Polygon (LOG D-053): its corners, placed, are in the tables
+            dist = polygon_distance(u32(nf(n, o + 9u)), sp);
+        } else if shape > 1.5 {
             // a Gradient (LOG D-052): keyed above its line, at Rotate 0
             dist = q.y;
         } else if shape > 0.5 {

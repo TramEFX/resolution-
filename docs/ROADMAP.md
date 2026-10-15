@@ -108,7 +108,8 @@ read, never copied into the repo.
 - [ ] More matte finesse (Black and White Clip, In/Out Ratio, Morph), Highlight Difference, RGB
       and Luma qualifier modes
 - [x] Gradient window (D-052)
-- [ ] Polygon and Curve windows; window handles on screen; tracking
+- [x] Polygon window: corners dragged, added and removed on screen (D-053)
+- [ ] Curve window; handles for size, rotation and softness on screen; tracking
 - [ ] Parallel and layer nodes
 - [ ] **Our own GPU renderer** (D-035, Truman's choice), replacing the Lumetri compile for grades:
   - [x] G1: the viewers' frames on the GPU, with the grade stage (tone, saturation, real key masks,

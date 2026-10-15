@@ -58,6 +58,8 @@ pub struct ColorPage {
     pub window: usize,
     /// The on-screen control is moving the chosen window.
     moving_window: bool,
+    /// The on-screen control is moving this corner of the chosen polygon window.
+    moving_point: Option<usize>,
     /// Per clip, the revision at which its grade last changed: when its thumbnail is due again.
     pub stamps: HashMap<u64, u64>,
     /// The Highlight view of the current node, when on (LOG D-048): `true` in black and white.
@@ -93,6 +95,7 @@ impl ColorPage {
         self.dragging = false;
         self.curve_point = None;
         self.moving_window = false;
+        self.moving_point = None;
         self.asked = None;
     }
 
@@ -1304,10 +1307,11 @@ fn shape_name(s: WindowShape) -> &'static str {
         WindowShape::Linear => "Linear",
         WindowShape::Circle => "Circle",
         WindowShape::Gradient => "Gradient",
+        WindowShape::Polygon => "Polygon",
     }
 }
 
-/// The Window palette: add a Linear, Circle or Gradient window to the current node; each window's row
+/// The Window palette: add a Linear, Circle, Polygon or Gradient window to the current node; each window's row
 /// chooses it and turns it on or off, inverts or deletes it; the chosen window's numbers below.
 /// The viewer shows the windows' outlines while this palette is open.
 pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
@@ -1323,7 +1327,7 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        for shape in [WindowShape::Linear, WindowShape::Circle, WindowShape::Gradient] {
+        for shape in [WindowShape::Linear, WindowShape::Circle, WindowShape::Polygon, WindowShape::Gradient] {
             if chrome::text_button(ui, look, &format!("Add {}", shape_name(shape)), true).clicked() {
                 wins.push(Window::new(shape));
                 page.window = wins.len() - 1;
@@ -1406,7 +1410,7 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
         set(page, &mut asks, &wins);
     }
     // the chosen window's numbers, two rows of four
-    if let Some(w) = wins.get(page.window).copied() {
+    if let Some(w) = wins.get(page.window).cloned() {
         ui.add_space(6.0);
         let area = ui.available_rect_before_wrap();
         let row_h = 26.0;
@@ -1427,7 +1431,7 @@ pub fn windows(ui: &mut Ui, look: &Look, page: &mut ColorPage) -> Vec<Ask> {
             if r.drag_started() {
                 page.begin_drag();
             }
-            let mut nw = w;
+            let mut nw = w.clone();
             if r.double_clicked() {
                 (f.set)(&mut nw, (f.get)(&fresh));
             } else if r.dragged() && r.drag_delta().x != 0.0 {
@@ -1467,12 +1471,30 @@ fn outline(w: &Window, pic: Rect) -> Vec<Pos2> {
             (0..72).map(|i| i as f32 / 72.0 * TAU).map(|a| turn(rx * a.cos(), ry * a.sin())).collect()
         }
         WindowShape::Linear => vec![turn(-rx, -ry), turn(rx, -ry), turn(rx, ry), turn(-rx, ry)],
+        WindowShape::Polygon => w.points.iter().map(|p| turn(p[0] * rx, p[1] * ry)).collect(),
         // the keyed side, reaching well past the picture: on screen, its line across it
         WindowShape::Gradient => {
             let far = 4.0 * pic.width().max(pic.height());
             vec![turn(-far, -far), turn(far, -far), turn(far, 0.0), turn(-far, 0.0)]
         }
     }
+}
+
+/// A point in a window's own space (see `Window::points`) on screen, for a clip picture drawn in
+/// `pic`; and back.
+fn window_to_screen(w: &Window, pic: Rect, p: [f32; 2]) -> Pos2 {
+    let c = pic.min + vec2(w.center[0] * pic.width(), w.center[1] * pic.height());
+    let (x, y) = (p[0] * w.size[0] * pic.width() / 2.0, p[1] * w.size[1] * pic.width() / 2.0);
+    let (sin, cos) = w.rotation.to_radians().sin_cos();
+    c + vec2(x * cos - y * sin, x * sin + y * cos)
+}
+
+fn screen_to_window(w: &Window, pic: Rect, s: Pos2) -> [f32; 2] {
+    let d = s - (pic.min + vec2(w.center[0] * pic.width(), w.center[1] * pic.height()));
+    let (sin, cos) = w.rotation.to_radians().sin_cos();
+    let (x, y) = (d.x * cos + d.y * sin, -d.x * sin + d.y * cos);
+    let (rx, ry) = ((w.size[0] * pic.width() / 2.0).max(1e-3), (w.size[1] * pic.width() / 2.0).max(1e-3));
+    [x / rx, y / ry]
 }
 
 /// Whether `p` is inside the closed outline `poly`.
@@ -1489,7 +1511,9 @@ fn inside(poly: &[Pos2], p: Pos2) -> bool {
 
 /// The windows' on-screen control over the viewer's picture `screen` (the timeline's frame of
 /// `frame` pixels): each window's outline, the chosen one bright. Drag inside a window to move it
-/// (and choose it).
+/// (and choose it). A chosen polygon shows its corners, as Resolve's does: drag one to move it,
+/// click the polygon's surface to add a corner on its nearest side, middle-click a corner to
+/// remove it (LOG D-053).
 pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32), page: &mut ColorPage) -> Vec<Ask> {
     let mut asks = Vec::new();
     let Some(view) = page.view.clone() else { return asks };
@@ -1510,9 +1534,24 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
             painter.line_segment([c, c + vec2(sin, -cos) * 28.0], stroke);
         }
     }
-    let r = ui.interact(screen, ui.id().with("window osc"), Sense::drag());
+    // the chosen polygon's corners, as handles
+    let polygon = node.windows.get(page.window).filter(|w| w.shape == WindowShape::Polygon);
+    let corners: Vec<Pos2> =
+        polygon.map(|w| w.points.iter().map(|p| window_to_screen(w, pic, *p)).collect()).unwrap_or_default();
+    for c in &corners {
+        let handle = Rect::from_center_size(*c, vec2(7.0, 7.0));
+        painter.rect_filled(handle, CornerRadius::ZERO, look.theme.accent);
+    }
+    let near = |p: Pos2| corners.iter().position(|c| c.distance(p) <= 8.0);
+    let r = ui.interact(screen, ui.id().with("window osc"), Sense::click_and_drag());
     name(&r, WidgetType::Other, "Window on-screen control");
     if r.drag_started()
+        && let Some(p) = r.interact_pointer_pos()
+        && let Some(k) = near(p)
+    {
+        page.begin_drag();
+        page.moving_point = Some(k);
+    } else if r.drag_started()
         && let Some(p) = r.interact_pointer_pos()
     {
         // the chosen window first, then the others, top one last drawn
@@ -1533,7 +1572,42 @@ pub fn window_overlay(ui: &mut Ui, look: &Look, screen: Rect, frame: (u32, u32),
             page.adjust(&mut asks, json!({ "windows": wins }));
         }
     }
-    if r.drag_stopped() && page.moving_window {
+    if let (Some(k), Some(w), true) = (page.moving_point, polygon, r.dragged())
+        && let Some(p) = r.interact_pointer_pos()
+    {
+        let mut wins = node.windows.clone();
+        if let Some(corner) = wins.get_mut(page.window).and_then(|w| w.points.get_mut(k)) {
+            *corner = screen_to_window(w, pic, p);
+            page.adjust(&mut asks, json!({ "windows": wins }));
+        }
+    }
+    if let (Some(w), Some(p)) = (polygon, r.interact_pointer_pos()) {
+        let mut points = w.points.clone();
+        if r.clicked() && near(p).is_none() && inside(&corners, p) {
+            // a corner on the nearest side, where the click falls across it
+            let n = corners.len();
+            let side = |i: usize| {
+                let (a, b) = (corners[i], corners[(i + 1) % n]);
+                let e = b - a;
+                let t = ((p - a).dot(e) / e.length_sq().max(1e-6)).clamp(0.0, 1.0);
+                (a + e * t, (a + e * t).distance(p))
+            };
+            if let Some(i) = (0..n).min_by(|&i, &j| side(i).1.total_cmp(&side(j).1)) {
+                points.insert(i + 1, screen_to_window(w, pic, side(i).0));
+            }
+        } else if r.middle_clicked()
+            && let Some(k) = near(p)
+            && points.len() > 3
+        {
+            points.remove(k);
+        }
+        if points != w.points {
+            let mut wins = node.windows.clone();
+            wins[page.window].points = points;
+            page.adjust(&mut asks, json!({ "windows": wins }));
+        }
+    }
+    if r.drag_stopped() && (page.moving_window || page.moving_point.is_some()) {
         page.end_drag();
     }
     asks

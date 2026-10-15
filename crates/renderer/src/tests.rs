@@ -569,10 +569,10 @@ fn a_gradient_window_keys_one_side_of_its_line() {
     };
     let at = |out: &[u8], x: u32, y: u32| out[((y * w + x) * 4) as usize];
     let hard = Window { softness: 0.0, ..Window::new(resolution_grade::Shape::Gradient) };
-    let out = draw(hard);
+    let out = draw(hard.clone());
     assert!(at(&out, 100, 40) < 3 && at(&out, 10, 5) < 3, "black above the line");
     assert!(at(&out, 100, 60).abs_diff(128) <= 1 && at(&out, 190, 95).abs_diff(128) <= 1, "untouched below");
-    let out = draw(Window { rotation: 90.0, ..hard });
+    let out = draw(Window { rotation: 90.0, ..hard.clone() });
     assert!(at(&out, 150, 10) < 3 && at(&out, 150, 90) < 3, "a quarter turn: black on the right");
     assert!(at(&out, 50, 50).abs_diff(128) <= 1, "untouched on the left");
     // soft: 0.2 of 200 pixels, 40 across the line, half way on it
@@ -580,4 +580,33 @@ fn a_gradient_window_keys_one_side_of_its_line() {
     let col: Vec<u8> = (0..h).map(|y| at(&out, 100, y)).collect();
     assert!(col.windows(2).all(|p| p[1] >= p[0]), "brighter downwards: {col:?}");
     assert!(col[0] < 3 && col[99].abs_diff(128) <= 1 && (40..90).contains(&col[50]), "{col:?}");
+}
+
+/// The Polygon window (LOG D-053): a triangle, drawn where its corners are, turned with Rotate.
+#[test]
+fn a_polygon_window_limits_the_grade_to_its_corners() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (200u32, 100u32);
+    let px: Vec<u8> = (0..w * h).flat_map(|_| [128u8, 128, 128, 255]).collect();
+    // half the width across: corners at (100, 0), (150, 100) and (50, 100)
+    let triangle = Window {
+        softness: 0.0,
+        size: [0.5, 0.5],
+        points: vec![[0.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+        ..Window::new(resolution_grade::Shape::Polygon)
+    };
+    let draw = |win: Window| {
+        let mut n = node(json!({"gain": {"y": 0.0}}));
+        n.windows = vec![win];
+        let g = Grade { nodes: vec![n] };
+        r.render((w, h), &[rgba_layer(w, h, &px, Some(&g))]).unwrap()
+    };
+    let at = |out: &[u8], x: u32, y: u32| out[((y * w + x) * 4) as usize];
+    let out = draw(triangle.clone());
+    assert!(at(&out, 100, 70) < 3 && at(&out, 100, 10) < 3, "black inside");
+    assert!(at(&out, 70, 20).abs_diff(128) <= 1 && at(&out, 20, 90).abs_diff(128) <= 1, "untouched outside");
+    // half a turn: pointing down, its corners at (100, 100), (50, 0) and (150, 0)
+    let out = draw(Window { rotation: 180.0, ..triangle });
+    assert!(at(&out, 100, 30) < 3 && at(&out, 100, 92) < 3, "black inside, turned");
+    assert!(at(&out, 80, 90).abs_diff(128) <= 1 && at(&out, 100, 70).abs_diff(128) > 100, "outside, turned");
 }
