@@ -178,53 +178,67 @@ pub fn settings(ui: &mut Ui, look: &Look, d: &mut Deliver, timeline: Option<&str
             ui.label(RichText::new(title).font(look.small()).color(t.dim));
         });
     };
-    // the settings scroll when the panel is short, so the Add button stays reachable
-    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-        section(ui, "Preset");
-        for (i, (label, _, ext)) in PRESETS.iter().enumerate() {
-            let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
-            r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, d.preset == i, *label));
-            let on = d.preset == i;
-            if on || r.hovered() {
-                ui.painter().rect_filled(rect, CornerRadius::ZERO, if on { t.active_bg } else { t.hover });
+    // the range and the Add button keep a strip of their own at the panel's foot, and the
+    // settings above it scroll when the panel is short (LOG B-060)
+    let full = ui.available_rect_before_wrap();
+    let foot_h = 2.0 * look.skin.button + 52.0;
+    let foot = Rect::from_min_max(pos2(full.left(), (full.bottom() - foot_h).max(full.top())), full.max);
+    let above = Rect::from_min_max(full.min, pos2(full.right(), foot.top()));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(above), |ui| {
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            section(ui, "Preset");
+            for (i, (label, _, ext)) in PRESETS.iter().enumerate() {
+                let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+                r.widget_info(|| {
+                    egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, d.preset == i, *label)
+                });
+                let on = d.preset == i;
+                if on || r.hovered() {
+                    ui.painter().rect_filled(rect, CornerRadius::ZERO, if on { t.active_bg } else { t.hover });
+                }
+                ui.painter().text(
+                    rect.left_center() + vec2(14.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    label,
+                    look.body(),
+                    if on { t.accent } else { t.text },
+                );
+                ui.painter().text(
+                    rect.right_center() - vec2(12.0, 0.0),
+                    Align2::RIGHT_CENTER,
+                    ext,
+                    look.mono(look.skin.small),
+                    t.dim,
+                );
+                if r.clicked() {
+                    d.preset = i;
+                }
             }
-            ui.painter().text(
-                rect.left_center() + vec2(14.0, 0.0),
-                Align2::LEFT_CENTER,
-                label,
-                look.body(),
-                if on { t.accent } else { t.text },
-            );
-            ui.painter().text(
-                rect.right_center() - vec2(12.0, 0.0),
-                Align2::RIGHT_CENTER,
-                ext,
-                look.mono(look.skin.small),
-                t.dim,
-            );
-            if r.clicked() {
-                d.preset = i;
-            }
-        }
-        section(ui, "File name");
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            let hint = timeline.unwrap_or("Timeline");
-            ui.add(egui::TextEdit::singleline(&mut d.name).hint_text(hint).desired_width(ui.available_width() - 12.0));
+            section(ui, "File name");
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                let hint = timeline.unwrap_or("Timeline");
+                ui.add(
+                    egui::TextEdit::singleline(&mut d.name).hint_text(hint).desired_width(ui.available_width() - 12.0),
+                );
+            });
+            section(ui, "Location");
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                let shown = d.folder.to_string_lossy();
+                let label = ui.label(RichText::new(shown.as_ref()).font(look.small()).color(t.text));
+                label.on_hover_text(shown.as_ref());
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                if chrome::text_button(ui, look, "Browse…", true).clicked() {
+                    asks.push(Ask::Browse);
+                }
+            });
         });
-        section(ui, "Location");
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            let shown = d.folder.to_string_lossy();
-            let label = ui.label(RichText::new(shown.as_ref()).font(look.small()).color(t.text));
-            label.on_hover_text(shown.as_ref());
-        });
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            if chrome::text_button(ui, look, "Browse…", true).clicked() {
-                asks.push(Ask::Browse);
-            }
-        });
+    });
+    ui.painter().line_segment([foot.left_top(), foot.right_top()], look.sep_stroke());
+    ui.scope_builder(egui::UiBuilder::new().max_rect(foot), |ui| {
         section(ui, "Render");
         ui.horizontal(|ui| {
             ui.add_space(12.0);
@@ -256,7 +270,7 @@ pub fn settings(ui: &mut Ui, look: &Look, d: &mut Deliver, timeline: Option<&str
         if d.in_out && !has_marks {
             d.in_out = false;
         }
-        ui.add_space(16.0);
+        ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.add_space(12.0);
             if chrome::text_button(ui, look, "Add to Render Queue", timeline.is_some()).clicked() {
@@ -264,6 +278,7 @@ pub fn settings(ui: &mut Ui, look: &Look, d: &mut Deliver, timeline: Option<&str
             }
         });
     });
+    ui.allocate_rect(full, Sense::hover());
     asks
 }
 

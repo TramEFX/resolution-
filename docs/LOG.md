@@ -161,6 +161,7 @@ doc is updated *and* the entry says which section moved.
 | D-077 | 2026-10-15 | engine | Thumbnails show each clip on its own | active |
 | B-058 | 2026-10-15 | ui | On a laptop's screen the Color page's viewer was squeezed and the scope buttons ran over the Curves palette | fixed (the 1000 × 640 minimum still cramped) |
 | B-059 | 2026-10-15 | ui | Narrow number fields: names ran into values, and the YRGB numbers into each other | fixed |
+| B-060 | 2026-10-15 | ui | On a laptop's screen the Deliver page's Add to Render Queue was out of sight | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4319,3 +4320,22 @@ window could be raised, or the Primaries made compact; for later.
 - By eye at 1000 × 640: "Cont…", "Satu…" and "Shado…" clear of their values, and the YRGB numbers
   apart.
 - The 1600 × 920 tests are unchanged: names and numbers fit there as before.
+
+### B-060 — On a laptop's screen the Deliver page's Add to Render Queue was out of sight
+**Area:** ui · **Status:** fixed · **Caught by:** a screenshot of the Deliver page at 1366 × 768
+(B-058's pass)
+
+**Symptom:** the Render Settings panel ended at its Render heading. The range (Entire Timeline,
+In/Out Range) and Add to Render Queue were under the edge, reachable only by scrolling a panel that
+showed no sign of scrolling.
+
+**Fix:** the range and the Add button have a strip of their own at the panel's foot. Above it the
+presets, the file name and the location scroll when the panel is short. Resolve keeps its Add to
+Render Queue at the panel's foot too.
+
+**Checked:**
+- UI test at the smallest window, 1000 × 640: Add to Render Queue and Entire Timeline are above
+  the timeline. On the old layout Add was at 529 points, under the timeline at 472. At 1366 × 768
+  the test's fresh panels left room; a real session's stored panel sizes did not.
+- The Deliver render test still passes.
+- By eye: the foot strip in view at 768 points tall.
