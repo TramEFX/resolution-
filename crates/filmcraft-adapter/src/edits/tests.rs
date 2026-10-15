@@ -145,3 +145,39 @@ fn place_on_top_finds_a_free_track_above_and_adds_one_when_none_is() {
     assert_eq!(e.session.active_sequence().unwrap().video_tracks.len(), tracks + 1);
     assert!(track(&e, tracks).iter().any(|c| c.0 == item));
 }
+
+/// Fit to Fill (LOG D-060): the source's 48 frames retimed to fill the timeline's In to Out on the
+/// destinations, slower and faster, the rest of the timeline as it was.
+#[test]
+fn fit_to_fill_retimes_the_source_into_the_timelines_in_and_out() {
+    let frame = 1001.0 / 24000.0;
+    for (out, speed) in [(95, 48.0 / 84.0), (35, 2.0)] {
+        let (mut e, item) = with_source("City_Night_Drive.mp4");
+        e.execute("playhead.set", json!({ "frame": 12 })).unwrap();
+        e.execute("mark.in", json!({})).unwrap();
+        e.execute("playhead.set", json!({ "frame": out })).unwrap();
+        e.execute("mark.out", json!({})).unwrap();
+        let span = (out + 1 - 12) as f64 * frame;
+        let (v1, a2) = (track(&e, 0), audio(&e, 1));
+        let end = {
+            let seq = e.session.active_sequence().unwrap();
+            seq.all_tracks().flat_map(|t| &t.items).map(|it| secs(it.end())).fold(0.0, f64::max)
+        };
+        let done = e.execute("edit.fitToFill", json!({})).unwrap();
+        assert_eq!(done.undo_label.as_deref(), Some("Fit to Fill"));
+        let after = track(&e, 0);
+        let fitted = after.iter().find(|c| c.0 == item).copied().unwrap();
+        assert!((fitted.1 - 12.0 * frame).abs() < 0.01 && (fitted.2 - span).abs() < frame, "{fitted:?}, {span}");
+        let seq = e.session.active_sequence().unwrap();
+        let clip = seq.video_tracks[0].items.iter().find(|c| c.item.0 == item).unwrap();
+        assert!((clip.speed - speed).abs() < 0.01, "speed {} for {speed}", clip.speed);
+        // around it: the clip it was cut into, before and after; everything later where it was
+        assert!(after.iter().any(|c| c.0 == v1[0].0 && c.1 < 0.01 && (c.2 - 12.0 * frame).abs() < 0.01), "{after:?}");
+        assert_eq!(&after[after.len() - (v1.len() - 1)..], &v1[1..]);
+        assert_eq!(audio(&e, 1), a2, "the music on A2 untouched");
+        let end_now = seq.all_tracks().flat_map(|t| &t.items).map(|it| secs(it.end())).fold(0.0, f64::max);
+        assert!((end_now - end).abs() < 0.01, "nothing left at the end: {end_now} against {end}");
+        e.execute("edit.undo", json!({})).unwrap();
+        assert_eq!(track(&e, 0), v1, "one undo step");
+    }
+}
