@@ -316,8 +316,11 @@ impl Graded {
             .map(|g| {
                 let h = highlight?;
                 let (_, clip) = (*g)?;
-                (clip.0 == h.clip)
-                    .then_some(resolution_renderer::Highlight { node: h.node, black_white: h.black_white })
+                (clip.0 == h.clip).then_some(resolution_renderer::Highlight {
+                    node: h.node,
+                    black_white: h.black_white,
+                    difference: h.difference,
+                })
             })
             .collect();
         draw(gpu, &plan, &grades, &lit, out)
@@ -622,10 +625,11 @@ impl SourceProvider for Grading<'_> {
                 inner,
                 grade: s.grade.clone(),
                 // the Highlight view of a clip graded at its source (LOG D-062)
-                highlight: self
-                    .highlight
-                    .filter(|h| h.clip == s.clip.0)
-                    .map(|h| resolution_renderer::Highlight { node: h.node, black_white: h.black_white }),
+                highlight: self.highlight.filter(|h| h.clip == s.clip.0).map(|h| resolution_renderer::Highlight {
+                    node: h.node,
+                    black_white: h.black_white,
+                    difference: h.difference,
+                }),
             }),
         })
     }

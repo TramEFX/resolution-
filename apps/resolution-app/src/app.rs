@@ -74,6 +74,8 @@ pub struct Options {
     /// Start with the Highlight view on, `true` in black and white (`--highlight`, for
     /// self-tests; LOG D-048).
     pub highlight: Option<bool>,
+    /// That view as Highlight Difference (`--highlight diff`; LOG D-070).
+    pub highlight_difference: bool,
     /// Start on this Color page palette (`--palette`, for self-tests; LOG D-069).
     pub palette: Option<String>,
     /// Start with the Primaries in Bars mode (`--bars`, for self-tests; LOG D-069).
@@ -267,6 +269,7 @@ impl ResolutionApp {
             color: {
                 let mut c = ColorPage::default();
                 c.highlight = options.highlight;
+                c.highlight_difference = options.highlight_difference;
                 c.bars = options.bars;
                 if let Some((palette, curve)) = options.palette.as_deref().and_then(color_page::palette_of) {
                     c.palette = palette;
@@ -1652,7 +1655,8 @@ impl ResolutionApp {
     /// current clip's current node, while it is on.
     fn highlight(&self) -> Option<Highlight> {
         let black_white = self.color.highlight.filter(|_| self.page == Page::Color)?;
-        Some(Highlight { clip: self.color.clip?, node: self.color.node, black_white })
+        let difference = self.color.highlight_difference;
+        Some(Highlight { clip: self.color.clip?, node: self.color.node, black_white, difference })
     }
 
     fn color_page(&mut self, ui: &mut Ui) {

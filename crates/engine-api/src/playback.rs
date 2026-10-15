@@ -84,6 +84,9 @@ pub struct Highlight {
     /// The node, its index in the grade from 0.
     pub node: usize,
     pub black_white: bool,
+    /// Highlight Difference instead (LOG D-070): how far the node moves each pixel from its
+    /// input, as a grey matte.
+    pub difference: bool,
 }
 
 /// Sound from the timeline: `mix(start, buffer, channels)` writes interleaved frames into

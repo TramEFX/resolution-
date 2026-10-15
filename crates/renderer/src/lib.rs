@@ -230,6 +230,8 @@ pub struct Layer<'a> {
 pub struct Highlight {
     pub node: usize,
     pub black_white: bool,
+    /// Highlight Difference instead (LOG D-070), as `Grade::difference_image`.
+    pub difference: bool,
 }
 
 /// A part of a frame, drawn onto what the parts before it drew.
@@ -957,6 +959,9 @@ impl Renderer {
         );
         let dummy = &self.dummy;
         let mut held = None;
+        // Highlight Difference's node input (LOG D-070)
+        let difference = highlight.is_some_and(|h| h.difference);
+        let mut held_in = None;
         for (i, (_, n)) in active.iter().enumerate() {
             let node = i as f32;
             // a matte made over the picture: one that needs neighbours, or the highlighted node's
@@ -1029,16 +1034,28 @@ impl Renderer {
             if lit == Some(i) && spatial.is_some() {
                 held = Some(std::mem::replace(&mut mask, self.target(size, ACCUM_FORMAT, usage)));
             }
+            // the node's input, now in `next`, kept; the nodes after it are not drawn
+            if lit == Some(i) && difference {
+                held_in = Some(std::mem::replace(&mut next, self.target(size, ACCUM_FORMAT, usage)));
+                break;
+            }
         }
         if let (Some(at), Some(h)) = (lit, highlight) {
             let m = held.as_ref().map_or(dummy, |t: &Target| &t.view);
+            let input = held_in.as_ref().map_or(dummy, |t: &Target| &t.view);
             let g0 = [
                 at as f32,
-                if h.black_white { 1.0 } else { 0.0 },
+                if h.difference {
+                    2.0
+                } else if h.black_white {
+                    1.0
+                } else {
+                    0.0
+                },
                 if held.is_some() { 1.0 } else { 0.0 },
-                resolution_grade::HIGHLIGHT_GRAY,
+                if h.difference { resolution_grade::DIFFERENCE_GAIN } else { resolution_grade::HIGHLIGHT_GRAY },
             ];
-            run(enc, &self.stage.highlight, &next, [&image.view, m, dummy, dummy], u(g0), 3);
+            run(enc, &self.stage.highlight, &next, [&image.view, m, input, dummy], u(g0), 3);
             std::mem::swap(&mut image, &mut next);
         }
         Some((image, size))

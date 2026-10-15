@@ -4,7 +4,7 @@
 //! resolution-app [--demo | --project <path.fcproj>] [--import <file>]… [--seek <seconds>]
 //!                [--mute] [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>]
 //!                [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>]
-//!                [--highlight grey|bw] [--palette <name>] [--bars] [--journal <file.jsonl>]
+//!                [--highlight grey|bw|diff] [--palette <name>] [--bars] [--journal <file.jsonl>]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
@@ -17,7 +17,7 @@
 //! with both) and quits. `--window-at` puts the window's top left corner at that position, in
 //! the screens' own pixels as Windows lays them out (LOG D-049): self-tests go on a screen of
 //! their own, away from the user's. `--highlight` starts with the Color page's Highlight view on
-//! (LOG D-048), flat grey or black and white, for self-tests of it. `--palette` opens a Color page
+//! (LOG D-048), flat grey or black and white, or Highlight Difference (D-070), for self-tests of it. `--palette` opens a Color page
 //! palette (`curves`, `qualifier`, `window`, or a hue curve as `curves:hue_sat` and so on) and
 //! `--bars` the Primaries' Bars mode, for self-tests of them (LOG D-069). `--journal` writes the action
 //! journal to a file as it goes: a line of JSON as each command starts and ends (LOG D-054).
@@ -38,7 +38,7 @@ mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw] [--palette <name>] [--bars] [--journal <file>]";
+                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>] [--highlight grey|bw|diff] [--palette <name>] [--bars] [--journal <file>]";
 
 fn options() -> Result<(app::Options, bool, bool), String> {
     let mut o = app::Options::default();
@@ -66,7 +66,12 @@ fn options() -> Result<(app::Options, bool, bool), String> {
                 o.highlight = Some(match value("--highlight")?.as_str() {
                     "grey" | "gray" => false,
                     "bw" => true,
-                    other => return Err(format!("--highlight: `{other}` is not grey or bw")),
+                    // Highlight Difference (LOG D-070), for self-tests until it has a command
+                    "diff" => {
+                        o.highlight_difference = true;
+                        false
+                    }
+                    other => return Err(format!("--highlight: `{other}` is not grey, bw or diff")),
                 })
             }
             "--palette" => {

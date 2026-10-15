@@ -265,7 +265,8 @@ fn a_clip_graded_at_its_source_shows_in_the_highlight_view() {
     let clip = s.project.sequence(seq).unwrap().video_tracks[1].items[0].id;
     let graded = Graded::of(&s.project, seq);
     assert!(graded.stand_ins.values().any(|st| st.clip == clip && !st.in_shader), "graded at its source");
-    let highlight = Some(resolution_engine_api::Highlight { clip: clip.0, node: 0, black_white: true });
+    let highlight =
+        Some(resolution_engine_api::Highlight { clip: clip.0, node: 0, black_white: true, difference: false });
     let t = s.playhead();
     let opts = RenderOptions { scale: 960.0 / 1920.0, captions: true, ..Default::default() };
     let provider = s.media.provider(s.project.clone(), s.services.clone());
@@ -292,6 +293,51 @@ fn a_clip_graded_at_its_source_shows_in_the_highlight_view() {
         assert!(changed.len() > 1000, "{what}: the highlight changed {} pixels", changed.len());
         let white = changed.iter().filter(|(_, b)| b[..3].iter().all(|v| *v > 240)).count();
         assert!(white * 10 >= changed.len() * 9, "{what}: {white} of {} changed pixels white", changed.len());
+    }
+}
+
+/// Highlight Difference (LOG D-070) reaches both renderers: a clip graded at its source shows,
+/// on the GPU and in FilmCraft's own frames, a grey matte of how far its node moved it.
+#[test]
+fn a_clip_graded_at_its_source_shows_in_highlight_difference() {
+    if renderer().is_none() {
+        return;
+    }
+    let mut e = demo();
+    grade_at(&mut e, 7.0, warm());
+    let s = &e.session;
+    let seq = s.state.active_sequence.unwrap();
+    let clip = s.project.sequence(seq).unwrap().video_tracks[1].items[0].id;
+    let graded = Graded::of(&s.project, seq);
+    let highlight =
+        Some(resolution_engine_api::Highlight { clip: clip.0, node: 0, black_white: false, difference: true });
+    let t = s.playhead();
+    let opts = RenderOptions { scale: 960.0 / 1920.0, captions: true, ..Default::default() };
+    let provider = s.media.provider(s.project.clone(), s.services.clone());
+    let pixels = |img: Image| Frame::new(img.w as u32, img.h as u32, img.over_black_rgba8());
+    let frames = [
+        (
+            "the GPU's",
+            graded.render(seq, t, opts, &provider, false, None).unwrap(),
+            graded.render(seq, t, opts, &provider, false, highlight).unwrap(),
+        ),
+        (
+            "FilmCraft's",
+            pixels(graded.render_cpu(seq, t, opts, &provider, None).unwrap()),
+            pixels(graded.render_cpu(seq, t, opts, &provider, highlight).unwrap()),
+        ),
+    ];
+    for (what, plain, lit) in frames {
+        let changed: Vec<&[u8]> = plain
+            .rgba
+            .chunks(4)
+            .zip(lit.rgba.chunks(4))
+            .filter(|(a, b)| (0..3).any(|k| a[k].abs_diff(b[k]) > 20))
+            .map(|(_, b)| b)
+            .collect();
+        assert!(changed.len() > 1000, "{what}: the view changed {} pixels", changed.len());
+        let grey = changed.iter().filter(|b| b[0].abs_diff(b[1]) <= 3 && b[1].abs_diff(b[2]) <= 3).count();
+        assert!(grey * 10 >= changed.len() * 9, "{what}: {grey} of {} changed pixels grey", changed.len());
     }
 }
 

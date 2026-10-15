@@ -506,7 +506,7 @@ fn the_highlight_view_matches_its_math() {
     for at in 0..4 {
         for black_white in [false, true] {
             let mut l = rgba_layer(w, h, &px, Some(&g));
-            l.highlight = Some(Highlight { node: at, black_white });
+            l.highlight = Some(Highlight { node: at, black_white, difference: false });
             let out = r.render((w, h), &[l]).unwrap();
             let mut cpu: Vec<[f32; 3]> =
                 px.chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect();
@@ -535,6 +535,39 @@ fn the_highlight_view_matches_its_math() {
     }
 }
 
+/// Highlight Difference (LOG D-070) on the GPU against the CPU's `Grade::difference_image`,
+/// drawn one to one: a node keyed on the reds between two that change everything.
+#[test]
+fn highlight_difference_matches_its_math() {
+    let Some(r) = renderer() else { return };
+    let (w, h) = (768u32, 64u32);
+    let px = red_block(w, h);
+    let g = Grade {
+        nodes: vec![
+            node(json!({ "lift": {"y": 0.02} })),
+            node(json!({ "gain": {"y": 0.7}, "saturation": 30.0, "qualifier": Qualifier::picked([0.8, 0.16, 0.12]) })),
+            node(json!({ "gain": {"y": 1.3} })),
+        ],
+    };
+    for at in 0..3 {
+        let mut l = rgba_layer(w, h, &px, Some(&g));
+        l.highlight = Some(Highlight { node: at, black_white: false, difference: true });
+        let out = r.render((w, h), &[l]).unwrap();
+        let mut cpu: Vec<[f32; 3]> = px.chunks(4).map(|p| [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0)).collect();
+        g.difference_image(&mut cpu, w as usize, h as usize, at);
+        let worst = off_by(&cpu, &out);
+        eprintln!("difference of node {at}: worst {worst:.2} code values");
+        // measured 2026-10-15: 0.96, 0.00 and 1.21
+        assert!(worst <= 2.0, "node {at}: {worst} code values off");
+        assert!(out.chunks(4).all(|p| p[0].abs_diff(p[1]) <= 1 && p[1].abs_diff(p[2]) <= 1), "greys only");
+    }
+    // the keyed node: white or grey on the reds, black elsewhere
+    let mut l = rgba_layer(w, h, &px, Some(&g));
+    l.highlight = Some(Highlight { node: 1, black_white: false, difference: true });
+    let out = r.render((w, h), &[l]).unwrap();
+    assert!(out.chunks(4).any(|p| p[0] > 100) && out.chunks(4).any(|p| p[0] < 3));
+}
+
 /// The Highlight view of a node with a window (LOG D-048): its matte is the window's shape.
 #[test]
 fn the_highlight_view_shows_a_windows_shape() {
@@ -547,7 +580,7 @@ fn the_highlight_view_shows_a_windows_shape() {
     n.windows[0].size = [0.3, 0.3];
     let g = Grade { nodes: vec![n] };
     let mut l = rgba_layer(w, h, &px, Some(&g));
-    l.highlight = Some(Highlight { node: 0, black_white: true });
+    l.highlight = Some(Highlight { node: 0, black_white: true, difference: false });
     let out = r.render((w, h), &[l]).unwrap();
     let at = |x: u32, y: u32| out[((y * w + x) * 4) as usize];
     assert!(at(100, 50) > 250 && at(100, 50 - 25) > 250, "white inside the circle");

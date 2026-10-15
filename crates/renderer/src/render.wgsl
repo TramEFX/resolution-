@@ -603,6 +603,11 @@ fn fs_blur(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 fn fs_highlight(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let p = vec2<i32>(pos.xy);
     let s = texel(tex0, p);
+    if u.g0.y > 1.5 {
+        // Highlight Difference (LOG D-070): how far the node moved each pixel from its input (tex2)
+        let d = abs(s.rgb - texel(tex2, p).rgb);
+        return vec4(vec3(clamp(max(d.r, max(d.g, d.b)) * u.g0.w, 0.0, 1.0)), s.a);
+    }
     let n = u32(u.g0.x);
     var k = 1.0;
     if u.g0.z > 0.5 {

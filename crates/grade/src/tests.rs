@@ -626,6 +626,40 @@ fn a_linear_windows_sides_default_to_its_softness() {
     }
 }
 
+/// Highlight Difference (LOG D-070): black where the node leaves a pixel, grey by how far it
+/// moves one, of that node alone: not the nodes before it, nor after.
+#[test]
+fn highlight_difference_shows_how_far_the_node_moves_each_pixel() {
+    // a red half and a grey half
+    let (w, h) = (8usize, 2usize);
+    let px: Vec<[f32; 3]> = (0..w * h).map(|i| if i % w < 4 { [0.8, 0.16, 0.12] } else { [0.4, 0.4, 0.4] }).collect();
+    let g = Grade {
+        nodes: vec![
+            node(json!({ "lift": {"y": 0.02} })),
+            // the reds bluer, by a key on them: the most a channel moves is not red's
+            node(json!({ "gain": {"b": 1.8}, "qualifier": Qualifier::picked([0.8, 0.16, 0.12]) })),
+            node(json!({ "gain": {"y": 1.3} })),
+        ],
+    };
+    let mut d = px.clone();
+    g.difference_image(&mut d, w, h, 1);
+    // what node 1 does to what node 0 hands it
+    let mut before = px.clone();
+    Grade { nodes: g.nodes[..1].to_vec() }.apply_image(&mut before, w, h);
+    let mut after = px.clone();
+    Grade { nodes: g.nodes[..2].to_vec() }.apply_image(&mut after, w, h);
+    for i in 0..w * h {
+        let moved = (0..3).map(|c| (after[i][c] - before[i][c]).abs()).fold(0.0, f32::max);
+        let want = (moved * DIFFERENCE_GAIN).min(1.0);
+        assert!(d[i].iter().all(|v| (v - want).abs() < 1e-5), "pixel {i}: {:?} against {want}", d[i]);
+    }
+    assert!(d[0][0] > 0.2 && d[w - 1] == [0.0; 3], "the reds moved, the greys not: {:?} {:?}", d[0], d[w - 1]);
+    // a node that changes nothing shows black everywhere (to its arithmetic's rounding)
+    let mut still = px.clone();
+    Grade { nodes: vec![Node::default()] }.difference_image(&mut still, w, h, 0);
+    assert!(still.iter().all(|p| p.iter().all(|v| *v < 1e-4)), "{still:?}");
+}
+
 #[test]
 fn shadows_and_highlights_move_the_ends_and_keep_black_white_and_mid_grey() {
     let ramp: Vec<f32> = (0..=200).map(|i| i as f32 / 200.0).collect();
