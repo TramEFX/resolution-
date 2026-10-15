@@ -55,7 +55,8 @@ cpal = "0.18"
 
 # foundation
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# exact float parsing, for FilmCraft's project files too (one serde_json in the build; LOG B-046)
+serde_json = { version = "1", features = ["float_roundtrip"] }
 # the GPU: the version egui's renderer and FilmCraft's compositor use (one device can serve all)
 wgpu = { version = "30", features = ["wgsl"] }
 thiserror = "2"

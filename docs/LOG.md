@@ -137,6 +137,8 @@ doc is updated *and* the entry says which section moved.
 | D-066 | 2026-10-15 | color | Hue curves: image sampling from the viewer and the six-vector patches | active (widths provisional) |
 | D-067 | 2026-10-15 | color | The Primaries palette's Bars mode | active |
 | D-068 | 2026-10-15 | engine | Vocabulary additions proposed as one batch: edit points, Resolve's unbound keys, the Inspector | proposed, for Truman |
+| B-046 | 2026-10-15 | engine | A reopened project's windowed grades looked foreign, and copies split from them lost their grade | fixed |
+| B-047 | 2026-10-15 | tests | The Primaries drag test checked the timeline before its answer came | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -3750,3 +3752,47 @@ crop and composite.
 **Waiting on Truman:** yes or no to each group, names changed where he likes. With 1 to 3
 approved, the keymap's bindings are added as each id is built. The Alt+1 to 8 choice rides on the
 keymap-format decision.
+
+### B-046 — A reopened project's windowed grades looked foreign, and copies split from them lost their grade
+**Area:** engine · **Status:** fixed · **Caught by:** looking at screenshots of D-063's polygon on
+the second screen. The Node Editor of a project saved by the CLI and reopened said "This clip has
+Lumetri effects made outside the Color page"
+
+**Symptom:** after a project was saved and reopened, a clip graded with a soft Linear window, or a
+Polygon with corners off the grid, showed the foreign-effects warning. A copy split off it after
+reopening took no grade. It showed an empty node tree and drew ungraded on Resolution's renderer,
+while FilmCraft's own render kept the Lumetri effects. A square polygon, a hard Linear window and a
+Circle at softness 0.02 were fine. The grade itself was kept in the project's metadata, and the
+next grade edit wrote matching effects again.
+
+**Cause:** `grade_in` takes a clip's Lumetri effects as its grade's own only when they equal what
+the grade compiles to, exactly (D-031's copy rule). FilmCraft writes the masks' numbers exactly,
+but reads them with serde_json's default float parsing, which can land a unit in the last place
+off. A feather of 115.19999742507935 came back as 115.19999742507936, and a corner's y
+1848.0000114440918 as 1848.000011444092. Whether a project hit it depended on its numbers.
+
+**Fix:** serde_json's `float_roundtrip` feature, on in the workspace's dependency. There is one
+serde_json in the build, and Cargo unites its features, so FilmCraft's project loading reads floats
+exactly too. Its code is not touched. Projects saved before the fix were written exactly, so they
+read back right now.
+
+**Checked:**
+- Adapter test: a grade with eight Linear and Polygon windows at odd softnesses, turns and corners
+  is saved and reopened. It is still the clip's own, not foreign, with the same nodes. A copy split
+  off after reopening takes the same grade.
+- The test fails without the feature: that is the bug, and it serves as the mutation check.
+- Through the CLI, the five projects that showed it (a triangle polygon, a Linear window at
+  softness 0.03, and three controls) read back with nothing foreign.
+
+### B-047 — The Primaries drag test checked the timeline before its answer came
+**Area:** tests · **Status:** fixed · **Caught by:** the full test run for B-046, once; three runs
+after it passed
+
+**Symptom:** `shadows_highlights_and_midtone_detail_are_dragged_in_the_primaries` (D-055) failed
+its last line, that the dragged clip shows as graded.
+
+**Cause:** the test waited for the grade's numbers from `color.inspect`, then at once read the
+timeline's `graded` mark. That arrives in `timeline.inspect`'s own answer, which can come a step
+later.
+
+**Fix:** it waits for the mark as it waits for the numbers.
