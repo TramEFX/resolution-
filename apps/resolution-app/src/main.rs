@@ -3,7 +3,7 @@
 //! ```text
 //! resolution-app [--demo | --project <path.fcproj>] [--import <file>]… [--seek <seconds>]
 //!                [--mute] [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>]
-//!                [--page <name>] [--play <s>] [--screenshot <out.png>]
+//!                [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>]
 //! ```
 //! `--import` loads media and builds a timeline from the first clip. `--mute` plays without
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
@@ -13,7 +13,9 @@
 //! Pool clip, by name, in the source viewer; `--page` starts on a page (`deliver`). Self-tests:
 //! `--play` plays for that long once a frame is on screen, prints what was shown and heard, and
 //! quits; `--screenshot` saves the window as a PNG once a frame is on screen (after the play test,
-//! with both) and quits.
+//! with both) and quits. `--window-at` puts the window's top left corner at that position, in
+//! the screens' own pixels as Windows lays them out (LOG D-049): self-tests go on a screen of
+//! their own, away from the user's.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
@@ -30,7 +32,7 @@ mod waveforms;
 mod worker;
 
 const USAGE: &str = "usage: resolution-app [--demo | --project <path>] [--import <file>]… [--seek <s>] [--mute] \
-                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>]";
+                     [--software-decode] [--cpu-render] [--theme <name>] [--source <clip>] [--page <name>] [--play <s>] [--screenshot <out.png>] [--window-at <x,y>]";
 
 fn options() -> Result<(app::Options, bool, bool), String> {
     let mut o = app::Options::default();
@@ -52,10 +54,18 @@ fn options() -> Result<(app::Options, bool, bool), String> {
             "--source" => o.source = Some(value("--source")?),
             "--page" => o.page = Some(value("--page")?),
             "--screenshot" => o.screenshot = Some(value("--screenshot")?.into()),
+            "--window-at" => o.window_at = Some(position(&value("--window-at")?)?),
             other => return Err(format!("unknown argument `{other}`")),
         }
     }
     Ok((o, software_decode, cpu_render))
+}
+
+/// `x,y` as a screen position; either may be negative (a screen left of or above the main one).
+fn position(text: &str) -> Result<[f32; 2], String> {
+    let bad = || format!("--window-at: `{text}` is not x,y");
+    let (x, y) = text.split_once(',').ok_or_else(bad)?;
+    Ok([x.trim().parse().map_err(|_| bad())?, y.trim().parse().map_err(|_| bad())?])
 }
 
 fn main() -> eframe::Result {
@@ -84,7 +94,21 @@ fn main() -> eframe::Result {
             .with_title("Resolution")
             .with_inner_size([1600.0, 920.0])
             .with_min_inner_size([1000.0, 640.0]),
+        // a window put somewhere on purpose is not kept there for next time
+        persist_window: options.window_at.is_none(),
         ..Default::default()
     };
     eframe::run_native("Resolution", native, Box::new(move |cc| Ok(Box::new(app::ResolutionApp::new(cc, options)))))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_window_position_reads_as_x_comma_y() {
+        assert_eq!(super::position("-1920,165"), Ok([-1920.0, 165.0]));
+        assert_eq!(super::position(" 10 , -5 "), Ok([10.0, -5.0]));
+        for bad in ["", "10", "10,", "a,b", "1;2"] {
+            assert!(super::position(bad).is_err(), "{bad:?}");
+        }
+    }
 }
