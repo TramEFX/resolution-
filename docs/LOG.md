@@ -165,6 +165,7 @@ doc is updated *and* the entry says which section moved.
 | B-061 | 2026-10-15 | ui | In a small window the two viewers' transport rows ran into each other | fixed |
 | B-062 | 2026-10-15 | ui | A self-test with `--theme` saved its theme into the user's editor | fixed |
 | B-063 | 2026-10-15 | ui | On the Color page, Delete, Backspace and Ctrl+B still cut the timeline | fixed |
+| B-064 | 2026-10-15 | ui | B-063 on the other pages: the Deliver page's timeline, and the pages not built | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4397,3 +4398,17 @@ node, waits on the page-scoped keymap (D-051).
 
 **Checked:** UI test: a clip selected on the Edit page, then Delete, Backspace, Shift+Backspace and
 Ctrl+B on the Color page; the timeline keeps all its clips. It failed before the fix.
+
+### B-064 — B-063 on the other pages: the Deliver page's timeline, and the pages not built
+**Area:** ui · **Status:** fixed · **Caught by:** B-063's test extended to the Deliver page, which
+failed with B-063's Color-only guard
+
+**Symptom:** as B-063, on the Deliver page, which shows the timeline for choosing what to render,
+not for cutting it. Also on the Media, Cut, Fusion and Fairlight pages, which are not built and
+show no timeline.
+
+**Fix:** the keys B-063 lists do nothing anywhere but the Edit page. Resolve's Cut page cuts with
+them too; that will change when ours is built.
+
+**Checked:** UI test: on the Color and the Deliver page, Delete, Backspace, Shift+Backspace and
+Ctrl+B leave the timeline as it was. With B-063's Color-only guard it fails on the Deliver page.
