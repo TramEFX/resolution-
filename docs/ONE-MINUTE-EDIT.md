@@ -74,6 +74,5 @@ Add to Render Queue and Render All.
 If a panel has been dragged out of shape, Workspace > Reset UI Layout puts the panels and their
 sizes back (LOG D-078).
 
-
 Start the editor with `--journal <file.jsonl>`. Each command is written to the file as it starts
 and ends, with who sent it (LOG D-054), so the steps can be replayed or reported.

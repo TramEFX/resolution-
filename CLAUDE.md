@@ -104,7 +104,8 @@ Learned on the second run (2026-10-15, from noon):
   - a flaky test needs debug output tagged by test thread to trace.
 
 To refine:
-- Keep the queue file in the repo (`docs/runs/`), so it outlives the session.
+- Keep the queue file in the repo (`docs/runs/`), so it outlives the session. The first two
+  runs' reports are there, copied afterwards; the next run's queue file can start there.
 - Pace the work to the cap, or not: a quick burn finishes as much, but leaves no one to answer
   the check-ins.
 - How big an item should be, and how often to check in.
