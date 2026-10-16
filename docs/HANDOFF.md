@@ -1,6 +1,6 @@
 # Picking up locally
 
-Where things stand and how to continue on your own machine. Last updated 2026-10-15 (the first unattended run: windows, edits, matte finesse, the journal).
+Where things stand and how to continue on your own machine. Last updated 2026-10-15, late (the second unattended run: Color page windows, curves and views; clips fitted; layouts at smaller sizes; bugs found by eye and by rehearsal; decisions waiting in D-064, D-068 and D-080).
 
 ## 1. Set up (once)
 
