@@ -163,6 +163,7 @@ doc is updated *and* the entry says which section moved.
 | B-059 | 2026-10-15 | ui | Narrow number fields: names ran into values, and the YRGB numbers into each other | fixed |
 | B-060 | 2026-10-15 | ui | On a laptop's screen the Deliver page's Add to Render Queue was out of sight | fixed |
 | B-061 | 2026-10-15 | ui | In a small window the two viewers' transport rows ran into each other | fixed |
+| B-062 | 2026-10-15 | ui | A self-test with `--theme` saved its theme into the user's editor | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4356,3 +4357,15 @@ must. Home, End, I and O still work. Play, Reverse and Stop always stay.
 - UI test at 1000 × 640: the source viewer's buttons end before the timeline viewer's begin. With
   nothing dropped they reach 511.5 points, past the timeline viewer's at 489.
 - By eye: both rows within their viewers.
+
+### B-062 — A self-test with `--theme` saved its theme into the user's editor
+**Area:** ui · **Status:** fixed · **Caught by:** review, before a screenshot pass of the five
+themes. B-053 kept self-tests from saving egui's memory, but `save` still wrote the theme.
+
+**Fix:** a self-test run (`--window-at`, `--window-size`, `--screenshot` or `--play`) saves
+nothing, its theme included. `--theme` outside a self-test is kept as before (D-018).
+
+**Checked:**
+- Five self-test runs, one in each theme, left Truman's saved theme as it was (midnight).
+- By eye: the Edit page in all five themes, each accent carried through the toolbar, the active
+  track, the playhead and the page bar, with nothing unreadable.

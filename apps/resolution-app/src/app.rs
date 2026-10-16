@@ -204,8 +204,8 @@ pub struct ResolutionApp {
     seek_after_load: Option<f64>,
     source_after_load: Option<String>,
     screenshot: Option<(PathBuf, u32)>,
-    /// Keep egui's memory (panel sizes and the like) for next time: not after a self-test, which
-    /// would leave its layout behind in the user's editor (LOG B-053).
+    /// Keep egui's memory (panel sizes and the like) and the theme for next time: not after a
+    /// self-test, which would leave them behind in the user's editor (LOG B-053).
     keep_memory: bool,
     /// Where to move the window on the first frame (`Options::window_at`).
     window_at: Option<[f32; 2]>,
@@ -2070,7 +2070,10 @@ impl eframe::App for ResolutionApp {
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        storage.set_string(THEME_KEY, self.look.theme.id.to_string());
+        // a self-test keeps nothing, its theme included (LOG B-053)
+        if self.keep_memory {
+            storage.set_string(THEME_KEY, self.look.theme.id.to_string());
+        }
     }
 
     fn persist_egui_memory(&self) -> bool {

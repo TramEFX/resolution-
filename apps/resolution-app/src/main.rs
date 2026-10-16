@@ -11,7 +11,7 @@
 //! opening an audio device. `--software-decode` turns off the operating system's video decoders
 //! (LOG D-014). `--cpu-render` draws every timeline frame on FilmCraft's CPU renderer instead of
 //! Resolution's GPU renderer (LOG D-036). `--theme` switches to a colour theme (midnight, ember, mint, rose, charcoal;
-//! LOG D-018), which is then kept, as if chosen in Workspace > Theme. `--source` opens a Media
+//! LOG D-018), which is then kept, as if chosen in Workspace > Theme, except in a self-test run. `--source` opens a Media
 //! Pool clip, by name, in the source viewer; `--page` starts on a page (`deliver`). Self-tests:
 //! `--play` plays for that long once a frame is on screen, prints what was shown and heard, and
 //! quits; `--screenshot` saves the window as a PNG once a frame is on screen (after the play test,
