@@ -90,6 +90,13 @@ Learned on the second run (2026-10-15, from noon):
 - **Chained UI rehearsals find what single-step tests miss:** a whole cut or grade in one test,
   through keys and the mouse only. They found Ctrl+T doing nothing (B-043), and a race between the
   UI's quick choices and the engine's older answers (B-055, B-056, B-057).
+- **After the cap, scheduled jobs can be lost.** In the second window the cap struck again about
+  two hours in. Of its jobs, two check-ins arrived later with Truman's "resume"; the other two and
+  the wrap-up never came. So the queue file's Report, kept current after every PR, was the only
+  record. Re-create the jobs after each reset.
+- **Know when to stop.** Once what is left needs Truman's choices (D-064, D-068, D-080), small
+  polish is worth less than his decisions. Wrapping up early and asking is the better use of the
+  window.
 - **Test harness quirks:**
   - egui_kittest steps 0.25 s at a time, one queued event a step (no double-clicks without a
     finer step);
