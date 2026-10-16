@@ -91,6 +91,32 @@ pub struct Options {
 }
 
 /// Commands that run at the frame on screen without stopping playback.
+/// Keys that cut the timeline, which do nothing on the Color page (LOG B-063): Resolve keeps its
+/// timeline edits to the Edit and Cut pages. Menu items still run them.
+const EDIT_PAGE_KEYS: [&str; 21] = [
+    "edit.insert",
+    "edit.overwrite",
+    "edit.replace",
+    "edit.placeOnTop",
+    "edit.rippleOverwrite",
+    "edit.fitToFill",
+    "edit.appendAtEnd",
+    "edit.cut",
+    "edit.paste",
+    "edit.pasteInsert",
+    "edit.pasteAttributes",
+    "timeline.split",
+    "timeline.delete",
+    "timeline.rippleDelete",
+    "timeline.rippleStartToPlayhead",
+    "timeline.rippleEndToPlayhead",
+    "timeline.toggleClipEnable",
+    "timeline.addTransition",
+    "timeline.addVideoTransition",
+    "timeline.addAudioTransition",
+    "timeline.closeGap",
+];
+
 const WHILE_PLAYING: &[&str] = &["mark.in", "mark.out", "mark.clip", "marker.add"];
 
 /// The panels that share the left of the Edit page, one at a time.
@@ -681,6 +707,12 @@ impl ResolutionApp {
                 && let Some(chord) = crate::keys::chord(key, modifiers)
                 && let Some(id) = self.keymap.command_for(&chord).map(str::to_string)
             {
+                // the keymap is not page-scoped yet (LOG D-051): on the Color page the keys that
+                // cut the timeline do nothing, as in Resolve (LOG B-063)
+                if self.page == Page::Color && EDIT_PAGE_KEYS.contains(&id.as_str()) {
+                    self.say(format!("{} works on the Edit page", Self::label(&id)), false);
+                    continue;
+                }
                 self.command(&id);
             }
         }
@@ -3025,6 +3057,39 @@ mod tests {
         pump(&mut h, "the node graded", |a| a.color.current().is_some_and(|n| !n.is_neutral()));
         h.key_press_modifiers(Modifiers::SHIFT, Key::Home);
         pump(&mut h, "the node reset", |a| a.color.current().is_some_and(|n| n.is_neutral()));
+    }
+
+    /// On the Color page, the Edit page's keys that cut the timeline do nothing to it: a clip
+    /// selected on the Edit page stays when Delete, Backspace or Ctrl+B is pressed while grading
+    /// (LOG B-063).
+    #[test]
+    fn timeline_edit_keys_do_nothing_on_the_color_page() {
+        let mut h = demo();
+        pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
+        let (c, r) = v2_clip(h.state());
+        click_at(&mut h, r.center());
+        pump(&mut h, "the V2 clip selected", |a| {
+            a.timeline.as_ref().and_then(|t| t.selected()).is_some_and(|(_, s)| s.id == c.id)
+        });
+        let clips = |a: &ResolutionApp| {
+            a.timeline.as_ref().map_or(0, |t| t.video.iter().chain(&t.audio).map(|tr| tr.clips.len()).sum::<usize>())
+        };
+        let before = clips(h.state());
+        h.key_press_modifiers(Modifiers::SHIFT, Key::Num6);
+        pump(&mut h, "the Color page", |a| a.page == Page::Color && a.color.view.is_some());
+        for (m, k) in [
+            (Modifiers::NONE, Key::Delete),
+            (Modifiers::NONE, Key::Backspace),
+            (Modifiers::SHIFT, Key::Backspace),
+            (Modifiers::COMMAND, Key::B),
+        ] {
+            h.key_press_modifiers(m, k);
+            for _ in 0..10 {
+                h.step();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        assert_eq!(clips(h.state()), before, "the timeline as it was");
     }
 
     #[test]
