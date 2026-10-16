@@ -36,7 +36,9 @@ default does (LOG B-050). That covers 4K in a 1080 timeline and a phone's portra
 | Undo, redo | Ctrl+Z, Ctrl+Shift+Z |
 | Clip off and on | D |
 
-The playhead goes to the end of each edit, as in Resolve, so the next edit follows on.
+The playhead goes to the end of each edit, as in Resolve, so the next edit follows on. The keys
+that cut the timeline (the edits, Delete, Backspace, Ctrl+B, the transitions) work on the Edit page
+only; on the other pages they do nothing (LOG B-063, B-064).
 
 ## Colour (optional)
 
@@ -68,6 +70,10 @@ Add to Render Queue and Render All.
   as far as known, but not checked against the 21.1 install (D-051).
 
 ## If something goes wrong
+
+If a panel has been dragged out of shape, Workspace > Reset UI Layout puts the panels and their
+sizes back (LOG D-078).
+
 
 Start the editor with `--journal <file.jsonl>`. Each command is written to the file as it starts
 and ends, with who sent it (LOG D-054), so the steps can be replayed or reported.
