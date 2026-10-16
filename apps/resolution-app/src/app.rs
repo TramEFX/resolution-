@@ -2706,6 +2706,43 @@ mod tests {
         assert_eq!(a1.len(), 4, "{a1:?}");
     }
 
+    /// The one-minute edit's own clips through the editor (LOG D-079): the Sony 4K clip imported
+    /// makes the timeline; the Samsung phone clip, turned to portrait, is marked in the source
+    /// viewer and edited in after it, fitted, with a picture at its head. The clips are local
+    /// (`test media/` is not in git): without them the test is skipped.
+    #[test]
+    fn the_one_minute_edits_own_clips_go_through_the_editor() {
+        let media = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test media/sony-samsung-2026-10-12");
+        let (sony, samsung) = (media.join("ROB MID SHOT.MP4"), media.join("NATAL SAD.mp4"));
+        if !sony.exists() || !samsung.exists() {
+            eprintln!("the Sony and Samsung clips are not here: skipped");
+            return;
+        }
+        let paths = [sony, samsung].map(|p| p.to_string_lossy().into_owned());
+        let mut h = Harness::builder().with_size(egui::vec2(1600.0, 920.0)).build_eframe(move |cc| {
+            ResolutionApp::new(cc, Options { import: paths.to_vec(), mute: true, ..Default::default() })
+        });
+        // the timeline made from the Sony clip, at its size
+        pump(&mut h, "a timeline from the Sony clip", |a| {
+            a.timeline.as_ref().is_some_and(|t| v1_clips(a) == 1 && t.width == 3840)
+        });
+        pump(&mut h, "both clips in the Media Pool", |a| a.media.iter().any(|m| m.name == "NATAL SAD.mp4"));
+        // two seconds of the Samsung clip, after the Sony clip
+        mark_source(&mut h, "NATAL SAD.mp4", 30, 77);
+        h.state().worker.run("playhead.timelineEnd", json!({}));
+        let end = h.state().timeline.as_ref().map_or(0.0, |t| t.duration);
+        pump(&mut h, "the playhead at the end", |a| {
+            a.timeline.as_ref().is_some_and(|t| (a.playhead() - t.duration).abs() < 0.1)
+        });
+        h.key_press(Key::F10);
+        pump(&mut h, "the Samsung clip on V1", |a| v1_clips(a) == 2);
+        let tl = h.state().timeline.clone().expect("a timeline");
+        let phone = tl.video[0].clips[1].clone();
+        assert!((phone.start - end).abs() < 0.1, "after the Sony clip: {} against {end}", phone.start);
+        // its picture at its head: the phone's own, pillarboxed in the 16:9 timeline
+        pump(&mut h, "a picture at each clip's head", |a| a.edit_thumbs.shown() == 2);
+    }
+
     #[test]
     fn the_source_viewer_plays_on_its_own() {
         let mut h = demo();

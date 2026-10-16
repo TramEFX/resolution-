@@ -167,6 +167,7 @@ doc is updated *and* the entry says which section moved.
 | B-063 | 2026-10-15 | ui | On the Color page, Delete, Backspace and Ctrl+B still cut the timeline | fixed |
 | B-064 | 2026-10-15 | ui | B-063 on the other pages: the Deliver page's timeline, and the pages not built | fixed |
 | D-078 | 2026-10-15 | ui | Workspace > Reset UI Layout puts the panels' sizes back too | active |
+| D-079 | 2026-10-15 | tests | The one-minute edit's own clips through the editor, where they are | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4432,3 +4433,20 @@ may have left in his editor (B-053).
 **Checked:** UI test: the Color page's palettes grown to 560 points as a stored size shrinks the
 viewer's picture; Reset UI Layout brings it back to its first height. Without the reset it stays
 small.
+
+### D-079 — The one-minute edit's own clips through the editor, where they are
+**Area:** tests · **Status:** active · **Doc:** `app.rs`
+(`the_one_minute_edits_own_clips_go_through_the_editor`)
+
+**Decision:** the UI tests use FilmCraft's demo media; the one-minute edit uses Truman's Sony 4K and
+Samsung portrait clips, which decode differently (HEVC 4K, a −90° turn). A UI test now takes them
+through the editor's own paths:
+1. Import both, as `--import` does; the timeline is made from the Sony clip, at 3840 wide.
+2. Mark two seconds of the Samsung clip in the source viewer with the arrow keys, I and O.
+3. F10 at the timeline's end puts it after the Sony clip.
+4. Both clips get a picture at their head.
+
+The clips are local (`test media/` is not in git), so without them the test says so and passes, as
+the GPU tests do on a machine without one. On Truman's machine it runs in about 4 seconds.
+
+**Checked:** it passes with the clips, and is skipped without them.
