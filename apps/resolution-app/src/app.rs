@@ -1317,11 +1317,14 @@ impl ResolutionApp {
                     Viewer::Source => "Double-click a clip in the Media Pool to open it here.",
                     Viewer::Timeline => "Import media, then double-click a clip in the Media Pool to make a timeline.",
                 };
-                painter.with_clip_rect(picture.shrink(8.0)).text(
-                    picture.center(),
-                    Align2::CENTER_CENTER,
-                    hint,
-                    look.body(),
+                // wrapped to the viewer, centred, so a narrow viewer shows all of it (LOG B-065)
+                let mut job =
+                    egui::text::LayoutJob::simple(hint.to_string(), look.body(), t.dim, picture.width() - 24.0);
+                job.halign = Align::Center;
+                let text = painter.layout_job(job);
+                painter.with_clip_rect(picture.shrink(8.0)).galley(
+                    picture.center() - vec2(0.0, text.size().y / 2.0),
+                    text,
                     t.dim,
                 );
             }

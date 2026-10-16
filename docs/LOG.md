@@ -168,6 +168,7 @@ doc is updated *and* the entry says which section moved.
 | B-064 | 2026-10-15 | ui | B-063 on the other pages: the Deliver page's timeline, and the pages not built | fixed |
 | D-078 | 2026-10-15 | ui | Workspace > Reset UI Layout puts the panels' sizes back too | active |
 | D-079 | 2026-10-15 | tests | The one-minute edit's own clips through the editor, where they are | active |
+| B-065 | 2026-10-15 | ui | An empty viewer's hint was cut at both ends in a narrow viewer | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4450,3 +4451,14 @@ The clips are local (`test media/` is not in git), so without them the test says
 the GPU tests do on a machine without one. On Truman's machine it runs in about 4 seconds.
 
 **Checked:** it passes with the clips, and is skipped without them.
+
+### B-065 — An empty viewer's hint was cut at both ends in a narrow viewer
+**Area:** ui · **Status:** fixed · **Caught by:** the 1000 × 640 screenshots (B-058's pass)
+
+**Symptom:** an empty source viewer's hint read "ick a clip in the Media Pool to op": one centred
+line, clipped by the viewer.
+
+**Fix:** the hint is wrapped to the viewer's width and centred line by line.
+
+**Checked:** by eye at 1000 × 640, two centred lines in full; at 1600 × 920 one line, as before.
+Not under test: it is drawn text only.
