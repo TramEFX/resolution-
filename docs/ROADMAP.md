@@ -69,13 +69,21 @@ read, never copied into the repo.
       headers (D-019); trimming by drag in Selection and Trim modes (D-020); snapping; zoom and
       scrolling (D-023); audio waveforms (D-022); markers on the ruler; New Timeline (D-024).
       F11 to F12 and the Shift edits are below (D-059).
-- [ ] **Step 2's bar:** Truman cuts a one-minute piece from the Sony and Samsung clips
+- [ ] **Step 2's bar:** Truman cuts a one-minute piece from the Sony and Samsung clips. Rehearsed
+      through the engine (B-042), through the editor's keys and mouse on the demo (B-043, D-076)
+      and with his own clips (D-079); what works and what doesn't is in
+      [ONE-MINUTE-EDIT.md](ONE-MINUTE-EDIT.md)
+- [x] Clips of another size fitted into the timeline, as Resolve's default (B-050)
+- [x] A picture at each video clip's head on the timeline, each clip on its own (D-073, D-077)
+- [x] Smaller windows: laptop-sized Color and Deliver pages, narrow fields and transports (B-058
+      to B-061); Workspace > Reset UI Layout puts panel sizes back (D-078)
 - [x] **Step 3:** minimal Deliver page: presets, a render queue and Render All over the engine's
       export (`deliver.render`, D-025)
 - [x] Resolve's Replace (F11), Place on Top (F12), Ripple Overwrite (Shift+F10) and Append at End
       (Shift+F12), composed from FilmCraft's commands (D-059)
 - [x] Fit to Fill (Shift+F11; D-060)
-- [ ] Trim mode semantics; dynamic trim
+- [ ] Trim mode semantics; edit-point selection and dynamic trim: options in D-064, ids proposed
+      in D-068, for Truman
 - [ ] Faster playback where it is slow: frames are composited on the GPU since D-036 to D-038;
       standard effects on the GPU (D-041), proxies for footage too slow to decode (D-013 "Known
       limits")
