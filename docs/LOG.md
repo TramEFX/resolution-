@@ -164,6 +164,7 @@ doc is updated *and* the entry says which section moved.
 | B-060 | 2026-10-15 | ui | On a laptop's screen the Deliver page's Add to Render Queue was out of sight | fixed |
 | B-061 | 2026-10-15 | ui | In a small window the two viewers' transport rows ran into each other | fixed |
 | B-062 | 2026-10-15 | ui | A self-test with `--theme` saved its theme into the user's editor | fixed |
+| B-063 | 2026-10-15 | ui | On the Color page, Delete, Backspace and Ctrl+B still cut the timeline | fixed |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4369,3 +4370,30 @@ nothing, its theme included. `--theme` outside a self-test is kept as before (D-
 - Five self-test runs, one in each theme, left Truman's saved theme as it was (midnight).
 - By eye: the Edit page in all five themes, each accent carried through the toolbar, the active
   track, the playhead and the page bar, with nothing unreadable.
+
+### B-063 — On the Color page, Delete, Backspace and Ctrl+B still cut the timeline
+**Area:** ui · **Status:** fixed · **Caught by:** review of what the keymap not being page-scoped
+(D-051) allows, then a UI test that failed: 14 clips became 16
+
+**Symptom:** a clip selected on the Edit page stayed selected on the Color page. There, Delete,
+Backspace, Shift+Backspace and Ctrl+B ripple-deleted, lifted or split it, though the page shows no
+timeline to edit. Someone pressing Delete to remove a node would cut the timeline instead.
+
+**Cause:** keys reach the same commands on every page. Only the colour keys were held to the Color
+page (D-051).
+
+**Fix:** on the Color page, keys bound to commands that cut the timeline do nothing and say so ("…
+works on the Edit page"):
+- the source edits and the clipboard;
+- splitting, deleting and ripple-deleting;
+- trimming to the playhead;
+- clip enable;
+- transitions;
+- Close Gap.
+
+Menu items still run them; a choice from a menu is deliberate. In Resolve those keys edit only on
+the Edit and Cut pages. Giving Delete its Resolve meaning on the Color page, deleting the current
+node, waits on the page-scoped keymap (D-051).
+
+**Checked:** UI test: a clip selected on the Edit page, then Delete, Backspace, Shift+Backspace and
+Ctrl+B on the Color page; the timeline keeps all its clips. It failed before the fix.
