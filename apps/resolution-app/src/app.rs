@@ -91,6 +91,21 @@ pub struct Options {
 }
 
 /// Commands that run at the frame on screen without stopping playback.
+/// The panels a drag can resize, whose sizes egui keeps between sessions: Workspace > Reset UI
+/// Layout puts them back (LOG D-078).
+const RESIZABLE_PANELS: [&str; 10] = [
+    "timeline",
+    "left",
+    "right",
+    "mixer",
+    "deliver-timeline",
+    "deliver-settings",
+    "deliver-queue",
+    "color-palettes",
+    "color-clips",
+    "color-nodes",
+];
+
 /// Keys that cut the timeline, which do nothing off the Edit page (LOG B-063, B-064): Resolve keeps
 /// its timeline edits to the Edit and Cut pages, and ours is the Edit page alone so far (the Cut
 /// page is not built). Menu items still run them.
@@ -234,6 +249,8 @@ pub struct ResolutionApp {
     /// Keep egui's memory (panel sizes and the like) and the theme for next time: not after a
     /// self-test, which would leave them behind in the user's editor (LOG B-053).
     keep_memory: bool,
+    /// Workspace > Reset UI Layout asked for the panels' first sizes again (LOG D-078).
+    reset_panels: bool,
     /// Where to move the window on the first frame (`Options::window_at`).
     window_at: Option<[f32; 2]>,
     /// And the size to make it (`Options::window_size`).
@@ -353,6 +370,7 @@ impl ResolutionApp {
             auto_timeline: !options.import.is_empty(),
             seek_after_load: options.seek,
             source_after_load: options.source,
+            reset_panels: false,
             keep_memory: options.window_at.is_none()
                 && options.window_size.is_none()
                 && options.screenshot.is_none()
@@ -553,7 +571,11 @@ impl ResolutionApp {
             "workspace.inspector" => toggle_right(w, RightPanel::Inspector),
             "workspace.metadata" => toggle_right(w, RightPanel::Metadata),
             "workspace.mixer" => w.mixer = !w.mixer,
-            "workspace.resetLayout" => *w = Workspace::default(),
+            "workspace.resetLayout" => {
+                *w = Workspace::default();
+                // and the panels' sizes, at the next frame, which has egui's context (LOG D-078)
+                self.reset_panels = true;
+            }
             "mode.selection" => self.mode = EditMode::Selection,
             "mode.trim" => {
                 self.mode = EditMode::Trim;
@@ -2004,6 +2026,14 @@ impl eframe::App for ResolutionApp {
         if let Some([w, h]) = self.window_size.take() {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
         }
+        // every resizable panel back to the size it first opens at (LOG D-078)
+        if std::mem::take(&mut self.reset_panels) {
+            ctx.data_mut(|d| {
+                for id in RESIZABLE_PANELS {
+                    d.remove::<egui::containers::panel::PanelState>(egui::Id::new(id));
+                }
+            });
+        }
         for reply in self.worker.poll() {
             self.apply(reply);
         }
@@ -2269,6 +2299,31 @@ mod tests {
         h.get_by_label(label).click();
         h.step();
         h.step();
+    }
+
+    /// Workspace > Reset UI Layout puts the panels back to their first sizes too, as Resolve's
+    /// does: the Color page's palettes, grown as a drag or an old session leaves them, give the
+    /// viewer back its room (LOG D-078).
+    #[test]
+    fn reset_ui_layout_puts_the_panels_sizes_back() {
+        let mut h = on_color_page();
+        pump(&mut h, "a picture in the viewer", |a| a.picture_rect.is_some());
+        h.step();
+        let height = |h: &Harness<'_, ResolutionApp>| h.state().picture_rect.map_or(0.0, |r| r.height());
+        let first = height(&h);
+        let grown = egui::containers::panel::PanelState {
+            outer_rect: egui::Rect::from_min_size(egui::pos2(0.0, 300.0), egui::vec2(1600.0, 560.0)),
+        };
+        h.ctx.data_mut(|d| d.insert_persisted(egui::Id::new("color-palettes"), grown));
+        for _ in 0..4 {
+            h.step();
+        }
+        assert!(height(&h) < first - 50.0, "the palettes grown: {} from {first}", height(&h));
+        h.state_mut().command("workspace.resetLayout");
+        for _ in 0..4 {
+            h.step();
+        }
+        assert!((height(&h) - first).abs() < 1.0, "back to {first}: {}", height(&h));
     }
 
     #[test]

@@ -166,6 +166,7 @@ doc is updated *and* the entry says which section moved.
 | B-062 | 2026-10-15 | ui | A self-test with `--theme` saved its theme into the user's editor | fixed |
 | B-063 | 2026-10-15 | ui | On the Color page, Delete, Backspace and Ctrl+B still cut the timeline | fixed |
 | B-064 | 2026-10-15 | ui | B-063 on the other pages: the Deliver page's timeline, and the pages not built | fixed |
+| D-078 | 2026-10-15 | ui | Workspace > Reset UI Layout puts the panels' sizes back too | active |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4412,3 +4413,22 @@ them too; that will change when ours is built.
 
 **Checked:** UI test: on the Color and the Deliver page, Delete, Backspace, Shift+Backspace and
 Ctrl+B leave the timeline as it was. With B-063's Color-only guard it fails on the Deliver page.
+
+### D-078 — Workspace > Reset UI Layout puts the panels' sizes back too
+**Area:** ui · **Status:** active · **Doc:** `app.rs` (`RESIZABLE_PANELS`, `workspace.resetLayout`)
+
+**Decision:** Reset UI Layout put back which panels show, but not their sizes. egui keeps each
+resizable panel's size between sessions, so a panel dragged too big stayed that way. So did one
+grown by a self-test before B-053, as Truman's stored Color palette may be. Resolve's Reset UI
+Layout restores its panels' sizes. Ours now does the same.
+
+The command clears the stored sizes of the ten panels a drag can resize, and each opens at its
+first size again on the next frame. For the Color page's palettes that is two fifths of the window
+(B-058).
+
+**For Truman:** Workspace > Reset UI Layout puts back the palette height this run's screenshots
+may have left in his editor (B-053).
+
+**Checked:** UI test: the Color page's palettes grown to 560 points as a stored size shrinks the
+viewer's picture; Reset UI Layout brings it back to its first height. Without the reset it stays
+small.
