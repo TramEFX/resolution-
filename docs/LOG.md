@@ -169,6 +169,7 @@ doc is updated *and* the entry says which section moved.
 | D-078 | 2026-10-15 | ui | Workspace > Reset UI Layout puts the panels' sizes back too | active |
 | D-079 | 2026-10-15 | tests | The one-minute edit's own clips through the editor, where they are | active |
 | B-065 | 2026-10-15 | ui | An empty viewer's hint was cut at both ends in a narrow viewer | fixed |
+| D-080 | 2026-10-15 | color | What the Color page still lacks, and the choice each needs | proposed, for Truman |
 
 D-001 to D-004 were recorded when this log was started, from the docs as of `3d38ba2`; they
 summarise decisions made before it existed and point to where the full reasoning lives.
@@ -4462,3 +4463,44 @@ line, clipped by the viewer.
 
 **Checked:** by eye at 1000 × 640, two centred lines in full; at 1600 × 920 one line, as before.
 Not under test: it is drawn text only.
+
+### D-080 — What the Color page still lacks, and the choice each needs
+**Area:** color · **Status:** proposed, for Truman; nothing built · **Doc:** ROADMAP M4
+
+**Why:** the Color page's remaining items each stop at a choice that is Truman's: a format, a
+command, or a change to how existing grades look. Here they are together, each with a
+recommendation, so they can be approved at once.
+
+1. **Gallery and stills** (grab a still, wipe against it).
+   - *The choice:* where stills live: in the project, as metadata like the grades, or as image
+     files beside it. Also a command for grabbing one, and its key (Resolve: Mod+Alt+G).
+   - *Recommended:* image files in a folder beside the project, listed in its metadata. Projects
+     stay small, and stills survive a project being copied with its folder.
+2. **Log mode** (Shadow, Midtone, Highlight and Offset wheels, Low Range and High Range).
+   - *The choice:* the manual names the controls but not their curves. They can only be our own
+     approximation until measured against Resolve itself: grade a test chart in the install and
+     read back the numbers.
+   - *Recommended:* measure first, then build. An approximation would feel wrong to a Resolve
+     colourist and be hard to change once projects use it.
+3. **Lum Mix** (D-067's note).
+   - *The choice:* at its default of 100, Resolve balances the other channels to hold luma when
+     one channel moves. Ours does not, so adding Lum Mix changes how every existing grade with
+     channel moves looks.
+   - *Recommended:* add it with a default of 0 for grades made before it, and 100 for new ones.
+     Old projects keep their look, new ones behave as Resolve's.
+4. **RGB and 3D qualifier modes** (Luma is D-072).
+   - *The choice:* new ranges in the grade's qualifier: RGB has twelve numbers, and 3D has picked
+     colour samples and a key in a colour volume.
+   - *Recommended:* RGB first, as optional fields (D-063's pattern), named as the manual names
+     them. 3D after.
+5. **In/Out Ratio** (matte finesse).
+   - *The choice:* the manual says only that raising it fills small holes and lowering it removes
+     small specks. That is close to D-058's Morph, but not defined.
+   - *Recommended:* leave it until it can be compared with Resolve's, as for Log mode.
+6. **A Curve window's softness at each point** (D-065's note).
+   - *The choice:* inside and outside softness stored with each of a curve's points. That
+     changes D-053's point format, which is itself still provisional.
+   - *Recommended:* decide it together with D-053's format.
+7. **Highlight Difference's command** (D-070): `color.highlightDifference`, a Ui command beside
+   `color.highlight`.
+   - *Recommended:* yes, with the D-068 batch.
