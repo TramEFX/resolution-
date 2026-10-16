@@ -97,7 +97,8 @@ Only you can accept or reject a draft; agents cannot.
 | CI for this repo | None yet: needs a token that can read the private mirror |
 
 Gates before pushing: `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test`.
-Bugs and design decisions go in [LOG.md](LOG.md) as they come up.
+Bugs and design decisions go in [LOG.md](LOG.md) as they come up. Each unattended run's report is
+in [runs/](runs/) (CLAUDE.md, "Unattended runs").
 
 ## 5. Next steps
 
@@ -128,12 +129,32 @@ stage (D-046), and Sat vs Lum, the last of Resolve's hue curves (D-047; the othe
 The qualifier's matte can be seen in the viewer: the Highlight view, flat grey or black and
 white (D-048).
 
+The 2026-10-15 run ([report](runs/2026-10-15.md)) added the Curve window and softness for each
+edge (D-061, D-063, D-065), hue curves sampled from the viewer (D-066), the Primaries' Bars mode
+(D-067), Highlight Difference (D-070), the Mini-Timeline (D-071) and the Luma qualifier (D-072).
+On the Edit page: pictures at the clips' heads (D-073), and clips of another size fitted as in
+Resolve (B-050). 23 bugs were found and fixed, B-043 to B-065, most of them by screenshots
+and by chained UI rehearsals.
+
 To try the one-minute edit yourself, [ONE-MINUTE-EDIT.md](ONE-MINUTE-EDIT.md) lists what works and what doesn't yet.
+
+**Waiting on Truman** (written up with options and a recommendation, not built):
+- **D-064:** Dynamic Trim mode, with edit-point selection before it.
+- **D-068:** new vocabulary ids as one batch: edit points, Resolve's keys we have no command for
+  (D-051's list), the Inspector's clip transform, crop and composite.
+- **D-080:** the Color page's remaining items: Gallery stills, Log mode, Lum Mix, the RGB
+  and 3D qualifiers, In/Out Ratio, per-point Curve softness, and Highlight Difference's command (D-070).
+- **Provisional names to confirm:** the window points' format (D-053, D-061), Inside and Outside
+  Softness (D-063), which of Soft 1 to 4 is which side (D-065), the sampled points' spacing
+  (D-066), Highlight Difference's gain (D-070).
+- **From before:** the journal's panel and agents' access to it (D-054), the page-scoped keymap's
+  format (D-051), an engine sync for upstream's B-038 fix (PR #861), and the upstream #1531
+  comment, which is Truman's to post.
 
 Not started, for Truman to pick from:
 parallel and layer nodes, the one-minute-edit bar (rehearsed through the engine with
-`scripts/rehearse-edit.py`, 19 steps fine; B-042; and through the editor's keys and mouse in a UI
-test, where only Ctrl+T failed, now fixed; B-043), the action journal (D-034).
+`scripts/rehearse-edit.py`, 19 steps fine; B-042; and through the editor's keys and mouse in UI
+tests, where only Ctrl+T failed, now fixed; B-043, D-076, D-079).
 For what Resolve does, read the installed 21.1 Reference Manual (`scripts/resolve-manual.py`
 extracts it for searching; LOG D-017), then try it in the local install.
 
