@@ -91,8 +91,9 @@ pub struct Options {
 }
 
 /// Commands that run at the frame on screen without stopping playback.
-/// Keys that cut the timeline, which do nothing on the Color page (LOG B-063): Resolve keeps its
-/// timeline edits to the Edit and Cut pages. Menu items still run them.
+/// Keys that cut the timeline, which do nothing off the Edit page (LOG B-063, B-064): Resolve keeps
+/// its timeline edits to the Edit and Cut pages, and ours is the Edit page alone so far (the Cut
+/// page is not built). Menu items still run them.
 const EDIT_PAGE_KEYS: [&str; 21] = [
     "edit.insert",
     "edit.overwrite",
@@ -707,9 +708,9 @@ impl ResolutionApp {
                 && let Some(chord) = crate::keys::chord(key, modifiers)
                 && let Some(id) = self.keymap.command_for(&chord).map(str::to_string)
             {
-                // the keymap is not page-scoped yet (LOG D-051): on the Color page the keys that
-                // cut the timeline do nothing, as in Resolve (LOG B-063)
-                if self.page == Page::Color && EDIT_PAGE_KEYS.contains(&id.as_str()) {
+                // the keymap is not page-scoped yet (LOG D-051): off the Edit page the keys that
+                // cut the timeline do nothing (LOG B-063, B-064)
+                if self.page != Page::Edit && EDIT_PAGE_KEYS.contains(&id.as_str()) {
                     self.say(format!("{} works on the Edit page", Self::label(&id)), false);
                     continue;
                 }
@@ -3059,11 +3060,11 @@ mod tests {
         pump(&mut h, "the node reset", |a| a.color.current().is_some_and(|n| n.is_neutral()));
     }
 
-    /// On the Color page, the Edit page's keys that cut the timeline do nothing to it: a clip
-    /// selected on the Edit page stays when Delete, Backspace or Ctrl+B is pressed while grading
-    /// (LOG B-063).
+    /// Off the Edit page, its keys that cut the timeline do nothing to it: a clip selected on the
+    /// Edit page stays when Delete, Backspace or Ctrl+B is pressed on the Color page or the Deliver
+    /// page (LOG B-063, B-064).
     #[test]
-    fn timeline_edit_keys_do_nothing_on_the_color_page() {
+    fn timeline_edit_keys_do_nothing_off_the_edit_page() {
         let mut h = demo();
         pump(&mut h, "clips on screen", |a| !a.clip_rects.is_empty());
         let (c, r) = v2_clip(h.state());
@@ -3075,21 +3076,23 @@ mod tests {
             a.timeline.as_ref().map_or(0, |t| t.video.iter().chain(&t.audio).map(|tr| tr.clips.len()).sum::<usize>())
         };
         let before = clips(h.state());
-        h.key_press_modifiers(Modifiers::SHIFT, Key::Num6);
-        pump(&mut h, "the Color page", |a| a.page == Page::Color && a.color.view.is_some());
-        for (m, k) in [
-            (Modifiers::NONE, Key::Delete),
-            (Modifiers::NONE, Key::Backspace),
-            (Modifiers::SHIFT, Key::Backspace),
-            (Modifiers::COMMAND, Key::B),
-        ] {
-            h.key_press_modifiers(m, k);
-            for _ in 0..10 {
-                h.step();
-                std::thread::sleep(std::time::Duration::from_millis(10));
+        for (page_key, page) in [(Key::Num6, Page::Color), (Key::Num8, Page::Deliver)] {
+            h.key_press_modifiers(Modifiers::SHIFT, page_key);
+            pump(&mut h, "the page", |a| a.page == page);
+            for (m, k) in [
+                (Modifiers::NONE, Key::Delete),
+                (Modifiers::NONE, Key::Backspace),
+                (Modifiers::SHIFT, Key::Backspace),
+                (Modifiers::COMMAND, Key::B),
+            ] {
+                h.key_press_modifiers(m, k);
+                for _ in 0..10 {
+                    h.step();
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
             }
+            assert_eq!(clips(h.state()), before, "the timeline as it was on {page:?}");
         }
-        assert_eq!(clips(h.state()), before, "the timeline as it was");
     }
 
     #[test]
